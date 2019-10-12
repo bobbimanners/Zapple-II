@@ -1,0 +1,41 @@
+    		License Agreement for Z80-CPU crossassembler
+
+The program described in this license is copyrighted by the law of Germany.
+The program may be copied and shared under the following terms:
+
+1. The user receives all the source-codes of the program including the license.
+
+2. For the physical act of transfer and sharing of the package, a small fee may
+   be demanded. The program itself must not be sold without the author's
+   permission.
+
+License to the user of the program:
+
+1. This program may be used free of fee for non-comercial usages.
+
+2. For comercial usage of the program, a fee must be amounted to the author.
+   In cause of fairness, a big company will have to pay more for a license than
+   a single software developer. So the amount of the fee must be negotiated
+   with the autor of the program.
+
+Modification of the program:
+
+All program-parts may be only modified by the user for debugging. The user
+is bound to inform the author about those modifications. This should
+prevent an uncontrolled number of versions and ensure the support to
+comercial users through the author. 
+
+VIOLATIONS AGAINST THIS LICENSE RESULTS IN A LOSS OF RIGHTS TO USE
+THIS PROGRAM.
+
+THE PROGRAM IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND, EITHER
+EXPRESSED OR IMPLIED, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE. IN NO EVENT WILL
+THE AUTOR BE LIABLE TO YOU FOR ANY DAMAGES, INCLUDING ANY LOST PROFITS,
+LOST SAVINGS OR OTHER INCIDENTAL OR CONSEQUENTAL DAMAGES ARISING OUT OF
+THE USE OF THE PROGRAM.
+
+Udo Munk               voice:      +49 2131 275348
+Oberstr. 21            mail :      udo@umunk.GUN.de
+4040 Neuss 1           ...!{mcshh,smurf,unido}!easix!umunk!udo
+Germany                CompuServe: 100021,2515
