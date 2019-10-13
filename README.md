@@ -6,6 +6,8 @@ Z80 Softcard (or clone)
 - CP/M BDOS emulation to allow CP/M programs to run under ProDOS
 - Sample program: Processor Technology's SOL-20 BASIC/5
 
+Aztec C v3.2 can be found [on this website](http://aztecmuseum.ca).
+
 # Z80 Cross Assemblers & Tools
 I didn't fancy writing a Z80 assembler from scratch, and I wasn't able to
 find any existing Z80 cross-assemblers for 6502. In order to get something
@@ -108,7 +110,97 @@ add this later.
 
 The manual for BASIC/5 is included in this GitHub repo, in PDF format.
 
+Interestingly, there was a bug in the original BASIC/5 source that caused it
+to initialize one byte of memory too many, blowing away the first byte of the
+BDOS implementation at the top of memory.  This has been patched by adding a
+`DEC HL` instuction at line 47 (shout-out to Qkumba for finding what the
+issue was!)
+
+# How to Build the Code
+
+You don't really need to build the code unless you want to make changes.
+Pre-compiled versions of everything are included in this repository.
+
+## Building `Z80asm` using Aztec C
+
+- Two scripts are provided to do the build: `compile` and `link`
+- Run the script `compile`.  This takes a long time!
+- Run the script `link`.  This just takes a couple of minutes.
+- `z80asm` executable is created.
+
+Note that `z80asm` can only be run from the Aztec C shell.  It should be
+possible to build it as a normal ProDOS application, but I have not done this
+yet.
+ 
+## Building `Z80as` using Aztec C
+
+I didn't provide a script for this.  Just build all the C files in Aztec C
+as follows:
+
+```
+cc as0.c
+cc as1.c
+cc as2.c
+cc as3.c
+cc as4.c
+cc as5.c
+cc as6.c
+ln -o z80as as0.o as1.o as2.o as3.0 as4.0 as5.0 as6.0 -lc
+```
+## Building `HEX2BIN` using Aztec C
+
+- You can just run the script `makeh2b` in Aztec C
+- This just does the following:
+
+```
+cc hex2bin.c
+ln hex2bin.o -lc
+```
+
+## Building `SOFTCARD65` using Merlin8 2.58
+
+- Start Merlin8 (v2.58)
+- Hit 'D' for disk commands, enter `PREFIX /ZAPPLE2`
+- Hit 'L' for load, enter `SOFTCARD65` and hit return.
+- Hit 'E' for edit.
+- Type `ASM` to assemble.
+- Type 'Q' to go to the main menu.
+- Hit 'O' to save the object file `SOFTCARD65` to disk, and hit return.
+- Hit 'Q' to quit to ProDOS.
+
+## Building `SOFTCARD80.BIN` using `Z80asm`
+
+- In the Aztec C shell, enter the following commands:
+- `cd /zapple2`
+- `z80asm softcard80.asm` 
+
 # How to Run The Code
 
-TODO: Write this!
+I provided a couple of ProDOS EXEC files to load all the pieces and run the
+code:
+
+`RUNBASIC5` performs the following operations:
+
+```
+BLOAD /ZAPPLE2/SOFTCARD80.BIN,A$FFD,Ttxt
+BLOAD /ZAPPLE2/BASIC5.BIN,A$1100,T$00
+BRUN /ZAPPLE2/SOFTCARD65
+```
+
+A little explanation is in order:
+
+- The first line loads the Z80 code which provides the CP/M BDOS interface.
+  It is loaded at address $0FFD because there is a three byte prefix on the
+  BIN file (created by Z80asm).  The actual start address is $1000 in 6502
+  address space, which is 0000H for the Z80.
+- The second line loads the BASIC5 image at $1100 (0100H for the Z80).
+- Finally we just run the 6502 code in `SOFTCARD65` to bootstrap the process.
+  This loads higher in memory (but below 32K at the moment because of a
+  Z80asm bug where it is treating the address as a signed 16 bit integer).
+
+The other EXEC file `RUNTESTSTUB` is the same, but omits the second step.
+Instead of running BASIC, it runs some internal test code that is part of
+`SOFTCARD80.BIN`.
+
+
 
