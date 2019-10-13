@@ -178,6 +178,10 @@ ln hex2bin.o -lc
 
 # How to Run The Code
 
+The code assumes a Z80 Softcard (or clone) in slot 4.  This can be changed
+by modifying the `SOFTCARD` address in `SOFTCARD65.S` and `SOFTCARD80.ASM`
+if your card is in a different slot.
+
 I provided a couple of ProDOS EXEC files to load all the pieces and run the
 code:
 
