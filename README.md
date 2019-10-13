@@ -73,12 +73,16 @@ support for all the CP/M 2.2 system calls, which should allow a CP/M program
 to run on the Softcard Z80 CPU and have all the system calls routed to the
 6502 and serviced using the Apple II ROM monitor routines and the ProDOS MLI.
 
-This is at an embryonic stage at the moment as it only provides three system
+This is at an embryonic stage at the moment as it only provides a few system
 calls:
 
 - BDOS call 01h: `C_READ` - Console input
 - BDOS call 02h: `C_WRITE` - Console output
+- BDOS call 09h: `C_WRITESTR` - Console write string
 - BDOS call 0Bh: `C_STAT` - Console status
+- BDOS call 0Ch: `S_BDOSVER` - Return version number
+- BDOS call 0Dh: `DRV_ALLRESET` - Reset disks
+- BDOS call 0Eh: `DRV_SET` - Select disk
 
 There are two parts to the BDOS emulation:
 
