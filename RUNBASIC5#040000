@@ -1,0 +1,1 @@
+bload /zapple2/softcard80.bin,A$FFD,Ttxtbload /zapple2/basic5.bin,A$1100,T$00brun /zapple2/softcard65

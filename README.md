@@ -46,8 +46,11 @@ originally developed by the Mark Williams Company and which ran on PDP-11
 under Coherent.  This assembler has the advantage of small size, and is also
 written in K&R C.
 
-`Z80as` generates Intel HEX files rather than BIN files, so I wrote a simple
-converter called `HEX2BIN`.
+`Z80as` compiled 'out-of-the-box' under Aztec C on the Apple II, without any
+modification.
+
+This assembler generates Intel HEX files rather than BIN files, so I wrote a
+simple converter called `HEX2BIN`.
 
 `Z80as` also builds and runs on Linux which allows larger files to be
 assembled and is much faster than running on 6502 at 1Mhz.
@@ -89,6 +92,11 @@ There are two parts to the BDOS emulation:
 
 This is one of the BASIC interpreters from the Processor Technologies SOL-20
 system.  The source code was provided as an example with z80as.
+
+I assembled this code under `Z80as` on Linux, since it defines too many
+symbols to assemble natively on the Apple II in the available memory.  I plan
+to take a look at the Aztec C build configuration to see if it is possible
+to find more memory for dynamic allocation (ie: `malloc()`).
 
 It is a 5K BASIC, so it is rather primitive.  However it does have a floating
 point package and trig functions.
