@@ -121,6 +121,8 @@ issue was!)
 You don't really need to build the code unless you want to make changes.
 Pre-compiled versions of everything are included in this repository.
 
+The 800K ProDOS disk image `zapple2.po` has all the files you should need.
+
 ## Building `Z80asm` using Aztec C
 
 - Two scripts are provided to do the build: `compile` and `link`
