@@ -101,8 +101,8 @@ There are two parts to the BDOS emulation:
 
 - `softcard80.asm` - This is the Z80 code to handle BDOS calls and send them
   to the 6502 to be processed.  Written in Z80 assembler.  I am currently
-  assembling this using `Z80asm` (but will probably switch to `Z80as` when it
-  grows too large.  Loads at 05000H in Z80 space, which is $6000 in 6502-land.
+  assembling this using `Z80asm` under Linux (it got too large to assemble
+  with `Z80asm` under ProDOS on the Apple II.
 - `softcard65.asm` - This is the 6502 back end code.  Written in Merlin8 v2.58.
   Loads at $0900 in 6502 space.
 
@@ -194,7 +194,7 @@ ln hex2bin.o -lc
 - `cd /zapple2`
 - `z80asm softcard80.asm` 
 
-*Update* The code has grown too large to build natively on the Apple II. I
+*Update:* The code has grown too large to build natively on the Apple II. I
 have been using `z80asm` under Linux instead.
 
 # How to Run The Code
@@ -222,8 +222,8 @@ A little explanation is in order:
   address space, which is 0000H for the Z80.
 - The second line loads the BASIC5 image at $1100 (0100H for the Z80).
 - Finally we just run the 6502 code in `SOFTCARD65` to bootstrap the process.
-  This loads higher in memory (but below 32K at the moment because of a
-  Z80asm bug where it is treating the address as a signed 16 bit integer).
+  This loads at $0900.  The start address is encoded in the binary, so we
+  don't need to specify it on loading/running the code.
 
 The other EXEC file `RUNTESTSTUB` is the same, but omits the second step.
 Instead of running BASIC, it runs some internal test code that is part of
