@@ -74,23 +74,37 @@ to run on the Softcard Z80 CPU and have all the system calls routed to the
 6502 and serviced using the Apple II ROM monitor routines and the ProDOS MLI.
 
 This is at an embryonic stage at the moment as it only provides a few system
-calls:
+calls.  Only console I/O has been tested and confirmed to be working so far:
 
+- BDOS call 00h: `C_TERMCPM` - System reset
 - BDOS call 01h: `C_READ` - Console input
 - BDOS call 02h: `C_WRITE` - Console output
+- BDOS call 07h: `GET_IOB` - Get IOBYTE
+- BDOS call 08h: `SET_IOB` - Get IOBYTE
 - BDOS call 09h: `C_WRITESTR` - Console write string
 - BDOS call 0Bh: `C_STAT` - Console status
 - BDOS call 0Ch: `S_BDOSVER` - Return version number
 - BDOS call 0Dh: `DRV_ALLRESET` - Reset disks
 - BDOS call 0Eh: `DRV_SET` - Select disk
+- BDOS call 0FH: `F_OPEN` - Open file (IN PROGRESS)
+- BDOS call 10H: `F_CLOSE` - Close file (IN PROGRESS)
+- BDOS call 16H: `F_MAKE` - Create file (IN PROGRESS)
+- BDOS call 17H: `DRV_LOGVEC`- Return bitmap of logged-in drives
+- BDOS call 19H: `DRV_GET` - Return current drive
+- BDOS call 1AH: `F_DMAOFF` - Set DMA address
+- BDOS call 1CH: `DRV_SETRO` - Software write-protect current drive
+- BDOS call 1DH: `DRV_ROVEC` - Return bitmap of read-only drives
+- BDOS call 20H: `F_USERNUM` - Get/set user number
+- BDOS call 25H: `DRV_RESET` - Selectively reset disk drives
 
 There are two parts to the BDOS emulation:
 
 - `softcard80.asm` - This is the Z80 code to handle BDOS calls and send them
   to the 6502 to be processed.  Written in Z80 assembler.  I am currently
   assembling this using `Z80asm` (but will probably switch to `Z80as` when it
-  grows too large.
+  grows too large.  Loads at 05000H in Z80 space, which is $6000 in 6502-land.
 - `softcard65.asm` - This is the 6502 back end code.  Written in Merlin8 v2.58.
+  Loads at $0900 in 6502 space.
 
 # Sample Programs
 
@@ -179,6 +193,9 @@ ln hex2bin.o -lc
 - In the Aztec C shell, enter the following commands:
 - `cd /zapple2`
 - `z80asm softcard80.asm` 
+
+*Update* The code has grown too large to build natively on the Apple II. I
+have been using `z80asm` under Linux instead.
 
 # How to Run The Code
 
