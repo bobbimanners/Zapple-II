@@ -88,7 +88,8 @@ calls.  Only console I/O has been tested and confirmed to be working so far:
 - BDOS call 0Eh: `DRV_SET` - Select disk
 - BDOS call 0FH: `F_OPEN` - Open file (IN PROGRESS)
 - BDOS call 10H: `F_CLOSE` - Close file (IN PROGRESS)
-- BDOS call 16H: `F_MAKE` - Create file (IN PROGRESS)
+- BDOS call 13H: `F_DELETE` - Delete file
+- BDOS call 16H: `F_MAKE` - Create (and open) file (IN PROGRESS)
 - BDOS call 17H: `DRV_LOGVEC`- Return bitmap of logged-in drives
 - BDOS call 19H: `DRV_GET` - Return current drive
 - BDOS call 1AH: `F_DMAOFF` - Set DMA address
