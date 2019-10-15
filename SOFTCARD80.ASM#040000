@@ -1,1 +1,694 @@
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; Z80 code running on Softcard; Implements CP/M style BDOS interface; Requires the companion SOFTCARD65 6502 code; Bobbi 2019;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;BDOSADDR	EQU		05000H			; Keep below 32K for now (Z80asm bug)STCKTOP		EQU		06000H			; Top of Z80 stackSOFTCARD	EQU		0E400H			; Softcard in slot 4 ($C400); 6502 zero page, in Z80 address spaceCMD			EQU		0F006H			; 6502 $06AREG		EQU		0F007H			; 6502 $07XREG		EQU		0F008H			; 6502 $08YREG		EQU		0F009H			; 6502 $09ADDR		EQU		0F0EBH			; 6502 $EB (LSB)ADDRH		EQU		0F0ECH			; 6502 $EC (MSB); Addresses of 6502 routines, in 6502 address spaceCOUT		EQU		0FDEDH			; Print char in ARDKEY		EQU		0FD0CH			; Read key, return in ABELL		EQU		0FBE4H			; Sound the bell;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; Entry point when Z80 cold starts is 0000H;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;			ORG		0000H			JP		BDOSINIT		; Initialize BDOS;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; See obsolescence.wix.com/obsolescence/cpm-internals for info; on low storage usage ...;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;IOBYTE		DEFB	0				; Maps virtual to real devicesCURDRV		DEFB	0				; Currently selected drive 0=A: etc;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; BDOS entry point must be at address 0005H for CP/M compatibility; Function to invoke is passed in C;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;BDOS		JP		BDOSIMP			; BDOS code is at top of memoryRVEC1		DEFW	0000H			; Restart vector 1RVEC2		DEFW	0000H			; Restart vector 2RVEC3		DEFW	0000H			; Restart vector 3RVEC4		DEFW	0000H			; Restart vector 4RVEC5		DEFW	0000H			; Restart vector 5RVEC6		DEFW	0000H			; Restart vector 6RVEC7		DEFW	0000H			; Restart vector 7; Space for private BDOS data (implementation dependent) up to 0060HDMAADDR		DEFW	0080H			; DMA address defaults to FILEBUF (0080H)LOGVEC		DEFW	0000H			; Vector of logged in drivesROVEC		DEFW	0000H			; Vector of read-only drivesUSERNUM		DEFB	00H				; User number; End of private, implementation dependent space			ORG		0060H			; Standard addr of 32 byte FCBFCBDRV		DEFB	00H				; FCB Drive (0 current, 1 A:, 2 B: etc)FCBNAM		DEFM	'FILENAMEEXT'	; FCB filename and extensionFCBEX		DEFB	00H				; FCB extent fieldFCBS1		DEFB	00H				; FCB S1 fieldFCBS2		DEFB	00H				; FCB S2 fieldFCBRC		DEFB	00H				; FCB RC fieldFCBMAP		DEFS	16				; Map of blocks in file			ORG		0080H			; Standard addr of 128 byte File BufferFILEBUF		DEFS	128;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; The application program proper starts at 0100H; in order to be compatible with CP/M .COM programs;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;			ORG		0100H; Print signon message using C_WRITESTRPROGSTRT	LD		DE,WELCOME		; Address of string			LD		C,09H			; C_WRITESTR call			CALL	BDOS			; CP/M BDOS call; Print the alphabet using C_WRITE			LD		B,'A'L1			LD		E,B 			; Character to print			LD		C,02H			; C_WRITE call			PUSH	BC				; Preserve B (and C)			CALL	BDOS			; CP/M BDOS call			POP		BC				; Restore B (and C)			INC		B			LD		A,'Z'			CP		B			JP		Z,S1			JP		L1; Loop until there is a keystroke waiting using C_STATS1			LD		C,0BH			; C_STAT call			CALL	BDOS			; CP/M BDOS call			CP		0				; Anything?			JR		Z,S1			; If not, loop; Print a couple of asterisks  			LD		E,'*'			;			LD		C,02H			; C_WRITE call			CALL	BDOS			; CP/M BDOS call			LD		E,'*'			;			LD		C,2				; C_WRITE call			CALL	BDOS			; CP/M BDOS call; Create a file using ProDOS MLI; Creates 'A/TESTFILE.TMP'; Directory 'A' needs to exist already			LD		DE,MSG1			; Address of string			LD		C,09H			; C_WRITESTR call			CALL	BDOS			; CP/M BDOS call			LD		A,1				; A: drive			LD		(FCBDRV),A		;			LD		A,'T'			; Filename			LD		(FCBNAM),A		;			LD		A,'E'			; Filename			LD		(FCBNAM+1),A	;			LD		A,'S'			; Filename			LD		(FCBNAM+2),A	;			LD		A,'T'			; Filename			LD		(FCBNAM+3),A	;			LD		A,'F'			; Filename			LD		(FCBNAM+4),A	;			LD		A,'I'			; Filename			LD		(FCBNAM+5),A	;			LD		A,'L'			; Filename			LD		(FCBNAM+6),A	;			LD		A,'E'			; Filename			LD		(FCBNAM+7),A	;			LD		A,'T'			; Extension			LD		(FCBNAM+8),A	;			LD		A,'M'			; Extension			LD		(FCBNAM+9),A	;			LD		A,'P'			; Extension			LD		(FCBNAM+10),A	;			LD		DE,0060H		; Default FCB address			LD		C,16H			; F_MAKE call			CALL	BDOS			; CP/M BDOS call			LD		A,(AREG)		; Look at the return code			CP		0				; Success?			JP		Z,SUCC			;			LD		DE,FAILMSG		; Fail message			JP		PRMSG			;SUCC		LD		DE,SUCCMSG		; Success messagePRMSG		LD		C,09H			; C_WRITESTR call			CALL	BDOS			; CP/M BDOS call; Read keyboard and echo to screen C_READ, C_WRITEL2			LD		C,1				; C_READ call			CALL	BDOS			; CP/M BDOS call			LD		E,A				; Prepare to echo keystroke			LD		C,2				; C_WRITE call			CALL	BDOS			; CP/M BDOS call			JP		L2				; Forever and everWELCOME		DEFB	13			DEFM	'Zapple-II Test Stub...'			DEFB	13, '$'			MSG1		DEFB	13			DEFM	'Creating A/TESTFILE.TMP'			DEFB	13, '$'			SUCCMSG		DEFM	'Success!'			DEFB	13, '$'			FAILMSG		DEFM	'FAIL!'			DEFB	13, '$'			;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; Implementation of CP/M STYLE BDOS; Function to invoke is passed in C; C=00H   C_TERMCPM     System reset; C=01H   C_READ        Console read; C=02H   C_WRITE       Console write; C=07H   GET_IOB       Get IOBYTE; C=08H   SET_IOB       Set IOBYTE; C=09H   C_WRITESTR    Console write string; C=0BH   C_STAT        Console status; C=0CH   S_BDOSVER     Return version number; C=0DH   DRV_ALLRESET  Reset disks; C=0EH   DRV_SET       Select disk; C=0FH   F_OPEN        Open file (IN PROGRESS); C=10H   F_CLOSE       Close file (IN PROGRESS); C=16H   F_MAKE        Create file (IN PROGRESS); C=17H   DRV_LOGVEC    Return bitmap of logged-in drives; C=19H   DRV_GET       Return current drive; C=1AH   F_DMAOFF      Set DMA address; C=1CH   DRV_SETRO     Software write-protect current drive; C=1DH   DRV_ROVEC     Return bitmap of read-only drives; C=20H   F_USERNUM     Get/set user number; C=25H   DRV_RESET     Selectively reset disk drives;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;			ORG		BDOSADDRBDOSINIT	LD		SP,STCKTOP		; Initialize SP			LD		A,0				; 			LD		(IOBYTE),A		; Initialize IOBYTE			LD		(CURDRV),A		; Drive A:			LD		(FRN1),A		; Initialize FRNs to zero			LD		(FRN2),A		; ...			LD		(FRN3),A		; ...			LD		(FRN4),A		; ...			LD		HL,0080H		; Initialize DMAADDR to 0080H			LD		(DMAADDR),HL	; ...			LD		HL,0000H		; Initialize LOGVEC & ROVEC to 0000H			LD		(LOGVEC),HL		; ...			LD		(ROVEC),HL		; ...			JP		PROGSTRT		; Run user programBDOSIMP		LD		A,C				; Prepare to check C is in range			CP		41				; Max syscall# for CP/M 2.2 is 40			JP		NC,UNIMP		; If >41 then call UNIMP			LD		HL,BDOSVEC		; Start of vector table			SLA		C				; Multiply C by 2			LD		B,0				; MSB of BC is zero			ADD		HL,BC			; Address of vector in HL			LD		C,(HL)			; Read LSB of address to jump to			INC		HL				; Read MSB of address to jump to			LD		H,(HL)			; ...			LD		L,C				; Address needs to be in HL			JP		(HL)			; Jump to it!; Vector tableBDOSVEC		DEFW	C_TERMCPM		; C=00H			DEFW	C_READ			; C=01H			DEFW	C_WRITE			; C=02H			DEFW	UNIMP			; C=03H  (A_READ)   AUX			DEFW	UNIMP			; C=04H  (A_WRITE)  AUX			DEFW	UNIMP			; C=05H  (L_WRITE)  PRN			DEFW	UNIMP			; C=06H  (C_RAWIO)			DEFW	GET_IOB			; C=07H			DEFW	SET_IOB			; C=08H			DEFW	C_WRITESTR		; C=09H			DEFW	UNIMP			; C=0AH  (C_READSTR)			DEFW	C_STAT			; C=0BH			DEFW	S_BDOSVER		; C=0CH			DEFW	DRV_ALLRST		; C=0DH			DEFW	DRV_SET			; C=0EH			DEFW	F_OPEN			; C=0FH			DEFW	F_CLOSE			; C=10H			DEFW	UNIMP			; C=11H  (F_SFIRST)			DEFW	UNIMP			; C=12H  (F_SNEXT)			DEFW	UNIMP			; C=13H  (F_DELETE)			DEFW	UNIMP			; C=14H  (F_READ)			DEFW	UNIMP			; C=15H  (F_WRITE)			DEFW	F_MAKE			; C=16H			DEFW	UNIMP			; C=17H  (F_RENAME)			DEFW	DRV_LOGVEC		; C=18H			DEFW	DRV_GET			; C=19H			DEFW	F_DMAOFF		; C=1AH			DEFW	UNIMP			; C=1BH  (DRV_ALLOCVEC)			DEFW	DRV_SETRO		; C=1CH			DEFW	DRV_ROVEC		; C=1DH			DEFW	UNIMP			; C=1EH  (F_ATTRIB)			DEFW	UNIMP			; C=1FH  (DRV_DPB)			DEFW	F_USERNUM		; C=20H			DEFW	UNIMP			; C=21H  (F_READRAND)			DEFW	UNIMP			; C=22H  (F_WRITERAND)			DEFW	UNIMP			; C=23H  (F_SIZE)			DEFW	UNIMP			; C=24H  (F_RANDREC)			DEFW	DRV_RESET		; C=25H			DEFW	UNIMP			; C=26H  (*nothing* in CP/M 2.2)			DEFW	UNIMP			; C=27H  (*nothing* in CP/M 2.2)			DEFW	UNIMP			; C=28H  (F_WRITEZF); Unimplemented BDOS call, just ring the bellUNIMP		LD		HL,BELL			; We are going to call BELL			LD		(ADDR),HL		; ...			LD		A,1				; CMD=1 means call 6502 sub			LD		(CMD),A			; ...			LD 		(SOFTCARD),A	; Do it!			RET						; Return to calling program; System reset.  Jump to $0000 - doesn't returnC_TERMCPM	RST		0				; Quick jump to zero; Wait for a character from the console, return it in A and L; Also echoes the char to the consoleC_READ		LD		HL,RDKEY		; We are going to call RDKEY			LD		(ADDR),HL		; ...			LD		A,1				; CMD=1 means call 6502 sub			LD		(CMD),A			; ...			LD		(SOFTCARD),A	; Do it!			LD		A,(AREG)		; Grab the return value			PUSH	AF				; Preserve A (and F)						LD		HL,COUT			; Echo the character using COUT			LD		(ADDR),HL		; ...			LD		A,1				; CMD=1 means call 6502 sub			LD		(CMD),A			; ...			LD		(SOFTCARD),A	; Do it!			POP		AF				; Restore A (and F)			AND		7FH				; Mask high bit			LD		L,A				; Copy A to L			RET						; Return to calling program; Write character in E to the console; TODO: Handle tabs, ^S and ^QC_WRITE		LD		A,80H			; Set high bit			OR		E				; ...			CP		8AH				; Check for linefeed			RET		Z				; If LF, don't print it			LD		(AREG),A		; Pass char to COUT in 6502 A			LD		HL,COUT			; We are going to call COUT			LD		(ADDR),HL		; ...			LD		A,1				; CMD=1 means call 6502 sub			LD		(CMD),A			; ...			LD		(SOFTCARD),A	; Do it!			RET						; Return to calling program; Get the IOBYTE in A and LGET_IOB		LD		A,(IOBYTE)		;			LD		L,A				; Copy to L			RET; Set the IOBYTE; E contains the IOBYTE value to setSET_IOB		LD		A,E				;			LD		(IOBYTE),A		;			RET; Write ASCII string to console. '$' is the terminator; DE contains the address of the stringC_WRITESTR	LD		A,(DE)			; Fetch character from string			CP		'$'				; Is it '$'?			RET		Z				; If so, we are done			PUSH	DE				; We are gonna need E			LD		E,A				; For C_WRITE			CALL	C_WRITE			; Sent char to console			POP		DE				; Recover the pointer			INC		DE				; Advance pointer			JP		C_WRITESTR		; Handle the next char; Returns 0 in A and L if no chars waiting, non zero otherwiseC_STAT		LD		A,3				; CMD=3 means peek at keyboard			LD		(CMD),A			; ...			LD		(SOFTCARD),A	; Do it			LD		A,(AREG)		; Grab the return value			LD		L,A				; Copy A to L			RET						; Return to calling program; Returns system type in B and H, BDOS version in A and LS_BDOSVER	LD		B,0				; System is 8080 CP/M			LD		H,B				; Also in H			LD		A,22H			; Pretend to v2.2			LD		L,A				; Also in A			RET; Reset disks; Makes A: drive the default; TODO: Empty all disk buffersDRV_ALLRST	LD		A,0				; 0 means drive A:			LD		(CURDRV),A		; Store in CURDRV			LD		BC,FILEBUF		; FILEBUF is at 0080H			LD		(DMAADDR),BC	; Reset DMA address			RET; Select disk; Disk to select is passed in E (A: is 0, B: is 1 etc.); Return 00 for success, 0FFH for error in A and LDRV_SET		LD		A,E				; Prepare to compare disk number			CP		16				; Support 16 'drives' A: - P:			JP		NC,DSERR		; If A>15 ... error			LD		(CURDRV),A		; Store the requested drive number			LD		A,0				; Return code meaning success			JP		DSRET			; DSERR		LD		A,0FFH			; Return code for errorDSRET		LD		L,A				; Return code in L too			RET; Open file; DE is the address of the FCB describing the file to open; Returns error codes in A and L:; 0 through 3 for success, 0FFH is file not foundF_OPEN		CALL	MAKEPATH		; Populate PATHLEN and PATH			; Work out which IOBUF to allocate for this file			; And set the pointer in the ProDOS parameter list			LD		A,(FRN1)		; See if IOBUF1 is free			CP		0				; ...			JP		Z,FOS1			; IOBUF1 is free			LD		A,(FRN2)		; See if IOBUF2 is free			CP		0				; ...			JP		Z,FOS2			; IOBUF2 is free			LD		A,(FRN3)		; See if IOBUF3 is free			CP		0				; ...			JP		Z,FOS3			; IOBUF3 is free			LD		A,(FRN4)		; See if IOBUF4 is free			CP		0				; ...			JP		Z,FOS4			; IOBUF4 is free			LD		A,0FFH			; Error too many files open			LD		L,A				; Copy to L			RET						; Error returnFOS1		LD		HL,IOBUF1		; Address of IOBUF1			LD		A,1				; Buffer 1			JP		FOS5			;FOS2		LD		HL,IOBUF2		; Address of IOBUF2			LD		A,2				; Buffer 2			JP		FOS5			;FOS3		LD		HL,IOBUF3		; Address of IOBUF3			LD		A,3				; Buffer 3			JP		FOS5			;FOS4		LD		HL,IOBUF4		; Address of IOBUF4			LD		A,4				; Buffer 4FOS5		LD		(FOMLII),HL		; Store in parameter list			LD		(FOIOB),A		; Record the buffer index for later			;			; TODO NOW THE CODE TO ACTUALLY INVOKE THE MLI CALL ON 6502			;						;			; TODO HANDLE ERROR RETURN CODES FROM MLI			;			LD		A,(FOMLIN)		; Get ProDOS file reference number			LD		H,D				; Pointer to FCB ...			LD		L,E				; ... into HL			LD		BC,14			; Offset to S2 field (reserved field)			ADD		HL,BC			; Compute address			LD		(HL),A			; Store file refence number is S2 field			LD		A,(FOIOB)		; Obtain IOBUF idx (1,2,3,4)			CP		1				; Is it 1? ...			JP		Z,FOS6			; ... yes			CP		2				; Is it 2? ...			JP		Z,FOS7			; ... yes			CP		3				; Is it 3? ...			JP		Z,FOS8			; ... yes			JP		FOS9			; Must be 4FOS6		LD		A,(FOMLIN)		;			LD		(FRN1),A		;			JP		FOS10			;FOS7		LD		A,(FOMLIN)		;			LD		(FRN2),A		;			JP		FOS10			;FOS8		LD		A,(FOMLIN)		;			LD		(FRN3),A		;			JP		FOS10			;FOS9		LD		A,(FOMLIN)		;			LD		(FRN4),A		;			JP		FOS10			;FOS10					;			; TODO HANDLE RETURN CODE ON SUCCESS (0,1,2,3)			;			RETFOMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code					DEFB	3				; ProDOS PL: Three parametersFOMLIP		DEFW	PATHLEN			; ProDOS PL: pointer to pathFOMLII		DEFW	0000H			; ProDOS PL: pointer to IO bufferFOMLIN		DEFB	0				; ProDOS PL: File reference numberFOIOB		DEFB	0				; Local variable to record IOBUF idx			DEFB	60H				; RTS in 6502 code; Close file; DE is the address of the FCB describing the file to close; Returns error codes in BA and HL:; TODO WRITE THIS!!!!F_CLOSE	; Steps:	; 1) Get the file reference number from field S2 of FCB & fill in FCMLIN	; 2) Hand off pointer to the JSR instruction to 6502 to run	; 3) On return, check return code and set BA and HL accordingly			RETFCMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code					DEFB	1				; ProDOS PB: One parameterFCMLIN		DEFB	0				; ProDOS PB: File reference number			DEFB	60H				; RTS in 6502 code			; Create (and open) file; DE is the address of the FCB describing the file to create; Returns error codes in A and L:; 0 through 3 for success, 0FFH is file could not be createdF_MAKE		CALL	MAKEPATH		; Populate PATHLEN and PATH			LD		HL,FMMLI		; Pass address of 6502 JSR instruction			LD		(ADDR),HL		; ...			LD		A,2				; CMD=2 means ProDOS MLI call			LD		(CMD),A			; ...			LD 		(SOFTCARD),A	; Do it!			LD		A,(AREG)		; Get return code from the MLI call			CP		0				; See if there was an error			JP		NZ,FMS1			; Handle error;;;;		CALL	F_OPEN			; Open the file using same FCB (DE ptr)			LD		A,0				;;; TEMP DEBUG - SHOULD CALL F_OPEN ABOVE ;;;			RETFMS1		LD		A,0FFH			; 0FFH for error			LD		L,A				; Return code in L also			RET			RETFMMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code					DEFB	7				; ProDOS PL: Seven parametersFMMLIP		DEFW	PATHLEN			; ProDOS PL: Pointer to pathFMMLIA		DEFB	0C3H			; ProDOS PL: Access (0C3H full access)FMMLIT		DEFB	0				; ProDOS PL: File type (0 means typeless)FMMLIAT		DEFW	0000H			; ProDOS PL: Aux file type (always 0000H)FMMLIS		DEFB	1				; ProDOS PL: Storage type (1 for file)FMMLICD		DEFW	0000H			; ProDOS PL: Create date (always 0000H)FMMLICT		DEFW	0000H			; ProDOS PL: Create time (always 0000H)			DEFB	60H				; RTS in 6502 code; Return bitmap of logged-in drives in HLDRV_LOGVEC	LD		HL,(LOGVEC)		;			RET; Return current drive in ADRV_GET		LD		A,(CURDRV)		;			RET; Set DMA address; DMA address is passed in DEF_DMAOFF	LD		(DMAADDR),DE	;			RET; Software write-protect current diskDRV_SETRO	LD		B,80H			; Set MS-bit in B, will rotate this below			LD		A,(CURDRV)		; Current drive (0 A:, 1 B: ...)			INC		A				; It is easier if A: is 1, B is 2 etc.			CP		9				; See if it in LS-byte or MS-byte of ROVEC			JP		NC,DSRMSB		; If A>8 then drive bit in in MS-byteDSRL1		RL		B				; 			DEC		A				;			JP		NZ,DSRL1		;			LD		A,(ROVEC)		; Fetch the LS-byte of ROVEC			OR		B				; Set the bit using OR			LD		(ROVEC),A		; Store LS-byte back to ROVEC			RET						; We're doneDSRMSB		LD		C,8				; Subtract 8 from the drive number			SUB		C				; A = A-8DSRL2		RL		B				;			DEC		A				;			JP		NZ,DSRL2		;			LD		A,(ROVEC+1)		; Fetch the MS-byte of ROVEC			OR		B				; Set the bit using OR			LD		(ROVEC+1),A		; Store MS-byte back to ROVEC			RET; Return bitmap of read-only drives in HLDRV_ROVEC	LD		HL,(ROVEC)		; Bit 0 of L is A:, bit 7 of H is P:			RET; Get/set user number; E contains the user number to set, or 0FFH to get current user number; If E is 0FFH then user number is returned in AF_USERNUM	LD		A,E				; See if it is get or set			CP		0FFH			; 0FFH means 'get'			JP		Z,FUNS1			; It is 'get'			LD		(USERNUM),A		; Set user number			RETFUNS1		LD		A,(USERNUM)		; Get user number			RET; Selectively reset disk drives; DE contains bitmap of drives to reset (bit 0 of E if A:, bit 7 of D is P:); Returns A=00H if okay, A=FFH if error; Resetting means removing the read-only statusDRV_RESET	LD		A,(ROVEC)		; Do the LSB ...			XOR		E				; ... with E			LD		(ROVEC),A		;			LD		A,(ROVEC+1)		; Then the MSB ...			XOR		D				; ... with D			LD		(ROVEC+1),A		;			RET; Populate the PATH buffer (and PATHLEN) by copying from FCB; DE contains a pointer to the FCB; Be sure not to trash DE; TODO FINISH THIS!!!MAKEPATH	LD		A,(DE)			; Get drive number from FCB			CP		0				; See if it is zero (default drive)			JP		NZ,MPS1			; If drive explicit			LD		A,(CURDRV)		; If default drive use CURDRV			INC		A				; CURDRV is zero basedMPS1		ADD		A,'A'-1			; Convert to drive letter			LD		(PATH),A		; Store as first char of path			LD		A,'/'			; Second char of path is '/'			LD		(PATH+1),A		; ...			LD		C,2				; Use C to count chars in filename			LD		H,D				; Copy address of FCB from DE ...			LD		L,E				; ... to HL			INC		HL				; HL points to filename in FCB			LD		IX,PATH+2		; IX points to next char of path to writeMPL1		LD		A,(HL)			; Obtain filename character			CP		' '				; See if it is a space (? or NULL maybe?)			JP		Z,MPS3			; If so we are done with filename			EX		AF,AF'			; We need to re-use A here			LD		A,C				; Get character count			CP		10				; Drive letter, slash and 8 char filename			JP		Z,MPS2			; If so we are done with filename			EX		AF,AF'			; Swap back to original A reg			LD		(IX+0),A		; Copy to PATH buffer			INC		C				; Count the chars			INC		HL				; Next byte of filename in FCB			INC		IX				; Next byte of PATH buffer			JP		MPL1			; Loop till doneMPS2		EX		AF,AF'			; Swap back to original A regMPS3		; EXTENSION			;  ...			LD		A,C				; Store length of string			LD		(PATHLEN),A		; ...			RET;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; Additional private scratch space for BDOS;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; 64 bytes for storing a file path as a Pascal style stringPATHLEN		DEFB	0PATH		DEFS	64; Four 1024 byte ProDOS I/O buffers; TODO THESE MUST START ON A PAGE BOUNDARY!!!!IOBUF1		DEFS	1024IOBUF2		DEFS	1024IOBUF3		DEFS	1024IOBUF4		DEFS	1024; Record file reference numbers for each I/O buffer; Or 0 if no file is using the bufferFRN1		DEFB	0FRN2		DEFB	0FRN3		DEFB	0FRN4		DEFB	0;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Z80 code running on Softcard
+; Implements CP/M style BDOS interface
+; Requires the companion SOFTCARD65 6502 code
+; Bobbi 2019
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+BDOSADDR	EQU		05000H			; Keep below 32K for now (Z80asm bug)
+STCKTOP		EQU		06000H			; Top of Z80 stack
+
+SOFTCARD	EQU		0E400H			; Softcard in slot 4 ($C400)
+
+; 6502 zero page, in Z80 address space
+CMD			EQU		0F006H			; 6502 $06
+AREG		EQU		0F007H			; 6502 $07
+XREG		EQU		0F008H			; 6502 $08
+YREG		EQU		0F009H			; 6502 $09
+ADDR		EQU		0F0EBH			; 6502 $EB (LSB)
+ADDRH		EQU		0F0ECH			; 6502 $EC (MSB)
+
+; Addresses of 6502 routines, in 6502 address space
+COUT		EQU		0FDEDH			; Print char in A
+RDKEY		EQU		0FD0CH			; Read key, return in A
+BELL		EQU		0FBE4H			; Sound the bell
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Entry point when Z80 cold starts is 0000H
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+			ORG		0000H
+			JP		BDOSINIT		; Initialize BDOS
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; See obsolescence.wix.com/obsolescence/cpm-internals for info
+; on low storage usage ...
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+IOBYTE		DEFB	0				; Maps virtual to real devices
+CURDRV		DEFB	0				; Currently selected drive 0=A: etc
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; BDOS entry point must be at address 0005H for CP/M compatibility
+; Function to invoke is passed in C
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+BDOS		JP		BDOSIMP			; BDOS code is at top of memory
+
+RVEC1		DEFW	0000H			; Restart vector 1
+RVEC2		DEFW	0000H			; Restart vector 2
+RVEC3		DEFW	0000H			; Restart vector 3
+RVEC4		DEFW	0000H			; Restart vector 4
+RVEC5		DEFW	0000H			; Restart vector 5
+RVEC6		DEFW	0000H			; Restart vector 6
+RVEC7		DEFW	0000H			; Restart vector 7
+
+; Space for private BDOS data (implementation dependent) up to 0060H
+DMAADDR		DEFW	0080H			; DMA address defaults to FILEBUF (0080H)
+LOGVEC		DEFW	0000H			; Vector of logged in drives
+ROVEC		DEFW	0000H			; Vector of read-only drives
+USERNUM		DEFB	00H				; User number
+; End of private, implementation dependent space
+
+			ORG		0060H			; Standard addr of 32 byte FCB
+FCBDRV		DEFB	00H				; FCB Drive (0 current, 1 A:, 2 B: etc)
+FCBNAM		DEFM	'FILENAMEEXT'	; FCB filename and extension
+FCBEX		DEFB	00H				; FCB extent field
+FCBS1		DEFB	00H				; FCB S1 field
+FCBS2		DEFB	00H				; FCB S2 field
+FCBRC		DEFB	00H				; FCB RC field
+FCBMAP		DEFS	16				; Map of blocks in file
+
+			ORG		0080H			; Standard addr of 128 byte File Buffer
+FILEBUF		DEFS	128
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; The application program proper starts at 0100H
+; in order to be compatible with CP/M .COM programs
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+			ORG		0100H
+
+; Print signon message using C_WRITESTR
+PROGSTRT	LD		DE,WELCOME		; Address of string
+			LD		C,09H			; C_WRITESTR call
+			CALL	BDOS			; CP/M BDOS call
+
+; Print the alphabet using C_WRITE
+			LD		B,'A'
+L1			LD		E,B 			; Character to print
+
+			LD		C,02H			; C_WRITE call
+			PUSH	BC				; Preserve B (and C)
+			CALL	BDOS			; CP/M BDOS call
+			POP		BC				; Restore B (and C)
+
+			INC		B
+			LD		A,'Z'
+			CP		B
+			JP		Z,S1
+			JP		L1
+
+; Loop until there is a keystroke waiting using C_STAT
+S1			LD		C,0BH			; C_STAT call
+			CALL	BDOS			; CP/M BDOS call
+			CP		0				; Anything?
+			JR		Z,S1			; If not, loop
+
+; Print a couple of asterisks
+  			LD		E,'*'			;
+			LD		C,02H			; C_WRITE call
+			CALL	BDOS			; CP/M BDOS call
+			LD		E,'*'			;
+			LD		C,2				; C_WRITE call
+			CALL	BDOS			; CP/M BDOS call
+
+; Create a file using ProDOS MLI
+; Creates 'A/TESTFILE.TMP'
+; Directory 'A' needs to exist already
+
+			LD		DE,MSG1			; Address of string
+			LD		C,09H			; C_WRITESTR call
+			CALL	BDOS			; CP/M BDOS call
+
+			LD		A,1				; A: drive
+			LD		(FCBDRV),A		;
+			LD		A,'T'			; Filename
+			LD		(FCBNAM),A		;
+			LD		A,'E'			; Filename
+			LD		(FCBNAM+1),A	;
+			LD		A,'S'			; Filename
+			LD		(FCBNAM+2),A	;
+			LD		A,'T'			; Filename
+			LD		(FCBNAM+3),A	;
+			LD		A,'F'			; Filename
+			LD		(FCBNAM+4),A	;
+			LD		A,'I'			; Filename
+			LD		(FCBNAM+5),A	;
+			LD		A,'L'			; Filename
+			LD		(FCBNAM+6),A	;
+			LD		A,'E'			; Filename
+			LD		(FCBNAM+7),A	;
+			LD		A,'T'			; Extension
+			LD		(FCBNAM+8),A	;
+			LD		A,'M'			; Extension
+			LD		(FCBNAM+9),A	;
+			LD		A,'P'			; Extension
+			LD		(FCBNAM+10),A	;
+			LD		DE,0060H		; Default FCB address
+			LD		C,16H			; F_MAKE call
+			CALL	BDOS			; CP/M BDOS call
+
+			LD		A,(AREG)		; Look at the return code
+			CP		0				; Success?
+			JP		Z,SUCC			;
+			LD		DE,FAILMSG1		; Fail message
+			LD		C,09H			; C_WRITESTR call
+			CALL	BDOS			; CP/M BDOS call
+			LD		DE,HEXBUF		; Write hex value to console
+			LD		C,09H			; C_WRITESTR call
+			CALL	BDOS			; CP/M BDOS call
+			LD		DE,FAILMSG2		; Fail message
+			LD		C,09H			; C_WRITESTR call
+			CALL	BDOS			; CP/M BDOS call
+			JP		L2				; Skip success message
+SUCC		LD		DE,SUCCMSG		; Success message
+			LD		C,09H			; C_WRITESTR call
+			CALL	BDOS			; CP/M BDOS call
+
+; Read keyboard and echo to screen C_READ, C_WRITE
+L2			LD		C,1				; C_READ call
+			CALL	BDOS			; CP/M BDOS call
+			LD		E,A				; Prepare to echo keystroke
+			LD		C,2				; C_WRITE call
+			CALL	BDOS			; CP/M BDOS call
+			JP		L2				; Forever and ever
+
+WELCOME		DEFB	13
+			DEFM	'Zapple-II Test Stub...'
+			DEFB	13, '$'
+			
+MSG1		DEFB	13
+			DEFM	'Creating A/TESTFILE.TMP'
+			DEFB	13, '$'
+			
+SUCCMSG		DEFM	'Success!'
+			DEFB	13, '$'
+			
+FAILMSG1	DEFM	'FAIL (0x$'
+			
+FAILMSG2	DEFM	')'
+			DEFB	13, '$'
+			
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Implementation of CP/M STYLE BDOS
+; Function to invoke is passed in C
+; C=00H   C_TERMCPM     System reset
+; C=01H   C_READ        Console read
+; C=02H   C_WRITE       Console write
+; C=07H   GET_IOB       Get IOBYTE
+; C=08H   SET_IOB       Set IOBYTE
+; C=09H   C_WRITESTR    Console write string
+; C=0BH   C_STAT        Console status
+; C=0CH   S_BDOSVER     Return version number
+; C=0DH   DRV_ALLRESET  Reset disks
+; C=0EH   DRV_SET       Select disk
+; C=0FH   F_OPEN        Open file (IN PROGRESS)
+; C=10H   F_CLOSE       Close file (IN PROGRESS)
+; C=16H   F_MAKE        Create file (IN PROGRESS)
+; C=17H   DRV_LOGVEC    Return bitmap of logged-in drives
+; C=19H   DRV_GET       Return current drive
+; C=1AH   F_DMAOFF      Set DMA address
+; C=1CH   DRV_SETRO     Software write-protect current drive
+; C=1DH   DRV_ROVEC     Return bitmap of read-only drives
+; C=20H   F_USERNUM     Get/set user number
+; C=25H   DRV_RESET     Selectively reset disk drives
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+			ORG		BDOSADDR
+
+BDOSINIT	LD		SP,STCKTOP		; Initialize SP
+			LD		A,0				; 
+			LD		(IOBYTE),A		; Initialize IOBYTE
+			LD		(CURDRV),A		; Drive A:
+			LD		(FRN1),A		; Initialize FRNs to zero
+			LD		(FRN2),A		; ...
+			LD		(FRN3),A		; ...
+			LD		(FRN4),A		; ...
+			LD		HL,0080H		; Initialize DMAADDR to 0080H
+			LD		(DMAADDR),HL	; ...
+			LD		HL,0000H		; Initialize LOGVEC & ROVEC to 0000H
+			LD		(LOGVEC),HL		; ...
+			LD		(ROVEC),HL		; ...
+			JP		PROGSTRT		; Run user program
+BDOSIMP		LD		A,C				; Prepare to check C is in range
+			CP		41				; Max syscall# for CP/M 2.2 is 40
+			JP		NC,UNIMP		; If >41 then call UNIMP
+			LD		HL,BDOSVEC		; Start of vector table
+			SLA		C				; Multiply C by 2
+			LD		B,0				; MSB of BC is zero
+			ADD		HL,BC			; Address of vector in HL
+			LD		C,(HL)			; Read LSB of address to jump to
+			INC		HL				; Read MSB of address to jump to
+			LD		H,(HL)			; ...
+			LD		L,C				; Address needs to be in HL
+			JP		(HL)			; Jump to it!
+
+; Vector table
+BDOSVEC		DEFW	C_TERMCPM		; C=00H
+			DEFW	C_READ			; C=01H
+			DEFW	C_WRITE			; C=02H
+			DEFW	UNIMP			; C=03H  (A_READ)   AUX
+			DEFW	UNIMP			; C=04H  (A_WRITE)  AUX
+			DEFW	UNIMP			; C=05H  (L_WRITE)  PRN
+			DEFW	UNIMP			; C=06H  (C_RAWIO)
+			DEFW	GET_IOB			; C=07H
+			DEFW	SET_IOB			; C=08H
+			DEFW	C_WRITESTR		; C=09H
+			DEFW	UNIMP			; C=0AH  (C_READSTR)
+			DEFW	C_STAT			; C=0BH
+			DEFW	S_BDOSVER		; C=0CH
+			DEFW	DRV_ALLRST		; C=0DH
+			DEFW	DRV_SET			; C=0EH
+			DEFW	F_OPEN			; C=0FH
+			DEFW	F_CLOSE			; C=10H
+			DEFW	UNIMP			; C=11H  (F_SFIRST)
+			DEFW	UNIMP			; C=12H  (F_SNEXT)
+			DEFW	UNIMP			; C=13H  (F_DELETE)
+			DEFW	UNIMP			; C=14H  (F_READ)
+			DEFW	UNIMP			; C=15H  (F_WRITE)
+			DEFW	F_MAKE			; C=16H
+			DEFW	UNIMP			; C=17H  (F_RENAME)
+			DEFW	DRV_LOGVEC		; C=18H
+			DEFW	DRV_GET			; C=19H
+			DEFW	F_DMAOFF		; C=1AH
+			DEFW	UNIMP			; C=1BH  (DRV_ALLOCVEC)
+			DEFW	DRV_SETRO		; C=1CH
+			DEFW	DRV_ROVEC		; C=1DH
+			DEFW	UNIMP			; C=1EH  (F_ATTRIB)
+			DEFW	UNIMP			; C=1FH  (DRV_DPB)
+			DEFW	F_USERNUM		; C=20H
+			DEFW	UNIMP			; C=21H  (F_READRAND)
+			DEFW	UNIMP			; C=22H  (F_WRITERAND)
+			DEFW	UNIMP			; C=23H  (F_SIZE)
+			DEFW	UNIMP			; C=24H  (F_RANDREC)
+			DEFW	DRV_RESET		; C=25H
+			DEFW	UNIMP			; C=26H  (*nothing* in CP/M 2.2)
+			DEFW	UNIMP			; C=27H  (*nothing* in CP/M 2.2)
+			DEFW	UNIMP			; C=28H  (F_WRITEZF)
+
+; Unimplemented BDOS call, just ring the bell
+UNIMP		LD		HL,BELL			; We are going to call BELL
+			LD		(ADDR),HL		; ...
+			LD		A,1				; CMD=1 means call 6502 sub
+			LD		(CMD),A			; ...
+			LD 		(SOFTCARD),A	; Do it!
+			RET						; Return to calling program
+
+; System reset.  Jump to $0000 - doesn't return
+C_TERMCPM	RST		0				; Quick jump to zero
+
+; Wait for a character from the console, return it in A and L
+; Also echoes the char to the console
+C_READ		LD		HL,RDKEY		; We are going to call RDKEY
+			LD		(ADDR),HL		; ...
+			LD		A,1				; CMD=1 means call 6502 sub
+			LD		(CMD),A			; ...
+			LD		(SOFTCARD),A	; Do it!
+			LD		A,(AREG)		; Grab the return value
+			PUSH	AF				; Preserve A (and F)
+			
+			LD		HL,COUT			; Echo the character using COUT
+			LD		(ADDR),HL		; ...
+			LD		A,1				; CMD=1 means call 6502 sub
+			LD		(CMD),A			; ...
+			LD		(SOFTCARD),A	; Do it!
+
+			POP		AF				; Restore A (and F)
+			AND		7FH				; Mask high bit
+			LD		L,A				; Copy A to L
+			RET						; Return to calling program
+
+; Write character in E to the console
+; TODO: Handle tabs, ^S and ^Q
+C_WRITE		LD		A,80H			; Set high bit
+			OR		E				; ...
+			CP		8AH				; Check for linefeed
+			RET		Z				; If LF, don't print it
+			LD		(AREG),A		; Pass char to COUT in 6502 A
+			LD		HL,COUT			; We are going to call COUT
+			LD		(ADDR),HL		; ...
+			LD		A,1				; CMD=1 means call 6502 sub
+			LD		(CMD),A			; ...
+			LD		(SOFTCARD),A	; Do it!
+			RET						; Return to calling program
+
+; Get the IOBYTE in A and L
+GET_IOB		LD		A,(IOBYTE)		;
+			LD		L,A				; Copy to L
+			RET
+
+; Set the IOBYTE
+; E contains the IOBYTE value to set
+SET_IOB		LD		A,E				;
+			LD		(IOBYTE),A		;
+			RET
+
+; Write ASCII string to console. '$' is the terminator
+; DE contains the address of the string
+C_WRITESTR	LD		A,(DE)			; Fetch character from string
+			CP		'$'				; Is it '$'?
+			RET		Z				; If so, we are done
+			PUSH	DE				; We are gonna need E
+			LD		E,A				; For C_WRITE
+			CALL	C_WRITE			; Sent char to console
+			POP		DE				; Recover the pointer
+			INC		DE				; Advance pointer
+			JP		C_WRITESTR		; Handle the next char
+
+; Returns 0 in A and L if no chars waiting, non zero otherwise
+C_STAT		LD		A,3				; CMD=3 means peek at keyboard
+			LD		(CMD),A			; ...
+			LD		(SOFTCARD),A	; Do it
+			LD		A,(AREG)		; Grab the return value
+			LD		L,A				; Copy A to L
+			RET						; Return to calling program
+
+; Returns system type in B and H, BDOS version in A and L
+S_BDOSVER	LD		B,0				; System is 8080 CP/M
+			LD		H,B				; Also in H
+			LD		A,22H			; Pretend to v2.2
+			LD		L,A				; Also in A
+			RET
+
+; Reset disks
+; Makes A: drive the default
+; TODO: Empty all disk buffers
+DRV_ALLRST	LD		A,0				; 0 means drive A:
+			LD		(CURDRV),A		; Store in CURDRV
+			LD		BC,FILEBUF		; FILEBUF is at 0080H
+			LD		(DMAADDR),BC	; Reset DMA address
+			RET
+
+; Select disk
+; Disk to select is passed in E (A: is 0, B: is 1 etc.)
+; Return 00 for success, 0FFH for error in A and L
+DRV_SET		LD		A,E				; Prepare to compare disk number
+			CP		16				; Support 16 'drives' A: - P:
+			JP		NC,DSERR		; If A>15 ... error
+			LD		(CURDRV),A		; Store the requested drive number
+			LD		A,0				; Return code meaning success
+			JP		DSRET			; 
+DSERR		LD		A,0FFH			; Return code for error
+DSRET		LD		L,A				; Return code in L too
+			RET
+
+; Open file
+; DE is the address of the FCB describing the file to open
+; Returns error codes in A and L:
+; 0 through 3 for success, 0FFH is file not found
+F_OPEN		CALL	MAKEPATH		; Populate PATHLEN and PATH
+
+			; Work out which IOBUF to allocate for this file
+			; And set the pointer in the ProDOS parameter list
+			LD		A,(FRN1)		; See if IOBUF1 is free
+			CP		0				; ...
+			JP		Z,FOS1			; IOBUF1 is free
+			LD		A,(FRN2)		; See if IOBUF2 is free
+			CP		0				; ...
+			JP		Z,FOS2			; IOBUF2 is free
+			LD		A,(FRN3)		; See if IOBUF3 is free
+			CP		0				; ...
+			JP		Z,FOS3			; IOBUF3 is free
+			LD		A,(FRN4)		; See if IOBUF4 is free
+			CP		0				; ...
+			JP		Z,FOS4			; IOBUF4 is free
+			LD		A,0FFH			; Error too many files open
+			LD		L,A				; Copy to L
+			RET						; Error return
+FOS1		LD		HL,IOBUF1		; Address of IOBUF1
+			LD		A,1				; Buffer 1
+			JP		FOS5			;
+FOS2		LD		HL,IOBUF2		; Address of IOBUF2
+			LD		A,2				; Buffer 2
+			JP		FOS5			;
+FOS3		LD		HL,IOBUF3		; Address of IOBUF3
+			LD		A,3				; Buffer 3
+			JP		FOS5			;
+FOS4		LD		HL,IOBUF4		; Address of IOBUF4
+			LD		A,4				; Buffer 4
+FOS5		LD		(FOMLII),HL		; Store in parameter list
+			LD		(FOIOB),A		; Record the buffer index for later
+
+			;
+			; TODO NOW THE CODE TO ACTUALLY INVOKE THE MLI CALL ON 6502
+			;
+			
+			;
+			; TODO HANDLE ERROR RETURN CODES FROM MLI
+			;
+
+			LD		A,(FOMLIN)		; Get ProDOS file reference number
+			LD		H,D				; Pointer to FCB ...
+			LD		L,E				; ... into HL
+			LD		BC,14			; Offset to S2 field (reserved field)
+			ADD		HL,BC			; Compute address
+			LD		(HL),A			; Store file refence number is S2 field
+			LD		A,(FOIOB)		; Obtain IOBUF idx (1,2,3,4)
+			CP		1				; Is it 1? ...
+			JP		Z,FOS6			; ... yes
+			CP		2				; Is it 2? ...
+			JP		Z,FOS7			; ... yes
+			CP		3				; Is it 3? ...
+			JP		Z,FOS8			; ... yes
+			JP		FOS9			; Must be 4
+FOS6		LD		A,(FOMLIN)		;
+			LD		(FRN1),A		;
+			JP		FOS10			;
+FOS7		LD		A,(FOMLIN)		;
+			LD		(FRN2),A		;
+			JP		FOS10			;
+FOS8		LD		A,(FOMLIN)		;
+			LD		(FRN3),A		;
+			JP		FOS10			;
+FOS9		LD		A,(FOMLIN)		;
+			LD		(FRN4),A		;
+			JP		FOS10			;
+FOS10		
+			;
+			; TODO HANDLE RETURN CODE ON SUCCESS (0,1,2,3)
+			;
+
+			RET
+
+FOMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code		
+			DEFB	0C8H			; ProDOS OPEN call
+			DEFW	FOMLIPL+1000H	; Pointer to parm list in 6502 addr space
+			DEFB	60H				; RTS in 6502 code
+FOMLIPL		DEFB	3				; ProDOS PL: Three parameters
+FOMLIP		DEFW	PATHLEN+1000H	; ProDOS PL: pointer to path in 6502 addr
+FOMLII		DEFW	0000H			; ProDOS PL: pointer to IO buffer
+FOMLIN		DEFB	0				; ProDOS PL: File reference number
+FOIOB		DEFB	0				; Local variable to record IOBUF idx
+; Close file
+; DE is the address of the FCB describing the file to close
+; Returns error codes in BA and HL:
+; TODO WRITE THIS!!!!
+F_CLOSE
+	; Steps:
+	; 1) Get the file reference number from field S2 of FCB & fill in FCMLIN
+	; 2) Hand off pointer to the JSR instruction to 6502 to run
+	; 3) On return, check return code and set BA and HL accordingly
+			RET
+FCMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code		
+			DEFB	0CCH			; ProDOS CLOSE call
+			DEFW	FCMLIPL+1000H	; Pointer to parm list in 6502 addr space
+			DEFB	60H				; RTS in 6502 code
+FCMLIPL		DEFB	1				; ProDOS PB: One parameter
+FCMLIN		DEFB	0				; ProDOS PB: File reference number
+			
+
+; Create (and open) file
+; DE is the address of the FCB describing the file to create
+; Returns error codes in A and L:
+; 0 through 3 for success, 0FFH is file could not be created
+F_MAKE		CALL	MAKEPATH		; Populate PATHLEN and PATH
+			LD		HL,FMMLI		; Pass address of 6502 JSR instruction
+			LD		BC,1000H		; Add offset to convert Z80->6502 address
+			ADD		HL,BC			; ...
+			LD		(ADDR),HL		; Store it for 6502
+			LD		A,2				; CMD=2 means ProDOS MLI call
+			LD		(CMD),A			; ...
+			LD 		(SOFTCARD),A	; Do it!
+			LD		A,(AREG)		; Get return code from the MLI call
+			CP		0				; See if there was an error
+			JP		NZ,FMS1			; Handle error
+;;;;		CALL	F_OPEN			; Open the file using same FCB (DE ptr)
+			LD		A,0				;;; TEMP DEBUG - SHOULD CALL F_OPEN ABOVE ;;;
+			RET
+FMS1		LD		L,A				; Copy to HL for NUM2HEX
+			LD		H,0				; ...
+			LD		DE,HEXBUF		; Generate hex string to HEXBUF
+			CALL	NUM2HEX			; ...
+			LD		A,'$'			; Terminate the hex string
+			LD		(HEXBUF+4),A	; ...
+			LD		A,0FFH			; 0FFH for error
+			LD		L,A				; Return code in L also
+			RET
+
+			RET
+FMMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code		
+			DEFB	0C0H			; ProDOS CREATE call
+			DEFW	FMMLIPL+1000H	; Pointer to parm list in 6502 addr space
+			DEFB	60H				; RTS in 6502 code
+FMMLIPL		DEFB	7				; ProDOS PL: Seven parameters
+FMMLIP		DEFW	PATHLEN+1000H	; ProDOS PL: Pointer to path in 6502 addr
+FMMLIA		DEFB	0C3H			; ProDOS PL: Access (0C3H full access)
+FMMLIT		DEFB	0				; ProDOS PL: File type (0 means typeless)
+FMMLIAT		DEFW	0000H			; ProDOS PL: Aux file type (always 0000H)
+FMMLIS		DEFB	1				; ProDOS PL: Storage type (1 for file)
+FMMLICD		DEFW	0000H			; ProDOS PL: Create date (always 0000H)
+FMMLICT		DEFW	0000H			; ProDOS PL: Create time (always 0000H)
+
+
+; Return bitmap of logged-in drives in HL
+DRV_LOGVEC	LD		HL,(LOGVEC)		;
+			RET
+
+; Return current drive in A
+DRV_GET		LD		A,(CURDRV)		;
+			RET
+
+; Set DMA address
+; DMA address is passed in DE
+F_DMAOFF	LD		(DMAADDR),DE	;
+			RET
+
+; Software write-protect current disk
+DRV_SETRO	LD		B,80H			; Set MS-bit in B, will rotate this below
+			LD		A,(CURDRV)		; Current drive (0 A:, 1 B: ...)
+			INC		A				; It is easier if A: is 1, B is 2 etc.
+			CP		9				; See if it in LS-byte or MS-byte of ROVEC
+			JP		NC,DSRMSB		; If A>8 then drive bit in in MS-byte
+DSRL1		RL		B				; 
+			DEC		A				;
+			JP		NZ,DSRL1		;
+			LD		A,(ROVEC)		; Fetch the LS-byte of ROVEC
+			OR		B				; Set the bit using OR
+			LD		(ROVEC),A		; Store LS-byte back to ROVEC
+			RET						; We're done
+DSRMSB		LD		C,8				; Subtract 8 from the drive number
+			SUB		C				; A = A-8
+DSRL2		RL		B				;
+			DEC		A				;
+			JP		NZ,DSRL2		;
+			LD		A,(ROVEC+1)		; Fetch the MS-byte of ROVEC
+			OR		B				; Set the bit using OR
+			LD		(ROVEC+1),A		; Store MS-byte back to ROVEC
+			RET
+
+; Return bitmap of read-only drives in HL
+DRV_ROVEC	LD		HL,(ROVEC)		; Bit 0 of L is A:, bit 7 of H is P:
+			RET
+
+; Get/set user number
+; E contains the user number to set, or 0FFH to get current user number
+; If E is 0FFH then user number is returned in A
+F_USERNUM	LD		A,E				; See if it is get or set
+			CP		0FFH			; 0FFH means 'get'
+			JP		Z,FUNS1			; It is 'get'
+			LD		(USERNUM),A		; Set user number
+			RET
+FUNS1		LD		A,(USERNUM)		; Get user number
+			RET
+
+; Selectively reset disk drives
+; DE contains bitmap of drives to reset (bit 0 of E if A:, bit 7 of D is P:)
+; Returns A=00H if okay, A=FFH if error
+; Resetting means removing the read-only status
+DRV_RESET	LD		A,(ROVEC)		; Do the LSB ...
+			XOR		E				; ... with E
+			LD		(ROVEC),A		;
+			LD		A,(ROVEC+1)		; Then the MSB ...
+			XOR		D				; ... with D
+			LD		(ROVEC+1),A		;
+			RET
+
+; Populate the PATH buffer (and PATHLEN) by copying from FCB
+; DE contains a pointer to the FCB
+; Be sure not to trash DE
+; TODO FINISH THIS!!!
+MAKEPATH	LD		A,(DE)			; Get drive number from FCB
+			CP		0				; See if it is zero (default drive)
+			JP		NZ,MPS1			; If drive explicit
+			LD		A,(CURDRV)		; If default drive use CURDRV
+			INC		A				; CURDRV is zero based
+MPS1		ADD		A,'A'+80H-1		; Convert to drive letter (high bit set)
+			LD		(PATH),A		; Store as first char of path
+			LD		A,'/'+80H		; Second char of path is '/'
+			LD		(PATH+1),A		; ...
+			LD		C,2				; Use C to count chars in filename
+			LD		H,D				; Copy address of FCB from DE ...
+			LD		L,E				; ... to HL
+			INC		HL				; HL points to filename in FCB
+			LD		IX,PATH+2		; IX points to next char of path to write
+MPL1		LD		A,(HL)			; Obtain filename character
+			CP		' '				; See if it is a space (? or NULL maybe?)
+			JP		Z,MPS3			; If so we are done with filename
+			EX		AF,AF'			; We need to re-use A here
+			LD		A,C				; Get character count
+			CP		10				; Drive letter, slash and 8 char filename
+			JP		Z,MPS2			; If so we are done with filename
+			EX		AF,AF'			; Swap back to original A reg
+			ADD		A,80H			; Set the high bit
+			LD		(IX+0),A		; Copy to PATH buffer
+			INC		C				; Count the chars
+			INC		HL				; Next byte of filename in FCB
+			INC		IX				; Next byte of PATH buffer
+			JP		MPL1			; Loop till done
+MPS2		EX		AF,AF'			; Swap back to original A reg
+MPS3		; EXTENSION
+			;  ...
+			LD		A,C				; Store length of string
+			LD		(PATHLEN),A		; ...
+			RET
+
+; Convert value in HL into an HEX ASCII string, pointed to by DE
+; Courtesy of http://map.grauw.nl/sources/external/z80bits.html#5.2
+NUM2HEX		LD		A,H
+			CALL	N2H1
+			LD		A,H
+			CALL	N2H2
+			LD		A,L
+			CALL	N2H1
+			LD		A,L
+			JR		N2H2
+N2H1		RRA
+			RRA
+			RRA
+			RRA
+N2H2		OR		0F0H
+			DAA
+			ADD		A,0A0H
+			ADC		A,40H
+			LD		(DE),A
+			INC		DE
+			RET
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Additional private scratch space for BDOS
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+; 64 bytes for storing a file path as a Pascal style string
+PATHLEN		DEFB	0
+PATH		DEFS	64
+
+; Four 1024 byte ProDOS I/O buffers
+; TODO THESE MUST START ON A PAGE BOUNDARY!!!!
+IOBUF1		DEFS	1024
+IOBUF2		DEFS	1024
+IOBUF3		DEFS	1024
+IOBUF4		DEFS	1024
+
+; Record file reference numbers for each I/O buffer
+; Or 0 if no file is using the buffer
+FRN1		DEFB	0
+FRN2		DEFB	0
+FRN3		DEFB	0
+FRN4		DEFB	0
+
+; Buffer for printing hex numbers to console
+HEXBUF		DEFB	0,0,0,0,13,'$'
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
