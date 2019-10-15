@@ -5,8 +5,8 @@
 ; Bobbi 2019
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-BDOSADDR	EQU		05000H			; Keep below 32K for now (Z80asm bug)
-STCKTOP		EQU		06000H			; Top of Z80 stack
+BDOSADDR	EQU		06000H			; 
+STCKTOP		EQU		06FFFH			; Top of Z80 stack (below IOBUFs)
 
 SOFTCARD	EQU		0E400H			; Softcard in slot 4 ($C400)
 
@@ -145,11 +145,33 @@ S1			LD		C,0BH			; C_STAT call
 			LD		(FCBNAM+9),A	;
 			LD		A,'P'			; Extension
 			LD		(FCBNAM+10),A	;
+
 			LD		DE,0060H		; Default FCB address
 			LD		C,16H			; F_MAKE call
 			CALL	BDOS			; CP/M BDOS call
 
-			LD		A,(AREG)		; Look at the return code
+			CALL	CHECKOK
+
+			LD		DE,MSG2			; Address of string
+			LD		C,09H			; C_WRITESTR call
+			CALL	BDOS			; CP/M BDOS call
+
+			LD		DE,0060H		; Default FCB address
+			LD		C,13H			; F_DELETE call
+			CALL	BDOS			; CP/M BDOS call
+
+			CALL	CHECKOK
+
+; Read keyboard and echo to screen C_READ, C_WRITE
+L2			LD		C,1				; C_READ call
+			CALL	BDOS			; CP/M BDOS call
+			LD		E,A				; Prepare to echo keystroke
+			LD		C,2				; C_WRITE call
+			CALL	BDOS			; CP/M BDOS call
+			JP		L2				; Forever and ever
+
+; Check an MLI call was successful and print out message accordingly
+CHECKOK		LD		A,(AREG)		; Look at the return code
 			CP		0				; Success?
 			JP		Z,SUCC			;
 			LD		DE,FAILMSG1		; Fail message
@@ -161,18 +183,11 @@ S1			LD		C,0BH			; C_STAT call
 			LD		DE,FAILMSG2		; Fail message
 			LD		C,09H			; C_WRITESTR call
 			CALL	BDOS			; CP/M BDOS call
-			JP		L2				; Skip success message
+			RET						;
 SUCC		LD		DE,SUCCMSG		; Success message
 			LD		C,09H			; C_WRITESTR call
 			CALL	BDOS			; CP/M BDOS call
-
-; Read keyboard and echo to screen C_READ, C_WRITE
-L2			LD		C,1				; C_READ call
-			CALL	BDOS			; CP/M BDOS call
-			LD		E,A				; Prepare to echo keystroke
-			LD		C,2				; C_WRITE call
-			CALL	BDOS			; CP/M BDOS call
-			JP		L2				; Forever and ever
+			RET
 
 WELCOME		DEFB	13
 			DEFM	'Zapple-II Test Stub...'
@@ -180,6 +195,10 @@ WELCOME		DEFB	13
 			
 MSG1		DEFB	13
 			DEFM	'Creating A/TESTFILE.TMP'
+			DEFB	13, '$'
+			
+MSG2		DEFB	13
+			DEFM	'Deleting A/TESTFILE.TMP'
 			DEFB	13, '$'
 			
 SUCCMSG		DEFM	'Success!'
@@ -205,6 +224,7 @@ FAILMSG2	DEFM	')'
 ; C=0EH   DRV_SET       Select disk
 ; C=0FH   F_OPEN        Open file (IN PROGRESS)
 ; C=10H   F_CLOSE       Close file (IN PROGRESS)
+; C=13H   F_DELETE      Delete file (IN PROGRESS)
 ; C=16H   F_MAKE        Create file (IN PROGRESS)
 ; C=17H   DRV_LOGVEC    Return bitmap of logged-in drives
 ; C=19H   DRV_GET       Return current drive
@@ -264,7 +284,7 @@ BDOSVEC		DEFW	C_TERMCPM		; C=00H
 			DEFW	F_CLOSE			; C=10H
 			DEFW	UNIMP			; C=11H  (F_SFIRST)
 			DEFW	UNIMP			; C=12H  (F_SNEXT)
-			DEFW	UNIMP			; C=13H  (F_DELETE)
+			DEFW	F_DELETE		; C=13H
 			DEFW	UNIMP			; C=14H  (F_READ)
 			DEFW	UNIMP			; C=15H  (F_WRITE)
 			DEFW	F_MAKE			; C=16H
@@ -496,7 +516,38 @@ FCMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code
 			DEFB	60H				; RTS in 6502 code
 FCMLIPL		DEFB	1				; ProDOS PB: One parameter
 FCMLIN		DEFB	0				; ProDOS PB: File reference number
-			
+
+; Delete file
+; DE is the address of the FCB describing the file to delete
+; Returns error codes in A and L:
+F_DELETE	CALL	MAKEPATH		; Populate PATHLEN and PATH
+			LD		HL,FDMLI		; Pass address of 6502 JSR instruction
+			LD		BC,1000H		; Add offset to convert Z80->6502 address
+			ADD		HL,BC			; ...
+			LD		(ADDR),HL		; Store it for 6502
+			LD		A,2				; CMD=2 means ProDOS MLI call
+			LD		(CMD),A			; ...
+			LD 		(SOFTCARD),A	; Do it!
+			LD		A,(AREG)		; Get return code from the MLI call
+			CP		0				; See if there was an error
+			JP		NZ,FDS1			; Handle error
+			LD		A,0				; Return 0 in A ...
+			LD		L,A				; ... and L too
+			RET
+FDS1		LD		L,A				; Copy to HL for NUM2HEX
+			LD		H,0				; ...
+			LD		DE,HEXBUF		; Generate hex string to HEXBUF
+			CALL	NUM2HEX			; ...
+			LD		A,0FFH			; 0FFH for error
+			LD		L,A				; Return code in L also
+			RET
+
+FDMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code		
+			DEFB	0C1H			; ProDOS DESTROY call
+			DEFW	FDMLIPL+1000H	; Pointer to parm list in 6502 addr space
+			DEFB	60H				; RTS in 6502 code
+FDMLIPL		DEFB	1				; ProDOS PL: Seven parameters
+FDMLIP		DEFW	PATHLEN+1000H	; ProDOS PL: Pointer to path in 6502 addr
 
 ; Create (and open) file
 ; DE is the address of the FCB describing the file to create
@@ -515,18 +566,16 @@ F_MAKE		CALL	MAKEPATH		; Populate PATHLEN and PATH
 			JP		NZ,FMS1			; Handle error
 ;;;;		CALL	F_OPEN			; Open the file using same FCB (DE ptr)
 			LD		A,0				;;; TEMP DEBUG - SHOULD CALL F_OPEN ABOVE ;;;
+			LD		L,A				; Return code in L also
 			RET
 FMS1		LD		L,A				; Copy to HL for NUM2HEX
 			LD		H,0				; ...
 			LD		DE,HEXBUF		; Generate hex string to HEXBUF
 			CALL	NUM2HEX			; ...
-			LD		A,'$'			; Terminate the hex string
-			LD		(HEXBUF+4),A	; ...
 			LD		A,0FFH			; 0FFH for error
 			LD		L,A				; Return code in L also
 			RET
 
-			RET
 FMMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code		
 			DEFB	0C0H			; ProDOS CREATE call
 			DEFW	FMMLIPL+1000H	; Pointer to parm list in 6502 addr space
@@ -663,6 +712,9 @@ N2H2		OR		0F0H
 			ADC		A,40H
 			LD		(DE),A
 			INC		DE
+			LD		A,'$'			; Terminate the hex string
+			LD		(DE),A			; ...
+			INC		DE
 			RET
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -673,13 +725,6 @@ N2H2		OR		0F0H
 PATHLEN		DEFB	0
 PATH		DEFS	64
 
-; Four 1024 byte ProDOS I/O buffers
-; TODO THESE MUST START ON A PAGE BOUNDARY!!!!
-IOBUF1		DEFS	1024
-IOBUF2		DEFS	1024
-IOBUF3		DEFS	1024
-IOBUF4		DEFS	1024
-
 ; Record file reference numbers for each I/O buffer
 ; Or 0 if no file is using the buffer
 FRN1		DEFB	0
@@ -689,6 +734,21 @@ FRN4		DEFB	0
 
 ; Buffer for printing hex numbers to console
 HEXBUF		DEFB	0,0,0,0,13,'$'
+
+; Four 1024 byte ProDOS I/O buffers
+; These must start on a page boundary
+; ProDOS occupies the space from $BF00 up (in 6502 addresses)
+; Also ProDOS has one buffer from $BB00-$BEFF I think.  (Check with John Brooks!)
+; IOBUF1 $AB00-$ADFF = starts at 9B00H for Z80
+; IOBUF2 $AF00-$B2FF
+; IOBUF3 $B300-$B6FF 
+; IOBUF4 $B700-$BAFF 
+
+			ORG		7000H ; Set to 7000H by experiment ...
+IOBUF1		DEFS	1024  ; ... we need BASIC.SYSTEM for now since we use EXEC!
+IOBUF2		DEFS	1024
+IOBUF3		DEFS	1024
+IOBUF4		DEFS	1024
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
