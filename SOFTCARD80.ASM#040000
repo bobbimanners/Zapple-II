@@ -10,6 +10,9 @@ STCKTOP		EQU		06FFFH			; Top of Z80 stack (below IOBUFs)
 
 SOFTCARD	EQU		0E400H			; Softcard in slot 4 ($C400)
 
+OFFSET		EQU		01000H			; Offset to add to Z80 addr to get 6502
+									; address. Correct for Z80 addr <= 0AFFFH
+
 ; 6502 zero page, in Z80 address space
 CMD			EQU		0F006H			; 6502 $06
 AREG		EQU		0F007H			; 6502 $07
@@ -61,16 +64,17 @@ USERNUM		DEFB	00H				; User number
 ; End of private, implementation dependent space
 
 			ORG		0060H			; Standard addr of 32 byte FCB
-FCBDRV		DEFB	00H				; FCB Drive (0 current, 1 A:, 2 B: etc)
-FCBNAM		DEFM	'FILENAMEEXT'	; FCB filename and extension
-FCBEX		DEFB	00H				; FCB extent field
-FCBS1		DEFB	00H				; FCB S1 field
-FCBS2		DEFB	00H				; FCB S2 field
-FCBRC		DEFB	00H				; FCB RC field
-FCBMAP		DEFS	16				; Map of blocks in file
+FCB1								; File control block #1
+FCB1DRV		DEFB	00H				; FCB Drive (0 current, 1 A:, 2 B: etc)
+FCB1NAM		DEFM	'FILENAMEEXT'	; FCB filename and extension
+FCB1EX		DEFB	00H				; FCB extent field
+FCB1S1		DEFB	00H				; FCB S1 field
+FCB1S2		DEFB	00H				; FCB S2 field
+FCB1RC		DEFB	00H				; FCB RC field
+FCB1MAP		DEFS	16				; Map of blocks in file
 
 			ORG		0080H			; Standard addr of 128 byte File Buffer
-FILEBUF		DEFS	128
+FILEBUF		DEFS	128				; Command args go here too (Pascal string)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; The application program proper starts at 0100H
@@ -113,50 +117,77 @@ S1			LD		C,0BH			; C_STAT call
 			LD		C,2				; C_WRITE call
 			CALL	BDOS			; CP/M BDOS call
 
-; Create a file using ProDOS MLI
-; Creates 'A/TESTFILE.TMP'
-; Directory 'A' needs to exist already
+			; Create an FCB
+			LD		A,1				; A: drive
+			LD		(FCB1DRV),A		;
+			LD		A,'T'			; Filename
+			LD		(FCB1NAM),A		;
+			LD		A,'E'			; Filename
+			LD		(FCB1NAM+1),A	;
+			LD		A,'S'			; Filename
+			LD		(FCB1NAM+2),A	;
+			LD		A,'T'			; Filename
+			LD		(FCB1NAM+3),A	;
+			LD		A,'F'			; Filename
+			LD		(FCB1NAM+4),A	;
+			LD		A,'I'			; Filename
+			LD		(FCB1NAM+5),A	;
+			LD		A,'L'			; Filename
+			LD		(FCB1NAM+6),A	;
+			LD		A,'E'			; Filename
+			LD		(FCB1NAM+7),A	;
+			LD		A,'T'			; Extension
+			LD		(FCB1NAM+8),A	;
+			LD		A,'M'			; Extension
+			LD		(FCB1NAM+9),A	;
+			LD		A,'P'			; Extension
+			LD		(FCB1NAM+10),A	;
 
-			LD		DE,MSG1			; Address of string
+			; Create a file using ProDOS MLI
+			; Creates 'A/TESTFILE.TMP'
+			; Directory 'A' needs to exist already
+
+			LD		DE,CMSG			; Address of string
 			LD		C,09H			; C_WRITESTR call
 			CALL	BDOS			; CP/M BDOS call
 
-			LD		A,1				; A: drive
-			LD		(FCBDRV),A		;
-			LD		A,'T'			; Filename
-			LD		(FCBNAM),A		;
-			LD		A,'E'			; Filename
-			LD		(FCBNAM+1),A	;
-			LD		A,'S'			; Filename
-			LD		(FCBNAM+2),A	;
-			LD		A,'T'			; Filename
-			LD		(FCBNAM+3),A	;
-			LD		A,'F'			; Filename
-			LD		(FCBNAM+4),A	;
-			LD		A,'I'			; Filename
-			LD		(FCBNAM+5),A	;
-			LD		A,'L'			; Filename
-			LD		(FCBNAM+6),A	;
-			LD		A,'E'			; Filename
-			LD		(FCBNAM+7),A	;
-			LD		A,'T'			; Extension
-			LD		(FCBNAM+8),A	;
-			LD		A,'M'			; Extension
-			LD		(FCBNAM+9),A	;
-			LD		A,'P'			; Extension
-			LD		(FCBNAM+10),A	;
-
-			LD		DE,0060H		; Default FCB address
+			LD		DE,FCB1			; Default FCB address
 			LD		C,16H			; F_MAKE call
 			CALL	BDOS			; CP/M BDOS call
 
 			CALL	CHECKOK
 
-			LD		DE,MSG2			; Address of string
+			; Open the file just created
+
+			LD		DE,OMSG			; Address of string
 			LD		C,09H			; C_WRITESTR call
 			CALL	BDOS			; CP/M BDOS call
 
-			LD		DE,0060H		; Default FCB address
+			LD		DE,FCB1			; Default FCB address
+			LD		C,0FH			; F_OPEN call
+			CALL	BDOS			; CP/M BDOS call
+
+			CALL	CHECKOK
+
+			; Close the file
+
+			LD		DE,CLMSG		; Address of string
+			LD		C,09H			; C_WRITESTR call
+			CALL	BDOS			; CP/M BDOS call
+
+			LD		DE,FCB1			; Default FCB address
+			LD		C,10H			; F_CLOSE call
+			CALL	BDOS			; CP/M BDOS call
+
+			CALL	CHECKOK
+
+			; Delete the file
+
+			LD		DE,DMSG			; Address of string
+			LD		C,09H			; C_WRITESTR call
+			CALL	BDOS			; CP/M BDOS call
+
+			LD		DE,FCB1			; Default FCB address
 			LD		C,13H			; F_DELETE call
 			CALL	BDOS			; CP/M BDOS call
 
@@ -177,7 +208,13 @@ CHECKOK		LD		A,(AREG)		; Look at the return code
 			LD		DE,FAILMSG1		; Fail message
 			LD		C,09H			; C_WRITESTR call
 			CALL	BDOS			; CP/M BDOS call
-			LD		DE,HEXBUF		; Write hex value to console
+			LD		L,A				; Copy to HL for NUM2HEX
+			LD		H,0				; ...
+			LD		DE,HEXBUF		; Generate hex string to HEXBUF
+			CALL	NUM2HEX			; ...
+			LD		A,0FFH			; 0FFH for error
+			LD		L,A				; Return code in L also
+			LD		DE,HEXBUF+2		; Write hex value to console
 			LD		C,09H			; C_WRITESTR call
 			CALL	BDOS			; CP/M BDOS call
 			LD		DE,FAILMSG2		; Fail message
@@ -193,11 +230,19 @@ WELCOME		DEFB	13
 			DEFM	'Zapple-II Test Stub...'
 			DEFB	13, '$'
 			
-MSG1		DEFB	13
+CMSG		DEFB	13
 			DEFM	'Creating A/TESTFILE.TMP'
 			DEFB	13, '$'
 			
-MSG2		DEFB	13
+OMSG		DEFB	13
+			DEFM	'Opening A/TESTFILE.TMP'
+			DEFB	13, '$'
+			
+CLMSG		DEFB	13
+			DEFM	'Closing A/TESTFILE.TMP'
+			DEFB	13, '$'
+			
+DMSG		DEFB	13
 			DEFM	'Deleting A/TESTFILE.TMP'
 			DEFB	13, '$'
 			
@@ -222,9 +267,9 @@ FAILMSG2	DEFM	')'
 ; C=0CH   S_BDOSVER     Return version number
 ; C=0DH   DRV_ALLRESET  Reset disks
 ; C=0EH   DRV_SET       Select disk
-; C=0FH   F_OPEN        Open file (IN PROGRESS)
+; C=0FH   F_OPEN        Open file
 ; C=10H   F_CLOSE       Close file (IN PROGRESS)
-; C=13H   F_DELETE      Delete file (IN PROGRESS)
+; C=13H   F_DELETE      Delete file
 ; C=16H   F_MAKE        Create file (IN PROGRESS)
 ; C=17H   DRV_LOGVEC    Return bitmap of logged-in drives
 ; C=19H   DRV_GET       Return current drive
@@ -420,7 +465,6 @@ DSRET		LD		L,A				; Return code in L too
 F_OPEN		CALL	MAKEPATH		; Populate PATHLEN and PATH
 
 			; Work out which IOBUF to allocate for this file
-			; And set the pointer in the ProDOS parameter list
 			LD		A,(FRN1)		; See if IOBUF1 is free
 			CP		0				; ...
 			JP		Z,FOS1			; IOBUF1 is free
@@ -433,9 +477,9 @@ F_OPEN		CALL	MAKEPATH		; Populate PATHLEN and PATH
 			LD		A,(FRN4)		; See if IOBUF4 is free
 			CP		0				; ...
 			JP		Z,FOS4			; IOBUF4 is free
-			LD		A,0FFH			; Error too many files open
-			LD		L,A				; Copy to L
-			RET						; Error return
+			JP		FOERR			; Error too many files open
+
+			; Set the pointer in the ProDOS parameter list
 FOS1		LD		HL,IOBUF1		; Address of IOBUF1
 			LD		A,1				; Buffer 1
 			JP		FOS5			;
@@ -447,23 +491,27 @@ FOS3		LD		HL,IOBUF3		; Address of IOBUF3
 			JP		FOS5			;
 FOS4		LD		HL,IOBUF4		; Address of IOBUF4
 			LD		A,4				; Buffer 4
-FOS5		LD		(FOMLII),HL		; Store in parameter list
-			LD		(FOIOB),A		; Record the buffer index for later
+FOS5		LD		(FOIOB),A		; Record the buffer index in local var
+			LD		BC,OFFSET		; Add offset to convert to 6502 address
+			ADD		HL,BC			; ...
+			LD		(FOMLII),HL		; Store in parameter list
 
-			;
-			; TODO NOW THE CODE TO ACTUALLY INVOKE THE MLI CALL ON 6502
-			;
-			
-			;
-			; TODO HANDLE ERROR RETURN CODES FROM MLI
-			;
+			PUSH	DE				; Preserve pointer to FCB
+			LD		HL,FOMLI		; Pass address of 6502 JSR instruction
+			CALL	PRODOS			; Invoke ProDOS MLI
+			POP		DE				; Restore pointer to FCB
 
+			CP		0				; See if there was an error
+			JP		NZ,FOERR		; Handle error
+
+			; Store ProDOS FRN in S2 field of FCB
 			LD		A,(FOMLIN)		; Get ProDOS file reference number
 			LD		H,D				; Pointer to FCB ...
 			LD		L,E				; ... into HL
 			LD		BC,14			; Offset to S2 field (reserved field)
 			ADD		HL,BC			; Compute address
-			LD		(HL),A			; Store file refence number is S2 field
+			LD		(HL),A			; Store file reference number is S2 field
+
 			LD		A,(FOIOB)		; Obtain IOBUF idx (1,2,3,4)
 			CP		1				; Is it 1? ...
 			JP		Z,FOS6			; ... yes
@@ -484,35 +532,46 @@ FOS8		LD		A,(FOMLIN)		;
 FOS9		LD		A,(FOMLIN)		;
 			LD		(FRN4),A		;
 			JP		FOS10			;
-FOS10		
-			;
-			; TODO HANDLE RETURN CODE ON SUCCESS (0,1,2,3)
-			;
-
-			RET
+FOS10		LD		A,0				; Success
+			LD		L,A				; Copy to L
+			RET						; Done
+FOERR		LD		A,0FFH			; Error return status
+			LD		L,A				; Copy to L
+			RET						; Done (error)
 
 FOMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code		
 			DEFB	0C8H			; ProDOS OPEN call
-			DEFW	FOMLIPL+1000H	; Pointer to parm list in 6502 addr space
+			DEFW	FOMLIPL+OFFSET	; Pointer to parm list in 6502 addr space
 			DEFB	60H				; RTS in 6502 code
 FOMLIPL		DEFB	3				; ProDOS PL: Three parameters
-FOMLIP		DEFW	PATHLEN+1000H	; ProDOS PL: pointer to path in 6502 addr
+FOMLIP		DEFW	PATHLEN+OFFSET	; ProDOS PL: pointer to path in 6502 addr
 FOMLII		DEFW	0000H			; ProDOS PL: pointer to IO buffer
 FOMLIN		DEFB	0				; ProDOS PL: File reference number
+
 FOIOB		DEFB	0				; Local variable to record IOBUF idx
+
 ; Close file
 ; DE is the address of the FCB describing the file to close
-; Returns error codes in BA and HL:
-; TODO WRITE THIS!!!!
+; Returns error codes in A and L:
 F_CLOSE
-	; Steps:
-	; 1) Get the file reference number from field S2 of FCB & fill in FCMLIN
-	; 2) Hand off pointer to the JSR instruction to 6502 to run
-	; 3) On return, check return code and set BA and HL accordingly
+			LD		H,D				; Pointer to FCB ...
+			LD		L,E				; ... into HL
+			LD		BC,14			; Offset to S2 field (reserved field)
+			ADD		HL,BC			; Compute address
+			LD		A,(HL)			; Obtain file reference num from FCB S2
+			LD		HL,FCMLI		; Pass address of 6502 JSR instruction
+			CALL	PRODOS			; Invoke ProDOS MLI
+			CP		0				; See if there was an error
+			JP		NZ,FCERR		; Handle error
+			LD		L,A				; Return in L also
 			RET
+FCERR		LD		A,0FFH			; 0FFH for error
+			LD		L,A				; Return code in L also
+			RET
+
 FCMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code		
 			DEFB	0CCH			; ProDOS CLOSE call
-			DEFW	FCMLIPL+1000H	; Pointer to parm list in 6502 addr space
+			DEFW	FCMLIPL+OFFSET	; Pointer to parm list in 6502 addr space
 			DEFB	60H				; RTS in 6502 code
 FCMLIPL		DEFB	1				; ProDOS PB: One parameter
 FCMLIN		DEFB	0				; ProDOS PB: File reference number
@@ -522,32 +581,21 @@ FCMLIN		DEFB	0				; ProDOS PB: File reference number
 ; Returns error codes in A and L:
 F_DELETE	CALL	MAKEPATH		; Populate PATHLEN and PATH
 			LD		HL,FDMLI		; Pass address of 6502 JSR instruction
-			LD		BC,1000H		; Add offset to convert Z80->6502 address
-			ADD		HL,BC			; ...
-			LD		(ADDR),HL		; Store it for 6502
-			LD		A,2				; CMD=2 means ProDOS MLI call
-			LD		(CMD),A			; ...
-			LD 		(SOFTCARD),A	; Do it!
-			LD		A,(AREG)		; Get return code from the MLI call
+			CALL	PRODOS			; Invoke ProDOS MLI
 			CP		0				; See if there was an error
-			JP		NZ,FDS1			; Handle error
-			LD		A,0				; Return 0 in A ...
+			JP		NZ,FDERR		; Handle error
 			LD		L,A				; ... and L too
 			RET
-FDS1		LD		L,A				; Copy to HL for NUM2HEX
-			LD		H,0				; ...
-			LD		DE,HEXBUF		; Generate hex string to HEXBUF
-			CALL	NUM2HEX			; ...
-			LD		A,0FFH			; 0FFH for error
+FDERR		LD		A,0FFH			; 0FFH for error
 			LD		L,A				; Return code in L also
 			RET
 
 FDMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code		
 			DEFB	0C1H			; ProDOS DESTROY call
-			DEFW	FDMLIPL+1000H	; Pointer to parm list in 6502 addr space
+			DEFW	FDMLIPL+OFFSET	; Pointer to parm list in 6502 addr space
 			DEFB	60H				; RTS in 6502 code
 FDMLIPL		DEFB	1				; ProDOS PL: Seven parameters
-FDMLIP		DEFW	PATHLEN+1000H	; ProDOS PL: Pointer to path in 6502 addr
+FDMLIP		DEFW	PATHLEN+OFFSET	; ProDOS PL: Pointer to path in 6502 addr
 
 ; Create (and open) file
 ; DE is the address of the FCB describing the file to create
@@ -555,33 +603,23 @@ FDMLIP		DEFW	PATHLEN+1000H	; ProDOS PL: Pointer to path in 6502 addr
 ; 0 through 3 for success, 0FFH is file could not be created
 F_MAKE		CALL	MAKEPATH		; Populate PATHLEN and PATH
 			LD		HL,FMMLI		; Pass address of 6502 JSR instruction
-			LD		BC,1000H		; Add offset to convert Z80->6502 address
-			ADD		HL,BC			; ...
-			LD		(ADDR),HL		; Store it for 6502
-			LD		A,2				; CMD=2 means ProDOS MLI call
-			LD		(CMD),A			; ...
-			LD 		(SOFTCARD),A	; Do it!
-			LD		A,(AREG)		; Get return code from the MLI call
+			CALL	PRODOS			; Invoke ProDOS MLI
 			CP		0				; See if there was an error
-			JP		NZ,FMS1			; Handle error
+			JP		NZ,FMERR		; Handle error
 ;;;;		CALL	F_OPEN			; Open the file using same FCB (DE ptr)
 			LD		A,0				;;; TEMP DEBUG - SHOULD CALL F_OPEN ABOVE ;;;
 			LD		L,A				; Return code in L also
 			RET
-FMS1		LD		L,A				; Copy to HL for NUM2HEX
-			LD		H,0				; ...
-			LD		DE,HEXBUF		; Generate hex string to HEXBUF
-			CALL	NUM2HEX			; ...
-			LD		A,0FFH			; 0FFH for error
+FMERR		LD		A,0FFH			; 0FFH for error
 			LD		L,A				; Return code in L also
 			RET
 
 FMMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code		
 			DEFB	0C0H			; ProDOS CREATE call
-			DEFW	FMMLIPL+1000H	; Pointer to parm list in 6502 addr space
+			DEFW	FMMLIPL+OFFSET	; Pointer to parm list in 6502 addr space
 			DEFB	60H				; RTS in 6502 code
 FMMLIPL		DEFB	7				; ProDOS PL: Seven parameters
-FMMLIP		DEFW	PATHLEN+1000H	; ProDOS PL: Pointer to path in 6502 addr
+FMMLIP		DEFW	PATHLEN+OFFSET	; ProDOS PL: Pointer to path in 6502 addr
 FMMLIA		DEFB	0C3H			; ProDOS PL: Access (0C3H full access)
 FMMLIT		DEFB	0				; ProDOS PL: File type (0 means typeless)
 FMMLIAT		DEFW	0000H			; ProDOS PL: Aux file type (always 0000H)
@@ -653,6 +691,19 @@ DRV_RESET	LD		A,(ROVEC)		; Do the LSB ...
 			LD		(ROVEC+1),A		;
 			RET
 
+; Make a ProDOS MLI call
+; Address of 6502 JSR instruction in front of ProDOS parameter list is
+; passed in in register pair HL, in Z80 address space
+; Return code is passed back in A
+PRODOS		LD		BC,OFFSET		; Add offset to convert Z80->6502 address
+			ADD		HL,BC			; ...
+			LD		(ADDR),HL		; Store it for 6502
+			LD		A,2				; CMD=2 means ProDOS MLI call
+			LD		(CMD),A			; ...
+			LD 		(SOFTCARD),A	; Do it!
+			LD		A,(AREG)		; Get return code from the MLI call
+			RET
+
 ; Populate the PATH buffer (and PATHLEN) by copying from FCB
 ; DE contains a pointer to the FCB
 ; Be sure not to trash DE
@@ -712,9 +763,6 @@ N2H2		OR		0F0H
 			ADC		A,40H
 			LD		(DE),A
 			INC		DE
-			LD		A,'$'			; Terminate the hex string
-			LD		(DE),A			; ...
-			INC		DE
 			RET
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -733,7 +781,7 @@ FRN3		DEFB	0
 FRN4		DEFB	0
 
 ; Buffer for printing hex numbers to console
-HEXBUF		DEFB	0,0,0,0,13,'$'
+HEXBUF		DEFB	0,0,0,0,'$'
 
 ; Four 1024 byte ProDOS I/O buffers
 ; These must start on a page boundary
