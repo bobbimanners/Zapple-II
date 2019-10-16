@@ -518,33 +518,12 @@ DSRET		LD		L,A				; Return code in L too
 F_OPEN		CALL	MAKEPATH		; Populate PATHLEN and PATH
 
 			; Work out which IOBUF to allocate for this file
-			LD		A,(FRN1)		; See if IOBUF1 is free
-			CP		0				; ...
-			JP		Z,FOS1			; IOBUF1 is free
-			LD		A,(FRN2)		; See if IOBUF2 is free
-			CP		0				; ...
-			JP		Z,FOS2			; IOBUF2 is free
-			LD		A,(FRN3)		; See if IOBUF3 is free
-			CP		0				; ...
-			JP		Z,FOS3			; IOBUF3 is free
-			LD		A,(FRN4)		; See if IOBUF4 is free
-			CP		0				; ...
-			JP		Z,FOS4			; IOBUF4 is free
-			JP		FOERR			; Error too many files open
+			LD		A,0				; Looking for FRN slot with value 0
+			CALL	GETIOADDR		; Returns FRN slot in A, IOBUF in HL
+			CP		0FFH			; Check for error
+			JP		Z,FOERR			; If no slots available, error out
 
-			; Set the pointer in the ProDOS parameter list
-FOS1		LD		HL,IOBUF1		; Address of IOBUF1
-			LD		A,1				; Buffer 1
-			JP		FOS5			;
-FOS2		LD		HL,IOBUF2		; Address of IOBUF2
-			LD		A,2				; Buffer 2
-			JP		FOS5			;
-FOS3		LD		HL,IOBUF3		; Address of IOBUF3
-			LD		A,3				; Buffer 3
-			JP		FOS5			;
-FOS4		LD		HL,IOBUF4		; Address of IOBUF4
-			LD		A,4				; Buffer 4
-FOS5		LD		(FOIOB),A		; Record the buffer index in local var
+			LD		(FOIOB),A		; Record the buffer index in local var
 			LD		BC,OFFSET		; Add offset to convert to 6502 address
 			ADD		HL,BC			; ...
 			LD		(FOMLII),HL		; Store in parameter list
@@ -565,29 +544,19 @@ FOS5		LD		(FOIOB),A		; Record the buffer index in local var
 			ADD		HL,BC			; Compute address
 			LD		(HL),A			; Store file reference number is S2 field
 
+			; Store ProDOS FRN in slot FRN1 - FRN4
 			LD		A,(FOIOB)		; Obtain IOBUF idx (1,2,3,4)
-			CP		1				; Is it 1? ...
-			JP		Z,FOS6			; ... yes
-			CP		2				; Is it 2? ...
-			JP		Z,FOS7			; ... yes
-			CP		3				; Is it 3? ...
-			JP		Z,FOS8			; ... yes
-			JP		FOS9			; Must be 4
-FOS6		LD		A,(FOMLIN)		; IOBUF1: Store file ref number in FRN1
-			LD		(FRN1),A		; ...
-			JP		FOS10			;
-FOS7		LD		A,(FOMLIN)		; IOBUF2: Store file ref number in FRN2
-			LD		(FRN2),A		; ...
-			JP		FOS10			;
-FOS8		LD		A,(FOMLIN)		; IOBUF3: Store file ref number in FRN3
-			LD		(FRN3),A		; ...
-			JP		FOS10			;
-FOS9		LD		A,(FOMLIN)		; IOBUF4: Store file ref number in FRN4
-			LD		(FRN4),A		; ...
-			JP		FOS10			;
-FOS10		LD		A,0				; Success
+			LD		HL,FRN1-1		; Compute address of FRN slot to use
+			LD		B,0				; ...
+			LD		C,A				; ...
+			ADD		HL,BC			; ...
+			lD		A,(FOMLIN)		; Get ProDOS file reference number
+			LD		(HL),A			; Store in FRN slot
+
+			LD		A,0				; Success
 			LD		L,A				; Copy to L
 			RET						; Done
+
 FOERR		LD		A,0FFH			; Error return status
 			LD		L,A				; Copy to L
 			RET						; Done (error)
@@ -882,9 +851,10 @@ MPS3		; EXTENSION
 
 ; Find IOBUF address for a file reference number
 ; Scan through FRN1, FRN2, FRN3, FRN4 to find the file reference number in A
-; If found, return A=0, HL=I/O buffer address
+; If found, return FRN slot# 1,2,3,4 in A, I/O buffer address in HL
 ; If not found, return A=0FFH
-GETIOADDR	LD		A,B				; Stash A
+; Trashes B
+GETIOADDR	LD		B,A				; Stash A
 			LD		A,(FRN1)		; Does it match FRN1?
 			CP		B				; ...
 			JP		Z,GIOAS1		; ...
@@ -900,36 +870,39 @@ GETIOADDR	LD		A,B				; Stash A
 			LD		A,0FFH			; No match, return A=0FFH
 			RET						; ...
 GIOAS1		LD		HL,IOBUF1		; Address of I/O buf 1 -> HL
-			JP		GIOAS5			; ...
+			LD		A,1				; FRN slot 1
+			RET
 GIOAS2		LD		HL,IOBUF2		; Address of I/O buf 2 -> HL
-			JP		GIOAS5			; ...
+			LD		A,2				; FRN slot 2
+			RET
 GIOAS3		LD		HL,IOBUF3		; Address of I/O buf 3 -> HL
-			JP		GIOAS5			; ...
+			LD		A,3				; FRN slot 3
+			RET
 GIOAS4		LD		HL,IOBUF4		; Address of I/O buf 4 -> HL
-			JP		GIOAS5			; ...
-GIOAS5		LD		A,0				; Success!
+			LD		A,4				; FRN slot 4
 			RET
 
 ; Convert value in HL into an HEX ASCII string, pointed to by DE
 ; Courtesy of http://map.grauw.nl/sources/external/z80bits.html#5.2
-NUM2HEX		LD		A,H
-			CALL	N2H1
-			LD		A,H
-			CALL	N2H2
-			LD		A,L
-			CALL	N2H1
-			LD		A,L
-			JR		N2H2
-N2H1		RRA
-			RRA
-			RRA
-			RRA
-N2H2		OR		0F0H
-			DAA
-			ADD		A,0A0H
-			ADC		A,40H
-			LD		(DE),A
-			INC		DE
+; Trashes A
+NUM2HEX		LD		A,H				;
+			CALL	N2H1			;
+			LD		A,H				;
+			CALL	N2H2			;
+			LD		A,L				;
+			CALL	N2H1			;
+			LD		A,L				;
+			JR		N2H2			;
+N2H1		RRA						;
+			RRA						;
+			RRA						;
+			RRA						;
+N2H2		OR		0F0H			;
+			DAA						;
+			ADD		A,0A0H			;
+			ADC		A,40H			;
+			LD		(DE),A			;
+			INC		DE				;
 			RET
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
