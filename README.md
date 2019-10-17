@@ -139,6 +139,14 @@ BDOS implementation at the top of memory.  This has been patched by adding a
 `DEC HL` instuction at line 47 (shout-out to Qkumba for finding what the
 issue was!)
 
+The EXEC file `RUNBASIC5` can be used to start BASIC/5.
+
+## DDT 8080 Debugger (from CP/M 2.2)
+
+We have enough BDOS calls to get this to work now!
+
+The EXEC file `RUNDDT` can be used to start DDT.
+
 # How to Build the Code
 
 You don't really need to build the code unless you want to make changes.
