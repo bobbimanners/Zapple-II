@@ -100,6 +100,7 @@ calls.  Only console I/O has been tested and confirmed to be working so far:
 - BDOS call 1CH: `DRV_SETRO` - Software write-protect current drive
 - BDOS call 1DH: `DRV_ROVEC` - Return bitmap of read-only drives
 - BDOS call 20H: `F_USERNUM` - Get/set user number
+- BDOS call 22H: `F_SIZE` - Compute file size
 - BDOS call 25H: `DRV_RESET` - Selectively reset disk drives
 
 There are two parts to the BDOS emulation:

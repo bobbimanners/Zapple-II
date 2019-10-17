@@ -63,8 +63,7 @@ ROVEC		DEFW	0000H			; Vector of read-only drives
 USERNUM		DEFB	00H				; User number  TODO: This goes elsewhere
 ; End of private, implementation dependent space
 
-;TODO: There are two FCBS and the address here is wrong
-			ORG		0060H			; Standard addr of 32 byte FCB
+			ORG		005CH			; Standard addr of 32 byte FCB1
 FCB1								; File control block #1
 FCB1DRV		DEFB	00H				; FCB Drive (0 current, 1 A:, 2 B: etc)
 FCB1NAM		DEFM	'FILENAMEEXT'	; FCB filename and extension
@@ -72,7 +71,17 @@ FCB1EX		DEFB	00H				; FCB extent field
 FCB1S1		DEFB	00H				; FCB S1 field
 FCB1S2		DEFB	00H				; FCB S2 field
 FCB1RC		DEFB	00H				; FCB RC field
-FCB1MAP		DEFS	16				; Map of blocks in file
+FCB1MAP								; Map of blocks in file (overlaps FCB2)
+
+			ORG		006CH			; Standard addr of 32 byte FCB2
+FCB2								; File control block #2
+FCB2DRV		DEFB	00H				; FCB Drive (0 current, 1 A:, 2 B: etc)
+FCB2NAM		DEFM	'FILENAMEEXT'	; FCB filename and extension
+FCB2EX		DEFB	00H				; FCB extent field
+FCB2S1		DEFB	00H				; FCB S1 field
+FCB2S2		DEFB	00H				; FCB S2 field
+FCB2RC		DEFB	00H				; FCB RC field
+FCB2MAP								; Map of blocks in file (overlaps buffer)
 
 			ORG		0080H			; Standard addr of 128 byte File Buffer
 FILEBUF		DEFS	128				; Command args go here too (Pascal string)
@@ -379,6 +388,7 @@ B_F_DMAOFF		EQU		1AH			; Set DMA address
 B_DRV_SRO		EQU		1CH			; Software write-protect current drive
 B_DRV_ROVEC		EQU		1DH			; Return bitmap of read-only drives
 B_F_USERNUM		EQU		20H			; Get/set user number
+B_F_SIZE		EQU		23H			; Compute file size
 B_DRV_RESET		EQU		25H			; Selectively reset disk drives
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -448,7 +458,7 @@ BDOSVEC		DEFW	C_TERMCPM		; C=00H
 			DEFW	F_USERNUM		; C=20H
 			DEFW	UNIMP			; C=21H  (F_READRAND)
 			DEFW	UNIMP			; C=22H  (F_WRITERAND)
-			DEFW	UNIMP			; C=23H  (F_SIZE)
+			DEFW	F_SIZE			; C=23H
 			DEFW	UNIMP			; C=24H  (F_RANDREC)
 			DEFW	DRV_RESET		; C=25H
 			DEFW	UNIMP			; C=26H  (*nothing* in CP/M 2.2)
@@ -654,7 +664,6 @@ F_OPEN		CALL	MAKEPATH		; Populate PATHLEN and PATH
 
 			LD		HL,FOMLI		; Pass address of 6502 JSR instruction
 			CALL	PRODOS			; Invoke ProDOS MLI
-
 			CP		0				; See if there was an error
 			JP		NZ,FOERR		; Handle error
 
@@ -918,6 +927,50 @@ F_USERNUM	LD		A,E				; See if it is get or set
 			RET
 FUNS1		LD		A,(USERNUM)		; Get user number
 			RET
+
+; Compute file size
+; DE contains address of FCB describing the file
+; Error codes are returned in A and L (0 for success, 0FFH if file not found)
+; Returns the number of 128 byte records in random record count field of FCB
+F_SIZE		CALL	MAKEPATH		; Populate PATHLEN and PATH
+			LD		HL,FSMLI		; Pass address of 6502 JSR instruction
+			CALL	PRODOS			; Invoke ProDOS MLI
+			CP		0				; See if there was an error
+			JP		NZ,FSERR		; Handle error
+			LD		HL,(FSMLIBU)	; Obtain the blocks used field
+			ADD		HL,HL			; Mult x 2 to get 128 byte records
+
+			; Store records used in R0,R1 fields of FCB
+			PUSH	DE				; Copy DE ...
+			POP		IX				; ... into IX
+			LD		(IX+21H),L		; Store LSB of recs used in R0
+			LD		(IX+22H),H		; Store LSB of recs used in R1
+			LD		A,0				; Store zero in R2
+			LD		(IX+23H),A		; ...
+
+			LD		A,0				; Success
+			LD		L,A				; Return in L also
+			RET
+FSERR		LD		A,0FFH			; File not found
+			LD		L,A				; Return in L also
+			RET
+
+FSMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code		
+			DEFB	0C4H			; ProDOS GET_FILE_INFO call
+			DEFW	FSMLIPL+OFFSET	; Pointer to parm list in 6502 addr space
+			DEFB	60H				; RTS in 6502 code
+FSMLIPL		DEFB	0AH				; ProDOS PL: Ten parameters
+FSMLIP		DEFW	PATHBUF+OFFSET	; ProDOS PL: Pointer to path in 6502 addr
+FSMLIAC		DEFB	0				; ProDOS PL: Access
+FSMLIT		DEFB	0				; ProDOS PL: File type
+FSMLIAT		DEFW	0000H			; ProDOS PL: Aux type
+FSMLIS		DEFB	1				; ProDOS PL: Storage type
+FSMLIBU		DEFW	0000H			; ProDOS PL: Blocks used
+FSMLIMD		DEFW	0000H			; ProDOS PL: Modification date
+FSMLIMT		DEFW	0000H			; ProDOS PL: Modification time
+FSMLICD		DEFW	0000H			; ProDOS PL: Create date
+FSMLICT		DEFW	0000H			; ProDOS PL: Create time
+
 
 ; Selectively reset disk drives
 ; DE contains bitmap of drives to reset (bit 0 of E if A:, bit 7 of D is P:)
