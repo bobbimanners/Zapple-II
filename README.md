@@ -147,6 +147,12 @@ We have enough BDOS calls to get this to work now!
 
 The EXEC file `RUNDDT` can be used to start DDT.
 
+## ZSID v1.4 Z80 Debugger (from CP/M 2.2)
+
+We have enough BDOS calls to get this to work now!
+
+The EXEC file `RUNZSID` can be used to start ZSID.
+
 # How to Build the Code
 
 You don't really need to build the code unless you want to make changes.
