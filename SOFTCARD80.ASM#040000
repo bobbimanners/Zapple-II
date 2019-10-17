@@ -146,9 +146,9 @@ S1			LD		C,B_C_STAT		;
 			LD		(FCB1NAM+7),A	;
 			LD		A,'T'			; Extension
 			LD		(FCB1NAM+8),A	;
-			LD		A,'M'			; Extension
+			LD		A,'X'			; Extension
 			LD		(FCB1NAM+9),A	;
-			LD		A,'P'			; Extension
+			LD		A,'T'			; Extension
 			LD		(FCB1NAM+10),A	;
 
 			; Create and open a file using ProDOS MLI
@@ -1042,7 +1042,8 @@ MPS1		ADD		A,'A'-1			; Convert to drive letter
 			INC		HL				; HL points to filename in FCB
 			INC		IX				; Advance IX to next char of path to write
 			INC		IX				; ...
-MPL1		LD		A,(HL)			; Obtain filename character
+MPL1		; Filename
+			LD		A,(HL)			; Obtain filename character
 			CP		' '				; See if it is a space (? or NULL maybe?)
 			JP		Z,MPS3			; If so we are done with filename
 			EX		AF,AF'			; We need to re-use A here
@@ -1056,9 +1057,29 @@ MPL1		LD		A,(HL)			; Obtain filename character
 			INC		IX				; Next byte of PATH buffer
 			JP		MPL1			; Loop till done
 MPS2		EX		AF,AF'			; Swap back to original A reg
-MPS3		; EXTENSION
-			;  ...
-			LD		A,C				; Store length of string
+MPS3		; Extension
+			; TODO: Eat any space characters at end of filename
+			LD		A,'.'			; Separator is a period
+			LD		(IX+0),A		; Write to buffer
+			INC		C				; Count the character!
+			INC		IX				; Advance to next character in buffer
+			LD		B,0				; Use B to track num chars in extension
+MPL2		LD		A,(HL)			; Obtain filename character
+			CP		' '				; See if it is a space (? or NULL maybe?)
+			JP		Z,MPS5			; If so we are done with extension
+			EX		AF,AF'			; We need to re-use A here
+			LD		A,B				; Get character count
+			CP		3				; Extension can be up to 3 chars
+			JP		Z,MPS4			; If so we are done with filename
+			EX		AF,AF'			; Swap back to original A reg
+			LD		(IX+0),A		; Copy to PATH buffer
+			INC		C				; Count the chars (overall)
+			INC		B				; Count the chars (in extension)
+			INC		HL				; Next byte of filename in FCB
+			INC		IX				; Next byte of PATH buffer
+			JP		MPL2			; Loop till done
+MPS4		EX		AF,AF'			; Swap back to original A reg
+MPS5		LD		A,C				; Store length of string
 			LD		(IY+0),A		; We kept size byte in IY at start
 			RET
 
