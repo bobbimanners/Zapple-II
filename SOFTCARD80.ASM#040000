@@ -56,7 +56,7 @@ RVEC5		DEFW	0000H			; Restart vector 5
 RVEC6		DEFW	0000H			; Restart vector 6
 RVEC7		DEFW	0000H			; Restart vector 7
 
-; Space for private BDOS data (implementation dependent) up to 0060H
+; Space for private BDOS data (implementation dependent) up to 005BH
 DMAADDR		DEFW	0080H			; DMA address defaults to FILEBUF (0080H)
 LOGVEC		DEFW	0000H			; Vector of logged in drives
 ROVEC		DEFW	0000H			; Vector of read-only drives
@@ -382,7 +382,8 @@ B_F_DELETE		EQU		13H			; Delete file
 B_F_READ		EQU		14H			; Read file sequentially
 B_F_WRITE 		EQU		15H			; Write file sequentially
 B_F_MAKE		EQU		16H			; Create and open file
-B_DRV_LOGVEC	EQU		17H			; Return bitmap of logged-in drives
+B_F_RENAME		EQU		17H			; Rename file 
+B_DRV_LOGVEC	EQU		18H			; Return bitmap of logged-in drives
 B_DRV_GET		EQU		19H			; Return current drive
 B_F_DMAOFF		EQU		1AH			; Set DMA address
 B_DRV_SRO		EQU		1CH			; Software write-protect current drive
@@ -446,7 +447,7 @@ BDOSVEC		DEFW	C_TERMCPM		; C=00H
 			DEFW	F_READ			; C=14H
 			DEFW	F_WRITE			; C=15H
 			DEFW	F_MAKE			; C=16H
-			DEFW	UNIMP			; C=17H  (F_RENAME)
+			DEFW	F_RENAME		; C=17H
 			DEFW	DRV_LOGVEC		; C=18H
 			DEFW	DRV_GET			; C=19H
 			DEFW	F_DMAOFF		; C=1AH
@@ -647,7 +648,8 @@ DSRET		LD		L,A				; Return code in L too
 ; DE is the address of the FCB describing the file to open
 ; Returns error codes in A and L:
 ; 0 through 3 for success, 0FFH is file not found
-F_OPEN		CALL	MAKEPATH		; Populate PATHLEN and PATH
+F_OPEN		LD		IX,PATHBUF		; Destination buffer
+			CALL	MAKEPATH		; Populate PATHLEN and PATH
 
 			PUSH	DE				; Preserve pointer to FCB
 
@@ -749,7 +751,8 @@ FCMLIN		DEFB	0				; ProDOS PB: File reference number
 ; Delete file
 ; DE is the address of the FCB describing the file to delete
 ; Returns error codes in A and L:
-F_DELETE	CALL	MAKEPATH		; Populate PATHLEN and PATH
+F_DELETE	LD		IX,PATHBUF		; Destination buffer
+			CALL	MAKEPATH		; Populate PATHLEN and PATH
 			LD		HL,FDMLI		; Pass address of 6502 JSR instruction
 			CALL	PRODOS			; Invoke ProDOS MLI
 			CP		0				; See if there was an error
@@ -777,10 +780,6 @@ F_READ		LD		H,D				; Pointer to FCB ...
 			ADD		HL,BC			; Compute address
 			LD		A,(HL)			; Obtain file reference num from FCB S2
 			LD		(FRMLIN),A		; Store in parameter list
-
-;			CALL	GETIOADDR		; Get I/O address
-;			CP		0FFH			; See if it was an error
-;			JP		Z,FRERR			; If so, abort
 
 			LD		HL,(DMAADDR)	; Read from DMA buffer address
 			LD		BC,OFFSET		; Convert to 6502 address
@@ -818,10 +817,6 @@ F_WRITE		LD		H,D				; Pointer to FCB ...
 			LD		A,(HL)			; Obtain file reference num from FCB S2
 			LD		(FWMLIN),A		; Store in parameter list
 
-;			CALL	GETIOADDR		; Get I/O address
-;			CP		0FFH			; See if it was an error
-;			JP		Z,FWERR			; If so, abort
-
 			LD		HL,(DMAADDR)	; Write to DMA address
 			LD		BC,OFFSET		; Convert to 6502 address
 			ADD		HL,BC			; ...
@@ -852,7 +847,8 @@ FWMLITC		DEFW	0000H			; ProDOS PL: Number of bytes transferred
 ; DE is the address of the FCB describing the file to create
 ; Returns error codes in A and L:
 ; 0 through 3 for success, 0FFH is file could not be created
-F_MAKE		CALL	MAKEPATH		; Populate PATHLEN and PATH
+F_MAKE		LD		IX,PATHBUF		; Destination buffer
+			CALL	MAKEPATH		; Populate PATHLEN and PATH
 			LD		HL,FMMLI		; Pass address of 6502 JSR instruction
 			CALL	PRODOS			; Invoke ProDOS MLI
 			CP		0				; See if there was an error
@@ -876,6 +872,32 @@ FMMLIS		DEFB	1				; ProDOS PL: Storage type (1 for file)
 FMMLICD		DEFW	0000H			; ProDOS PL: Create date (always 0000H)
 FMMLICT		DEFW	0000H			; ProDOS PL: Create time (always 0000H)
 
+; Rename file
+; DE is the address of the FCB describing the file to be renamed. The new name
+; is stuffed into FCB+16 (where the allocation map usually goes)
+; Returns error codes in A and L - 0 to 3 for success, 0FFH for file not found
+F_RENAME	LD		IX,PATHBUF		; Destination buffer 1
+			CALL	MAKEPATH		; Populate PATHLEN and PATH for first file
+			LD		IX,PATHBUF2		; Destination buffer 2
+			CALL	MAKEPATH		; Populate PATHLEN and PATH for second file
+			LD		HL,FRNMLI		; Pass address of 6502 JSR instruction
+			CALL	PRODOS			; Invoke ProDOS MLI
+			CP		0				; See if there was an error
+			JP		NZ,FRNERR		; Handle error
+			LD		A,0				; Success
+			LD		L,A				; Return code in L also
+			RET
+FRNERR		LD		A,0FFH			; 0FFH for error
+			LD		L,A				; Return code in L also
+			RET
+
+FRNMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code		
+			DEFB	0C2H			; ProDOS RENAME call
+			DEFW	FRNMLIPL+OFFSET	; Pointer to parm list in 6502 addr space
+			DEFB	60H				; RTS in 6502 code
+FRNMLIPL	DEFB	2				; ProDOS PL: Two parameters
+FRNMLIP1	DEFW	PATHBUF+OFFSET	; ProDOS PL: Pointer to path in 6502 addr
+FRNMLIP2	DEFW	PATHBUF2+OFFSET	; ProDOS PL: Pointer to path in 6502 addr
 
 ; Return bitmap of logged-in drives in HL
 DRV_LOGVEC	LD		HL,(LOGVEC)		;
@@ -999,22 +1021,27 @@ PRODOS		LD		BC,OFFSET		; Add offset to convert Z80->6502 address
 
 ; Populate the PATH buffer (and PATHLEN) by copying from FCB
 ; DE contains a pointer to the FCB
+; IX contains pointer to the path buffer into which to write
 ; Be sure not to trash DE
 ; TODO FINISH THIS - NEEDS TO HANDLE EXTENSION TOO!!!
-MAKEPATH	LD		A,(DE)			; Get drive number from FCB
+MAKEPATH	PUSH	IX				; Copy IX->IY
+			POP		IY				; So IY keeps track of size byte at start
+			INC		IX				; Advance past the size byte before writing
+			LD		A,(DE)			; Get drive number from FCB
 			CP		0				; See if it is zero (default drive)
 			JP		NZ,MPS1			; If drive explicit
 			LD		A,(CURDRV)		; If default drive use CURDRV
 			INC		A				; CURDRV is zero based
-MPS1		ADD		A,'A'+80H-1		; Convert to drive letter (high bit set)
-			LD		(PATH),A		; Store as first char of path
-			LD		A,'/'+80H		; Second char of path is '/'
-			LD		(PATH+1),A		; ...
+MPS1		ADD		A,'A'-1			; Convert to drive letter
+			LD		(IX+0),A		; Store as first char of path
+			LD		A,'/'			; Second char of path is '/'
+			LD		(IX+1),A		; ...
 			LD		C,2				; Use C to count chars in filename
 			LD		H,D				; Copy address of FCB from DE ...
 			LD		L,E				; ... to HL
 			INC		HL				; HL points to filename in FCB
-			LD		IX,PATH+2		; IX points to next char of path to write
+			INC		IX				; Advance IX to next char of path to write
+			INC		IX				; ...
 MPL1		LD		A,(HL)			; Obtain filename character
 			CP		' '				; See if it is a space (? or NULL maybe?)
 			JP		Z,MPS3			; If so we are done with filename
@@ -1023,7 +1050,6 @@ MPL1		LD		A,(HL)			; Obtain filename character
 			CP		10				; Drive letter, slash and 8 char filename
 			JP		Z,MPS2			; If so we are done with filename
 			EX		AF,AF'			; Swap back to original A reg
-			ADD		A,80H			; Set the high bit
 			LD		(IX+0),A		; Copy to PATH buffer
 			INC		C				; Count the chars
 			INC		HL				; Next byte of filename in FCB
@@ -1033,7 +1059,7 @@ MPS2		EX		AF,AF'			; Swap back to original A reg
 MPS3		; EXTENSION
 			;  ...
 			LD		A,C				; Store length of string
-			LD		(PATHLEN),A		; ...
+			LD		(IY+0),A		; We kept size byte in IY at start
 			RET
 
 ; Find IOBUF address for a file reference number
@@ -1096,10 +1122,15 @@ N2H2		OR		0F0H			;
 ; Additional private scratch space for BDOS
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-; 64 bytes for storing a file path as a Pascal style string
+; 64 byte buffer for storing a file path as a Pascal style string
 PATHBUF
 PATHLEN		DEFB	0
 PATH		DEFS	64
+
+; 64 byte buffer for storing a second file path as a Pascal style string
+PATHBUF2
+PATHLEN2	DEFB	0
+PATH2		DEFS	64
 
 ; Record file reference numbers for each I/O buffer
 ; Or 0 if no file is using the buffer
