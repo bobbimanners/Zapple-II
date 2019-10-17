@@ -358,9 +358,11 @@ TEXTBUF		DEFM	'Mary had a little lamb. Its fleece was white as snow. '
 B_C_TERMCPM		EQU		00H			; System reset
 B_C_READ		EQU		01H			; Console read
 B_C_WRITE		EQU		02H			; Console write
+B_C_RAWIO		EQU		06H			; Direct console I/O
 B_GET_IOB		EQU		07H			; Get IOBYTE
 B_SET_IOB		EQU		08H			; Set IOBYTE
 B_C_WRTSTR		EQU		09H			; Console write string
+B_C_RDSTR		EQU		0AH			; Read console string
 B_C_STAT		EQU		0BH			; Console status
 B_S_BDOSVER		EQU		0CH			; Return version number
 B_DRV_ALLRST	EQU		0DH			; Reset disks
@@ -368,8 +370,8 @@ B_DRV_SET		EQU		0EH			; Select disk
 B_F_OPEN		EQU		0FH			; Open file
 B_F_CLOSE		EQU		10H			; Close file
 B_F_DELETE		EQU		13H			; Delete file
-B_F_READ		EQU		14H			; Read file
-B_F_WRITE 		EQU		15H			; Write file
+B_F_READ		EQU		14H			; Read file sequentially
+B_F_WRITE 		EQU		15H			; Write file sequentially
 B_F_MAKE		EQU		16H			; Create and open file
 B_DRV_LOGVEC	EQU		17H			; Return bitmap of logged-in drives
 B_DRV_GET		EQU		19H			; Return current drive
@@ -417,11 +419,11 @@ BDOSVEC		DEFW	C_TERMCPM		; C=00H
 			DEFW	UNIMP			; C=03H  (A_READ)   AUX
 			DEFW	UNIMP			; C=04H  (A_WRITE)  AUX
 			DEFW	UNIMP			; C=05H  (L_WRITE)  PRN
-			DEFW	UNIMP			; C=06H  (C_RAWIO)
+			DEFW	C_RAWIO			; C=06H
 			DEFW	GET_IOB			; C=07H
 			DEFW	SET_IOB			; C=08H
 			DEFW	C_WRITESTR		; C=09H
-			DEFW	UNIMP			; C=0AH  (C_READSTR)
+			DEFW	C_READSTR		; C=0AH
 			DEFW	C_STAT			; C=0BH
 			DEFW	S_BDOSVER		; C=0CH
 			DEFW	DRV_ALLRST		; C=0DH
@@ -499,6 +501,47 @@ C_WRITE		LD		A,80H			; Set high bit
 			LD		(SOFTCARD),A	; Do it!
 			RET						; Return to calling program
 
+; If E if 0FFH then input a character from console and return it in A and L
+; without echoing the input character. Otherwise output char in E to the
+; console (no tabs, ^S or ^Q supported)
+C_RAWIO		LD		A,E				; See if E if 0FFH
+			CP		0FFH			; ...
+			JP		Z,RIS1			; If so, then read
+
+			; Write to console
+			LD		A,80H			; Set high bit
+			OR		E				; ...
+			CP		8AH				; Check for linefeed
+			RET		Z				; If LF, don't print it
+			LD		(AREG),A		; Pass char to COUT in 6502 A
+			LD		HL,COUT			; We are going to call COUT
+			LD		(ADDR),HL		; ...
+			LD		A,1				; CMD=1 means call 6502 sub
+			LD		(CMD),A			; ...
+			LD		(SOFTCARD),A	; Do it!
+			RET
+
+			; If character is waiting, read from console & return in A
+			; Otherwise, return 00H in A
+RIS1		LD		A,3				; CMD=3 means peek at keyboard
+			LD		(CMD),A			; ...
+			LD		(SOFTCARD),A	; Do it
+			LD		A,(AREG)		; Grab the return value
+			CP		0				; If zero, no chars are waiting
+			JP		Z,RIS2			; ...
+			LD		HL,RDKEY		; We are going to call RDKEY
+			LD		(ADDR),HL		; ...
+			LD		A,1				; CMD=1 means call 6502 sub
+			LD		(CMD),A			; ...
+			LD		(SOFTCARD),A	; Do it!
+			LD		A,(AREG)		; Grab the return value
+			AND		7FH				; Mask high bit
+			LD		L,A				; Copy A to L
+			RET						; 
+RIS2		LD		A,0				; No chars waiting, A=0
+			LD		L,A				; Return in L also
+			RET
+
 ; Get the IOBYTE in A and L
 GET_IOB		LD		A,(IOBYTE)		;
 			LD		L,A				; Copy to L
@@ -522,13 +565,44 @@ C_WRITESTR	LD		A,(DE)			; Fetch character from string
 			INC		DE				; Advance pointer
 			JP		C_WRITESTR		; Handle the next char
 
+; Read console string
+; DE points to the string buffer. First byte of the buffer is the capacity
+; of the buffer. This function writes the number of bytes written in second
+; byte.  Entry finishes on CR or when the buffer is filled up.
+; TODO: Line editing is supposed to be supported here
+C_READSTR	LD		H,D				; HL will be the working pointer
+			LD		L,E				; ...
+			INC		HL				; Advance to first character ...
+			INC		HL				; ... 3rd byte of the buffer
+			PUSH	DE				; Put DE into IX
+			POP		IX				; ...
+			LD		A,0				; Set number of chars read to zero
+			LD		(IX+1),A		; ...
+CRSL1		PUSH	HL				; Preserve HL
+			CALL	C_READ			; Read a character into A
+			POP		HL				; Restore HL
+			CP		13				; Carriage return?
+			RET		Z				; If so, we are done
+			CP		10				; Line feed?
+			RET		Z				; If so, we are done
+			LD		B,A				; Stash character in B
+			LD		A,(IX+0)		; Buffer capacity -> A
+			SUB		(IX+1)			; Subtract characters read
+			CP		0				; If no space left ...
+			RET		Z				;  ... we are done
+			LD		(HL),B			; Write character to buffer
+			INC		HL				; Advance to next character
+			INC		(IX+1)			; Increment character count
+			JP		CRSL1			; Loop
+			RET
+
 ; Returns 0 in A and L if no chars waiting, non zero otherwise
 C_STAT		LD		A,3				; CMD=3 means peek at keyboard
 			LD		(CMD),A			; ...
 			LD		(SOFTCARD),A	; Do it
 			LD		A,(AREG)		; Grab the return value
 			LD		L,A				; Copy A to L
-			RET						; Return to calling program
+			RET
 
 ; Returns system type in B and H, BDOS version in A and L
 S_BDOSVER	LD		B,0				; System is 8080 CP/M

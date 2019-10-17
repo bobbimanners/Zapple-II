@@ -79,9 +79,11 @@ calls.  Only console I/O has been tested and confirmed to be working so far:
 - BDOS call 00h: `C_TERMCPM` - System reset
 - BDOS call 01h: `C_READ` - Console input
 - BDOS call 02h: `C_WRITE` - Console output
+- BDOS call 06h: `C_RAWIO` - Direct console I/O
 - BDOS call 07h: `GET_IOB` - Get IOBYTE
 - BDOS call 08h: `SET_IOB` - Get IOBYTE
 - BDOS call 09h: `C_WRITESTR` - Console write string
+- BDOS call 0Ah: `C_READSTR` - Read console string
 - BDOS call 0Bh: `C_STAT` - Console status
 - BDOS call 0Ch: `S_BDOSVER` - Return version number
 - BDOS call 0Dh: `DRV_ALLRESET` - Reset disks
@@ -89,6 +91,8 @@ calls.  Only console I/O has been tested and confirmed to be working so far:
 - BDOS call 0FH: `F_OPEN` - Open file (IN PROGRESS)
 - BDOS call 10H: `F_CLOSE` - Close file (IN PROGRESS)
 - BDOS call 13H: `F_DELETE` - Delete file
+- BDOS call 14h: `F_READ` - Read file sequentially
+- BDOS call 15h: `F_WRITE` - Write file sequentially
 - BDOS call 16H: `F_MAKE` - Create (and open) file (IN PROGRESS)
 - BDOS call 17H: `DRV_LOGVEC`- Return bitmap of logged-in drives
 - BDOS call 19H: `DRV_GET` - Return current drive
