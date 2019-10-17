@@ -156,11 +156,40 @@ S1			LD		C,B_C_STAT		;
 
 			CALL	CHECKOK
 
-			; Write to the file (two 128 byte records)
+			; Set the DMA buffer to point to our text
+			LD		DE,TEXTBUF		;
+			LD		C,B_F_DMAOFF	;
+			CALL	BDOS			;
+			
+			; Write to the file
 
 			LD		DE,WMSG			; Address of string
 			LD		C,B_C_WRTSTR	;
 			CALL	BDOS			;
+
+			LD		DE,FCB1			; Default FCB address
+			LD		C,B_F_WRITE		;
+			CALL	BDOS			;
+
+			CALL	CHECKOK
+
+			LD		DE,FCB1			; Default FCB address
+			LD		C,B_F_WRITE		;
+			CALL	BDOS			;
+
+			CALL	CHECKOK
+
+			LD		DE,FCB1			; Default FCB address
+			LD		C,B_F_WRITE		;
+			CALL	BDOS			;
+
+			CALL	CHECKOK
+
+			LD		DE,FCB1			; Default FCB address
+			LD		C,B_F_WRITE		;
+			CALL	BDOS			;
+
+			CALL	CHECKOK
 
 			LD		DE,FCB1			; Default FCB address
 			LD		C,B_F_WRITE		;
@@ -186,6 +215,15 @@ S1			LD		C,B_C_STAT		;
 
 			CALL	CHECKOK
 
+			; Overwrite DMA buffer just to be sure it is read
+			LD		A,'X'			;
+			LD		HL,(DMAADDR)	;
+			LD		(HL),A			;
+			INC		HL
+			LD		(HL),A			;
+			INC		HL
+			LD		(HL),A			;
+
 			; Open the file
 
 			LD		DE,OMSG			; Address of string
@@ -209,6 +247,11 @@ S1			LD		C,B_C_STAT		;
 			CALL	BDOS			;
 
 			CALL	CHECKOK
+
+			; Print out what we just read
+			LD		DE,(DMAADDR)	;
+			LD		C,B_C_WRTSTR	;
+			CALL	BDOS			;
 
 			; Close the file
 
@@ -245,10 +288,12 @@ L2			LD		C,B_C_READ		;
 ; Check an MLI call was successful and print out message accordingly
 CHECKOK		LD		A,(AREG)		; Look at the return code
 			CP		0				; Success?
-			JP		Z,SUCC			;
+			JP		Z,COKS1			;
+			PUSH	AF				; Preserve A
 			LD		DE,FAILMSG1		; Fail message
 			LD		C,B_C_WRTSTR	;
 			CALL	BDOS			;
+			POP		AF				; Restore A
 			LD		L,A				; Copy to HL for NUM2HEX
 			LD		H,0				; ...
 			LD		DE,HEXBUF		; Generate hex string to HEXBUF
@@ -262,7 +307,7 @@ CHECKOK		LD		A,(AREG)		; Look at the return code
 			LD		C,B_C_WRTSTR	;
 			CALL	BDOS			;
 			RET						;
-SUCC		LD		DE,SUCCMSG		; Success message
+COKS1		LD		DE,SUCCMSG		; Success message
 			LD		C,B_C_WRTSTR	;
 			CALL	BDOS			;
 			RET
@@ -302,7 +347,10 @@ FAILMSG1	DEFM	'FAIL (0x$'
 			
 FAILMSG2	DEFM	')'
 			DEFB	13, '$'
-			
+
+TEXTBUF		DEFM	'Mary had a little lamb. Its fleece was white as snow. '
+		DEFM	'And everywhere that Mary went, that lamb was sure to go.$'
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Implementation of CP/M STYLE BDOS
 ; Function to invoke is passed in C, as follows:
@@ -517,6 +565,8 @@ DSRET		LD		L,A				; Return code in L too
 ; 0 through 3 for success, 0FFH is file not found
 F_OPEN		CALL	MAKEPATH		; Populate PATHLEN and PATH
 
+			PUSH	DE				; Preserve pointer to FCB
+
 			; Work out which IOBUF to allocate for this file
 			LD		A,0				; Looking for FRN slot with value 0
 			CALL	GETIOADDR		; Returns FRN slot in A, IOBUF in HL
@@ -528,13 +578,13 @@ F_OPEN		CALL	MAKEPATH		; Populate PATHLEN and PATH
 			ADD		HL,BC			; ...
 			LD		(FOMLII),HL		; Store in parameter list
 
-			PUSH	DE				; Preserve pointer to FCB
 			LD		HL,FOMLI		; Pass address of 6502 JSR instruction
 			CALL	PRODOS			; Invoke ProDOS MLI
-			POP		DE				; Restore pointer to FCB
 
 			CP		0				; See if there was an error
 			JP		NZ,FOERR		; Handle error
+
+			POP		DE				; Restore pointer to FCB
 
 			; Store ProDOS FRN in S2 field of FCB
 			LD		A,(FOMLIN)		; Get ProDOS file reference number
@@ -557,7 +607,8 @@ F_OPEN		CALL	MAKEPATH		; Populate PATHLEN and PATH
 			LD		L,A				; Copy to L
 			RET						; Done
 
-FOERR		LD		A,0FFH			; Error return status
+FOERR		POP		DE				; Restore the stack
+			LD		A,0FFH			; Error return status
 			LD		L,A				; Copy to L
 			RET						; Done (error)
 
@@ -566,7 +617,7 @@ FOMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code
 			DEFW	FOMLIPL+OFFSET	; Pointer to parm list in 6502 addr space
 			DEFB	60H				; RTS in 6502 code
 FOMLIPL		DEFB	3				; ProDOS PL: Three parameters
-FOMLIP		DEFW	PATHLEN+OFFSET	; ProDOS PL: pointer to path in 6502 addr
+FOMLIP		DEFW	PATHBUF+OFFSET	; ProDOS PL: pointer to path in 6502 addr
 FOMLII		DEFW	0000H			; ProDOS PL: pointer to IO buffer
 FOMLIN		DEFB	0				; ProDOS PL: File reference number
 
@@ -586,12 +637,21 @@ F_CLOSE		LD		H,D				; Pointer to FCB ...
 			CP		0				; See if there was an error
 			JP		NZ,FCERR		; Handle error
 
-			;
-			; TODO - SET THE APPROPRIATE FRN[1234] TO ZERO TO FREE BUFFER
-			;
+			LD		A,(FCMLIN)		; Obtain file reference number again
+			CALL	GETIOADDR		; Returns FRN slot in A, IOBUF in HL
+			CP		0FFH			; Check for error
+			JP		Z,FCERR			; If FRN not found, error out
+			LD		HL,FRN1-1		; Compute addr of FRN slot to set to zero
+			LD		B,0				; ...
+			LD		C,A				; ...
+			ADD		HL,BC			; ...
+			LD		A,0				; And zero it
+			LD		(HL),A			; ...
 
+			LD		A,0				; Return zero for error
 			LD		L,A				; Return in L also
 			RET
+
 FCERR		LD		A,0FFH			; 0FFH for error
 			LD		L,A				; Return code in L also
 			RET
@@ -622,7 +682,7 @@ FDMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code
 			DEFW	FDMLIPL+OFFSET	; Pointer to parm list in 6502 addr space
 			DEFB	60H				; RTS in 6502 code
 FDMLIPL		DEFB	1				; ProDOS PL: Seven parameters
-FDMLIP		DEFW	PATHLEN+OFFSET	; ProDOS PL: Pointer to path in 6502 addr
+FDMLIP		DEFW	PATHBUF+OFFSET	; ProDOS PL: Pointer to path in 6502 addr
 
 ; Read next record
 ; DE is the address of the FCB describing the file from which to read
@@ -634,9 +694,12 @@ F_READ		LD		H,D				; Pointer to FCB ...
 			ADD		HL,BC			; Compute address
 			LD		A,(HL)			; Obtain file reference num from FCB S2
 			LD		(FRMLIN),A		; Store in parameter list
-			CALL	GETIOADDR		; Get I/O address
-			CP		0FFH			; See if it was an error
-			JP		Z,FRERR			; If so, abort
+
+;			CALL	GETIOADDR		; Get I/O address
+;			CP		0FFH			; See if it was an error
+;			JP		Z,FRERR			; If so, abort
+
+			LD		HL,(DMAADDR)	; Read from DMA buffer address
 			LD		BC,OFFSET		; Convert to 6502 address
 			ADD		HL,BC			; ...
 			LD		(FRMLIDB),HL	; Store I/O buffer address in parm list
@@ -644,6 +707,7 @@ F_READ		LD		H,D				; Pointer to FCB ...
 			CALL	PRODOS			; Invoke ProDOS MLI
 			CP		0				; See if there was an error
 			JP		NZ,FRERR		; Handle error
+			LD		A,0				; Zero for success
 			LD		L,A				; Return code in L also
 			RET						; Done
 FRERR		LD		A,0FFH			; TODO: All errors are 0FFH for now
@@ -670,25 +734,21 @@ F_WRITE		LD		H,D				; Pointer to FCB ...
 			ADD		HL,BC			; Compute address
 			LD		A,(HL)			; Obtain file reference num from FCB S2
 			LD		(FWMLIN),A		; Store in parameter list
-			CALL	GETIOADDR		; Get I/O address
-			CP		0FFH			; See if it was an error
-			JP		Z,FWERR			; If so, abort
+
+;			CALL	GETIOADDR		; Get I/O address
+;			CP		0FFH			; See if it was an error
+;			JP		Z,FWERR			; If so, abort
+
+			LD		HL,(DMAADDR)	; Write to DMA address
 			LD		BC,OFFSET		; Convert to 6502 address
 			ADD		HL,BC			; ...
 			LD		(FWMLIDB),HL	; Store I/O buffer address in parm list
-
-; DEBUG -------------------------------------------
-;			LD		DE,HEXBUF		; Generate hex string to HEXBUF
-;			CALL	NUM2HEX			; ...
-;			LD		DE,HEXBUF		; Write hex value to console
-;			LD		C,B_C_WRTSTR	;
-;			CALL	BDOS
-; END DEBUG ---------------------------------------
 
 			LD		HL,FWMLI		; Pass address of 6502 JSR instruction
 			CALL	PRODOS			; Invoke ProDOS MLI
 			CP		0				; See if there was an error
 			JP		NZ,FWERR		; Handle error
+			LD		A,0				; Zero for success
 			LD		L,A				; Return code in L also
 			RET						; Done
 FWERR		LD		A,0FFH			; TODO: All errors are 0FFH for now
@@ -715,7 +775,7 @@ F_MAKE		CALL	MAKEPATH		; Populate PATHLEN and PATH
 			CP		0				; See if there was an error
 			JP		NZ,FMERR		; Handle error
 			CALL	F_OPEN			; Open the file using same FCB (DE ptr)
-			RET
+			RET						; Return with status from F_OPEN
 FMERR		LD		A,0FFH			; 0FFH for error
 			LD		L,A				; Return code in L also
 			RET
@@ -725,7 +785,7 @@ FMMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code
 			DEFW	FMMLIPL+OFFSET	; Pointer to parm list in 6502 addr space
 			DEFB	60H				; RTS in 6502 code
 FMMLIPL		DEFB	7				; ProDOS PL: Seven parameters
-FMMLIP		DEFW	PATHLEN+OFFSET	; ProDOS PL: Pointer to path in 6502 addr
+FMMLIP		DEFW	PATHBUF+OFFSET	; ProDOS PL: Pointer to path in 6502 addr
 FMMLIA		DEFB	0C3H			; ProDOS PL: Access (0C3H full access)
 FMMLIT		DEFB	0				; ProDOS PL: File type (0 means typeless)
 FMMLIAT		DEFW	0000H			; ProDOS PL: Aux file type (always 0000H)
@@ -813,7 +873,7 @@ PRODOS		LD		BC,OFFSET		; Add offset to convert Z80->6502 address
 ; Populate the PATH buffer (and PATHLEN) by copying from FCB
 ; DE contains a pointer to the FCB
 ; Be sure not to trash DE
-; TODO FINISH THIS!!!
+; TODO FINISH THIS - NEEDS TO HANDLE EXTENSION TOO!!!
 MAKEPATH	LD		A,(DE)			; Get drive number from FCB
 			CP		0				; See if it is zero (default drive)
 			JP		NZ,MPS1			; If drive explicit
@@ -854,7 +914,7 @@ MPS3		; EXTENSION
 ; If found, return FRN slot# 1,2,3,4 in A, I/O buffer address in HL
 ; If not found, return A=0FFH
 ; Trashes B
-GETIOADDR	LD		B,A				; Stash A
+GETIOADDR	LD		B,A				; Stash file ref number into B
 			LD		A,(FRN1)		; Does it match FRN1?
 			CP		B				; ...
 			JP		Z,GIOAS1		; ...
@@ -864,9 +924,9 @@ GETIOADDR	LD		B,A				; Stash A
 			LD		A,(FRN3)		; Does it match FRN3?
 			CP		B				; ...
 			JP		Z,GIOAS3		; ...
-			LD		A,(FRN3)		; Does it match FRN4?
+			LD		A,(FRN4)		; Does it match FRN4?
 			CP		B				; ...
-			JP		Z,GIOAS3		; ...
+			JP		Z,GIOAS4		; ...
 			LD		A,0FFH			; No match, return A=0FFH
 			RET						; ...
 GIOAS1		LD		HL,IOBUF1		; Address of I/O buf 1 -> HL
@@ -910,6 +970,7 @@ N2H2		OR		0F0H			;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ; 64 bytes for storing a file path as a Pascal style string
+PATHBUF
 PATHLEN		DEFB	0
 PATH		DEFS	64
 
@@ -933,13 +994,13 @@ HEXBUF		DEFB	0,0,0,0,'$'
 ; IOBUF4 $B700-$BAFF 
 
 			ORG		7000H ; Set to 7000H by experiment ...
-IOBUF1		DEFM	'Mary had a little lamb'
+IOBUF1		DEFS	1024
 			ORG		7400H
-IOBUF2		DEFM	'His fleece was white as snow'
+IOBUF2		DEFS	1024
 			ORG		7800H
-IOBUF3		DEFM	'And everywhere that Mary went'
+IOBUF3		DEFS	1024
 			ORG		7C00H
-IOBUF4		DEFM	'That sheep was sure to go'
+IOBUF4		DEFS	1024
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
