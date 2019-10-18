@@ -2,7 +2,8 @@
 ; Z80 code running on Softcard
 ; Implements CP/M style BDOS interface
 ; Requires the companion SOFTCARD65 6502 code
-; Assemble using Udo Munk's Z80asm
+; Assemble using Udo Munk's Z80asm.
+; Tabstops every 4 chars.
 ; Bobbi 2019
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -359,7 +360,7 @@ FAILMSG2	DEFM	')'
 			DEFB	13, '$'
 
 TEXTBUF		DEFM	'Mary had a little lamb. Its fleece was white as snow. '
-		DEFM	'And everywhere that Mary went, that lamb was sure to go.$'
+			DEFM	'And everywhere that Mary went, that lamb was sure to go.$'
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Implementation of CP/M STYLE BDOS
@@ -379,6 +380,8 @@ B_DRV_ALLRST	EQU		0DH			; Reset disks
 B_DRV_SET		EQU		0EH			; Select disk
 B_F_OPEN		EQU		0FH			; Open file
 B_F_CLOSE		EQU		10H			; Close file
+B_F_SFIRST		EQU		11H			; Search for first match in directory
+B_F_SNEXT		EQU		12H			; Search for next match in directory
 B_F_DELETE		EQU		13H			; Delete file
 B_F_READ		EQU		14H			; Read file sequentially
 B_F_WRITE 		EQU		15H			; Write file sequentially
@@ -442,8 +445,8 @@ BDOSVEC		DEFW	C_TERMCPM		; C=00H
 			DEFW	DRV_SET			; C=0EH
 			DEFW	F_OPEN			; C=0FH
 			DEFW	F_CLOSE			; C=10H
-			DEFW	UNIMP			; C=11H  (F_SFIRST)
-			DEFW	UNIMP			; C=12H  (F_SNEXT)
+			DEFW	F_SFIRST		; C=11H
+			DEFW	F_SNEXT			; C=12H
 			DEFW	F_DELETE		; C=13H
 			DEFW	F_READ			; C=14H
 			DEFW	F_WRITE			; C=15H
@@ -650,7 +653,7 @@ DSRET		LD		L,A				; Return code in L too
 ; Returns error codes in A and L:
 ; 0 through 3 for success, 0FFH is file not found
 F_OPEN		LD		IX,PATHBUF		; Destination buffer
-			CALL	MAKEPATH		; Populate PATHLEN and PATH
+			CALL	FCB2PATH		; Populate PATHLEN and PATH
 
 			PUSH	DE				; Preserve pointer to FCB
 
@@ -717,6 +720,8 @@ F_CLOSE		LD		H,D				; Pointer to FCB ...
 			LD		BC,14			; Offset to S2 field (reserved field)
 			ADD		HL,BC			; Compute address
 			LD		A,(HL)			; Obtain file reference num from FCB S2
+			CP		0				; If file reference number is zero ...
+			JP		Z,FCSUCC		; ... Nothing to do, just return
 			LD		(FCMLIN),A		; Store in parameter list
 			LD		HL,FCMLI		; Pass address of 6502 JSR instruction
 			CALL	PRODOS			; Invoke ProDOS MLI
@@ -727,6 +732,7 @@ F_CLOSE		LD		H,D				; Pointer to FCB ...
 			CALL	GETIOADDR		; Returns FRN slot in A, IOBUF in HL
 			CP		0FFH			; Check for error
 			JP		Z,FCERR			; If FRN not found, error out
+
 			LD		HL,FRN1-1		; Compute addr of FRN slot to set to zero
 			LD		B,0				; ...
 			LD		C,A				; ...
@@ -734,7 +740,14 @@ F_CLOSE		LD		H,D				; Pointer to FCB ...
 			LD		A,0				; And zero it
 			LD		(HL),A			; ...
 
-			LD		A,0				; Return zero for error
+			LD		H,D				; Pointer to FCB ...
+			LD		L,E				; ... into HL
+			LD		BC,14			; Offset to S2 field (reserved field)
+			ADD		HL,BC			; Compute address
+			LD		A,0				; Zero out the S2 field
+			LD		(HL),A			; ...
+
+FCSUCC		LD		A,0				; Return zero for error
 			LD		L,A				; Return in L also
 			RET
 
@@ -749,11 +762,66 @@ FCMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code
 FCMLIPL		DEFB	1				; ProDOS PB: One parameter
 FCMLIN		DEFB	0				; ProDOS PB: File reference number
 
+DIRHDSZ		EQU		2BH				; Size of ProDOS directory header
+FILEENTSZ	EQU		27H				; Size of ProDOS file entry
+ENTPERBLK	EQU		0DH				; Number of file entries per block
+
+; Search for first match of filename in directory
+; DE is the address of the FCB describing the file to look for
+; Returns error codes in A and L: 0-3 for success, 0FFH for not found
+; TODO: WRITE THIS
+F_SFIRST 	PUSH	DE				; Store pointer to search FCB
+			LD		A,(DE)			; Obtain drive number
+			LD		(DFCBDRV),A		; Copy to directory FCB
+			LD		DE,DFCB			; Use this FCB to open the directory
+			CALL	F_CLOSE			; Close the directory, if open
+			CALL	F_OPEN			; Open the directory
+
+			;; TODO: FRN is in S2
+
+			CALL	RDDIRBLK		; Read first 512 byte block
+
+			LD		HL,DIRBUF		; Skip over directory header
+			LD		BC,DIRHDSZ		; ...
+			ADD		HL,BC			; ...
+
+			PUSH	HL				; Preserve HL
+			POP		DE				; Get ptr to search FCB back
+			CALL	CHKDIRBLOCK		; Search directory block
+			POP		HL				; Restore HL
+			CP		0				; See if it was a match
+			JP		Z,FSFS1			; If so, return
+			LD		A,0FFH			; No match
+			RET						;
+FSFS1		LD		A,0				; Match
+			RET
+			; TODO Need to read subsequent blocks and work out how to stop!
+
+
+; FCB used for opening ProDOS directory corresponding to drive
+; We only need the first 16 bytes (no need for allocation map)
+DFCB								; File control block for directory
+DFCBDRV		DEFB	00H				; FCB Drive (0 current, 1 A:, 2 B: etc)
+DFCBNAM		DEFM	'           '	; FCB filename and extension (all spaces)
+DFCBEX		DEFB	00H				; FCB extent field
+DFCBS1		DEFB	00H				; FCB S1 field
+DFCBS2		DEFB	00H				; FCB S2 field
+DFCBRC		DEFB	00H				; FCB RC field
+
+; Search for next match of filename in directory
+; DE is the address of the FCB describing the file to look for
+; Returns error codes in A and L: 0-3 for success, 0FFH for not found
+; TODO: WRITE THIS
+F_SNEXT
+;			PUSH	DE				; Store pointer to search FCB
+			; ...
+			RET
+
 ; Delete file
 ; DE is the address of the FCB describing the file to delete
 ; Returns error codes in A and L:
 F_DELETE	LD		IX,PATHBUF		; Destination buffer
-			CALL	MAKEPATH		; Populate PATHLEN and PATH
+			CALL	FCB2PATH		; Populate PATHLEN and PATH
 			LD		HL,FDMLI		; Pass address of 6502 JSR instruction
 			CALL	PRODOS			; Invoke ProDOS MLI
 			CP		0				; See if there was an error
@@ -849,7 +917,7 @@ FWMLITC		DEFW	0000H			; ProDOS PL: Number of bytes transferred
 ; Returns error codes in A and L:
 ; 0 through 3 for success, 0FFH is file could not be created
 F_MAKE		LD		IX,PATHBUF		; Destination buffer
-			CALL	MAKEPATH		; Populate PATHLEN and PATH
+			CALL	FCB2PATH		; Populate PATHLEN and PATH
 			LD		HL,FMMLI		; Pass address of 6502 JSR instruction
 			CALL	PRODOS			; Invoke ProDOS MLI
 			CP		0				; See if there was an error
@@ -878,9 +946,9 @@ FMMLICT		DEFW	0000H			; ProDOS PL: Create time (always 0000H)
 ; is stuffed into FCB+16 (where the allocation map usually goes)
 ; Returns error codes in A and L - 0 to 3 for success, 0FFH for file not found
 F_RENAME	LD		IX,PATHBUF		; Destination buffer 1
-			CALL	MAKEPATH		; Populate PATHLEN and PATH for first file
+			CALL	FCB2PATH		; Populate PATHLEN and PATH for first file
 			LD		IX,PATHBUF2		; Destination buffer 2
-			CALL	MAKEPATH		; Populate PATHLEN and PATH for second file
+			CALL	FCB2PATH		; Populate PATHLEN and PATH for second file
 			LD		HL,FRNMLI		; Pass address of 6502 JSR instruction
 			CALL	PRODOS			; Invoke ProDOS MLI
 			CP		0				; See if there was an error
@@ -955,7 +1023,7 @@ FUNS1		LD		A,(USERNUM)		; Get user number
 ; DE contains address of FCB describing the file
 ; Error codes are returned in A and L (0 for success, 0FFH if file not found)
 ; Returns the number of 128 byte records in random record count field of FCB
-F_SIZE		CALL	MAKEPATH		; Populate PATHLEN and PATH
+F_SIZE		CALL	FCB2PATH		; Populate PATHLEN and PATH
 			LD		HL,FSMLI		; Pass address of 6502 JSR instruction
 			CALL	PRODOS			; Invoke ProDOS MLI
 			CP		0				; See if there was an error
@@ -1021,17 +1089,18 @@ PRODOS		LD		BC,OFFSET		; Add offset to convert Z80->6502 address
 			RET
 
 ; Populate the PATH buffer (and PATHLEN) by copying from FCB
+; If the FCB contains A:TEST____.TXT then the PATH buffer will be A/TEST.TXT
 ; DE contains a pointer to the FCB
 ; IX contains pointer to the path buffer into which to write
-MAKEPATH	PUSH	IX				; Copy IX->IY
+FCB2PATH	PUSH	IX				; Copy IX->IY
 			POP		IY				; So IY keeps track of size byte at start
 			INC		IX				; Advance past the size byte before writing
 			LD		A,(DE)			; Get drive number from FCB
 			CP		0				; See if it is zero (default drive)
-			JP		NZ,MPS1			; If drive explicit
+			JP		NZ,F2PS1		; If drive explicit
 			LD		A,(CURDRV)		; If default drive use CURDRV
 			INC		A				; CURDRV is zero based
-MPS1		ADD		A,'A'-1			; Convert to drive letter
+F2PS1		ADD		A,'A'-1			; Convert to drive letter
 			LD		(IX+0),A		; Store as first char of path
 			INC		IX				; Advance IX to next char of path to write
 			LD		A,'/'			; Second char of path is '/'
@@ -1042,56 +1111,206 @@ MPS1		ADD		A,'A'-1			; Convert to drive letter
 			LD		L,E				; ... to HL
 			INC		HL				; HL points to filename in FCB
 
-MPL1		; Handle the filename - up to 8 characters
+F2PL1		; Handle the filename - up to 8 characters
 			LD		A,(HL)			; Obtain filename character
 			CP		' '				; See if it is a space
-			JP		Z,MPS3			; If so we are done with filename
+			JP		Z,F2PS3			; If so we are done with filename
 			EX		AF,AF'			; We need to re-use A here
 			LD		A,C				; Get character count
 			CP		10				; Drive letter, slash and 8 char filename
-			JP		Z,MPS2			; If so we are done with filename
+			JP		Z,F2PS2			; If so we are done with filename
 			EX		AF,AF'			; Swap back to original A reg
 			LD		(IX+0),A		; Copy to PATH buffer
 			INC		C				; Increment filename char count
 			INC		HL				; Next byte of filename in FCB
 			INC		IX				; Next byte of PATH buffer
-			JP		MPL1			; Loop till done
+			JP		F2PL1			; Loop till done
 
-MPS2		EX		AF,AF'			; Swap back to original A reg
+F2PS2		EX		AF,AF'			; Swap back to original A reg
 
-MPS3		; Eat any space characters at end of filename
-MPL2		LD		A,(HL)			; Read next character from FCB
+F2PS3		; Eat any space characters at end of filename
+F2PL2		LD		A,(HL)			; Read next character from FCB
 			CP		' '				; Is it space?
-			JP		NZ,MPS4			; If not, we are done eating!
+			JP		NZ,F2PS4		; If not, we are done eating!
 			INC		HL				; Otherwise advance to next char
-			JP		MPL2			; And loop
+			JP		F2PL2			; And loop
 
-MPS4		LD		A,'.'			; Separator is a period
+F2PS4		LD		A,'.'			; Separator is a period
 			LD		(IX+0),A		; Write to buffer
 			INC		C				; Count the character!
 			INC		IX				; Advance to next character in buffer
 			LD		B,0				; Use B to track num chars in extension
 
 			; Handle the extension - up to 3 characters
-MPL3		LD		A,(HL)			; Obtain extension character
+F2PL3		LD		A,(HL)			; Obtain extension character
 			CP		' '				; See if it is a space (? or NULL maybe?)
-			JP		Z,MPS6			; If so we are done with extension
+			JP		Z,F2PS6			; If so we are done with extension
 			EX		AF,AF'			; We need to re-use A here
 			LD		A,B				; Get character count
 			CP		3				; Extension can be up to 3 chars
-			JP		Z,MPS5			; If so we are done with filename
+			JP		Z,F2PS5			; If so we are done with filename
 			EX		AF,AF'			; Swap back to original A reg
 			LD		(IX+0),A		; Copy to PATH buffer
 			INC		C				; Count the chars (overall)
 			INC		B				; Count the chars (in extension)
 			INC		HL				; Next byte of filename in FCB
 			INC		IX				; Next byte of PATH buffer
-			JP		MPL3			; Loop till done
+			JP		F2PL3			; Loop till done
 
-MPS5		EX		AF,AF'			; Swap back to original A reg
+F2PS5		EX		AF,AF'			; Swap back to original A reg
 
-MPS6		LD		A,C				; Store length of string
+F2PS6		LD		A,C				; Store length of string
 			LD		(IY+0),A		; We kept size byte in IY at start
+			RET
+
+; This operation is almost the inverse of FCB2PATH.  It takes a pointer to the
+; beginning of the ProDOS dirent and converts it to FCB format (8.3 with
+; spaces for any unused characters.)
+; HL points to the file entry in the ProDOS directory
+; B contains the drive number (1 for A:, 2 for B: etc)
+; The FCB is written to the buffer FILEBUF at 0080H
+; Trashes pretty much all registers (except IX, IY)
+PATH2FCB	EX		DE,HL			; Stash HL in DE so we can use HL here
+
+			LD		HL,FILEBUF		; Set all 32 bytes to FCB to zero
+			LD		C,0				; ...
+			LD		A,0				; ...
+P2FL1		LD		(HL),C			; ...
+			INC		A				; ...
+			CP		32				; ...
+			JP		NZ,P2FL1		; ...
+
+			LD		HL,FILEBUF+1	; Set all filename chars in FCB to space
+			LD		C,' '			; ...
+			LD		A,0				; ...
+P2FL2		LD		(HL),C			; ...
+			INC		A				; ...
+			CP		8+3				; ...
+			JP		NZ,P2FL2		; ...
+
+			EX		DE,HL			; Get file entry pointer back in HL
+	
+			LD		A,(HL)			; Obtain first char of ProDOS dirent
+			AND		0FH				; Mask to obtain length of the name
+			LD		C,A				; Stash source character count in C
+			LD		DE,FILEBUF		; Initialize DE as write pointer
+			LD		A,B				; Move drive number to A
+			LD		(DE),A			; Write drive number
+			LD		B,0				; Use B to count chars written
+P2FL3		INC		HL				; Advance source pointer
+			INC		DE				; Advance destination pointer
+			LD		A,C				; Get count of chars remaining
+			CP		0				; If none left ...
+			RET		Z				; We are done
+			LD		A,B				; Get count of chars written
+			CP		8+3				; If 8+3 chars have been written ...
+			RET		Z				; We are done
+			LD		A,(HL)			; Read character
+			CP		'.'				; See if it is a period
+			JP		Z,P2FS2			; Initialize things to copy the extension
+			LD		(DE),A			; Write character
+			INC		B				; Increment count of chars written
+P2FS1		DEC		C				; Decrement count of chars remaining
+			JP		P2FL3			; Loop
+P2FS2		LD		DE,FILEBUF+9	; Destination is start of extension
+			LD		B,8				; 8 chars have been written
+			JP		P2FS1			; Jump back into the read-write loop
+
+; Read 512 byte block of directory
+; Used by F_SFIRST and F_SNEXT
+; Trashes HL + registers trashed by F_READ (best to assume all of them!)
+RDDIRBLK	LD		HL,(DMAADDR)	; Save existing DMA address
+			PUSH	HL				; ...
+
+			; Read first 512 byte block of directory
+			LD		HL,DIRBUF1		; Set DMAADDR to point to DIRBUF1
+			LD		(DMAADDR),HL	; ...
+			CALL	F_READ			; Read first block of directory
+			LD		HL,DIRBUF2		; Set DMAADDR to point to DIRBUF2
+			LD		(DMAADDR),HL	; ...
+			CALL	F_READ			; Read first block of directory
+			LD		HL,DIRBUF3		; Set DMAADDR to point to DIRBUF3
+			LD		(DMAADDR),HL	; ...
+			CALL	F_READ			; Read first block of directory
+			LD		HL,DIRBUF4		; Set DMAADDR to point to DIRBUF4
+			LD		(DMAADDR),HL	; ...
+			CALL	F_READ			; Read first block of directory
+
+			POP		HL				; Reset DMA address as we found it
+			LD		(DMAADDR),HL	; ...
+			RET
+
+; Match FCBs
+; Used by CHKDIRBLOCK
+; DE is the address of the FCB describing the file to look for
+; Compare with FCB at FILEBUF (0080H) already created by PATH2FCB
+; Returns A=0 if entry matches, A=FFH if no match
+; Trashes A,BC,DE,HL
+MATCHFCB	INC		DE				; Skip over drive byte in FCB
+			LD		HL,FILEBUF+1	; Skip over drive byte in FCB
+			LD		C,0				; Initialize character counter
+MFL1		LD		A,(DE)			; Load byte of search pattern
+			CP		'?'				; Is it '?' wildcard?
+			JP		Z,MFS1			; If so, automatic char match
+			LD		B,(HL)			; Load byte of match candidate
+			CP		B				; See if the characters match
+			JP		NZ,MFS2			; If not, then no match
+MFS1		INC		DE				; Advance source pointer
+			INC		HL				; Advance match candidate pointer
+			INC		C				; Increment counter
+			LD		A,8+3			; Compare character counter
+			CP		C				; ...
+			JP		NZ,MFL1			; Loop if characters left
+			LD		A,0				; We have a match
+			RET						;
+MFS2		LD		A,0FFH			; No match
+			RET
+
+; Compare a ProDOS directory file entry to see if it matches
+; Used by F_SFIRST and F_SNEXT
+; DE is the address of the FCB describing the file to look for
+; HL points to the first file entry in the ProDOS directory
+; Returns A=0 if entry matches, A=FFH if no match
+CHKDIRENT	LD		B,0				; Hardcode drive A: for now. TODO: fix!
+			LD		A,(HL)			; Get first byte of file entry
+			AND		0FH				; Mask to get the filename length
+			CP		0				; If zero ...
+			JP		Z,CDES1			; File is deleted - no match
+			PUSH	HL				; Preserve HL
+			PUSH	DE				; Preserve DE
+			CALL	PATH2FCB		; Create FCB in FILEBUF (0080H)
+			POP		DE				; Recover DE
+			CALL	MATCHFCB		; Compare search FCB with FCB in FILEBUF
+			POP		HL				; Restore HL
+			CP		0				; Does it match?
+			JP		Z,CDES2			; If so, return
+CDES1		LD		A,0FFH			; No match
+			RET						;
+CDES2		LD		A,0				; Match
+			RET
+
+; Search a 512 byte block of a ProDOS directory for a matching file entry
+; Used by F_SFIRST and F_SNEXT
+; DE is the address of the FCB describing the file to look for
+; HL points to the first file entry in the ProDOS directory
+; Returns A=0 if entry matches, A=FFH if no match
+CHKDIRBLK	LD		A,0				; File entry counter
+CDBL1		PUSH	AF				; Preserve A
+			PUSH	HL				; Preserve HL
+			CALL	CHKDIRENT		; Match the file entry at HL
+			POP		HL				; Restore HL
+			CP		0				; Was it a match?
+			JP		Z,CDBS1			; If so, we are done
+			POP		AF				; Restore A
+			LD		BC,FILEENTSZ	; Advance to next file entry
+			ADD		HL,BC			; ...
+			INC		A				; Increment count of file entries
+			CP		ENTPERBLK		; Done all of them in this block?
+			JP		NZ,CDBL1		; If not, loop
+			LD		A,0FFH			; No match
+			RET						;
+CDBS1		POP		AF				; Restore stack
+			LD		A,0				; Match
 			RET
 
 ; Find IOBUF address for a file reference number
@@ -1173,6 +1392,13 @@ FRN4		DEFB	0
 
 ; Buffer for printing hex numbers to console
 HEXBUF		DEFB	0,0,0,0,'$'
+
+; 512 byte buffer for reading directories (used by F_SFIRST and F_SNEXT)
+DIRBUF
+DIRBUF1		DEFS	128
+DIRBUF2		DEFS	128
+DIRBUF3		DEFS	128
+DIRBUF4		DEFS	128
 
 ; Four 1024 byte ProDOS I/O buffers
 ; These must start on a page boundary
