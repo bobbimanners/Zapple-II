@@ -1362,7 +1362,11 @@ CHKDIRENT	LD		B,0				; Hardcode drive A: for now. TODO: fix!
 			PUSH	DE				; Preserve DE
 			CALL	PATH2FCB		; Create FCB in FILEBUF (0080H)
 			POP		DE				; Recover DE
+			POP		HL
+			PUSH	HL
+			PUSH	DE
 			CALL	MATCHFCB		; Compare search FCB with FCB in FILEBUF
+			POP		DE
 			POP		HL				; Restore HL
 			CP		0				; Does it match?
 			JP		Z,CDES2			; If so, return
