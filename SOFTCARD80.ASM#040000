@@ -6,6 +6,28 @@
 ; Tabstops every 4 chars.
 ; Bobbi 2019
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; References:
+; 1) BDOS System Calls
+;    https://www.seasip.info/Cpm/bdos.html
+; 2) Programmer's CP/M Handbook - Johnson-Laird
+; 3) ProDOS 8 Technical Reference Manual
+;    http://www.easy68k.com/paulrsm/6502/PDOS8TRM.HTM
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;
+; TODO: Finish F_SFIRST, F_SNEXT directory calls
+; TODO: Implement missing system calls:
+;        - Random read/write (F_READRAND,F_WRITERAND,F_RANDREC)
+;        - RS232 (A_READ, A_WRITE)
+;        - Printer (LWRITE)
+;        - Other (DRV_ALLOCVEC, F_ATTRIB, DRV_DPB, F_WRITEZF)
+; TODO: IOBYTE doesn't do anything
+; TODO: User number doesn't do anything
+; TODO: Software R/O disk setting is not respected
+; TODO: C_READSTR - Line editing functions
+; TODO: C_WRITE - ^S,^Q, tabs etc.
+; Other Random TODO comments in the code
+; 
 
 BDOSADDR	EQU		06000H			; 
 STCKTOP		EQU		06FFFH			; Top of Z80 stack (below IOBUFs)
@@ -127,7 +149,7 @@ S1			LD		C,B_C_STAT		;
 			LD		C,B_C_WRITE		;
 			CALL	BDOS			;
 
-			; Create an FCB
+			; Create FCB1 'A:TEST.TXT'
 			LD		A,1				; A: drive
 			LD		(FCB1DRV),A		;
 			LD		A,'T'			; Filename
@@ -153,8 +175,24 @@ S1			LD		C,B_C_STAT		;
 			LD		A,'T'			; Extension
 			LD		(FCB1NAM+10),A	;
 
+			; Create FCB2 'A:????????.???'
+			LD		A,1				; A: drive
+			LD		(FCB2DRV),A		;
+			LD		A,'?'			; Filename
+			LD		(FCB2NAM),A		;
+			LD		(FCB2NAM+1),A	;
+			LD		(FCB2NAM+2),A	;
+			LD		(FCB2NAM+3),A	;
+			LD		(FCB2NAM+4),A	;
+			LD		(FCB2NAM+5),A	;
+			LD		(FCB2NAM+6),A	;
+			LD		(FCB2NAM+7),A	;
+			LD		(FCB2NAM+8),A	;
+			LD		(FCB2NAM+9),A	;
+			LD		(FCB2NAM+10),A	;
+
 			; Create and open a file using ProDOS MLI
-			; Creates 'A/TEST.TMP'
+			; Creates 'A/TEST.TXT'
 			; Directory 'A' needs to exist already
 
 			LD		DE,CMSG			; Address of string
@@ -246,13 +284,13 @@ PRFNF		LD		C,B_C_WRTSTR	;
 			
 			;CALL	CHECKOK
 
-			; Search for the file in the directory (not existing)
+			; Search for all files in the directory using wildcards
 
 			LD		DE,SFMSG2		; Address of string
 			LD		C,B_C_WRTSTR	;
 			CALL	BDOS			;
 
-			LD		DE,FCB2			; Default FCB address 2 (uninitialized)
+			LD		DE,FCB2			; Default FCB address 2
 			LD		C,B_F_SFIRST	;
 			CALL	BDOS			;
 
@@ -260,8 +298,34 @@ PRFNF		LD		C,B_C_WRTSTR	;
 			JP		Z,FOUND2		;
 			LD		DE,SFMSGNF		;
 			JP		PRFNF2			;
-FOUND2		LD		DE,SFMSGF		;
+FOUND2		LD		A,13			; HACK to terminate string
+			LD		(FILEBUF+12),A	; 
+			LD		A,'$'			;
+			LD		(FILEBUF+13),A	; 
+			LD		DE,FILEBUF+1	;
+			LD		C,B_C_WRTSTR	;
+			CALL	BDOS			;
+			JP		DIRLOOP			; Jump forwards to DIR loop
 PRFNF2		LD		C,B_C_WRTSTR	;
+			CALL	BDOS			;
+			
+DIRLOOP		LD		DE,FCB2			; Default FCB address 2
+			LD		C,B_F_SNEXT		;
+			CALL	BDOS			;
+
+			CP		0				;
+			JP		Z,FOUND3		;
+			LD		DE,SFMSGNF		;
+			JP		PRFNF3			;
+FOUND3		LD		A,13			; HACK to terminate string
+			LD		(FILEBUF+12),A	; 
+			LD		A,'$'			;
+			LD		(FILEBUF+13),A	; 
+			LD		DE,FILEBUF+1	;
+			LD		C,B_C_WRTSTR	;
+			CALL	BDOS			;
+			JP		DIRLOOP			; Loop for all files in dir
+PRFNF3		LD		C,B_C_WRTSTR	;
 			CALL	BDOS			;
 			
 			;CALL	CHECKOK
@@ -368,19 +432,19 @@ WELCOME		DEFB	13
 			DEFB	13, '$'
 			
 CMSG		DEFB	13
-			DEFM	'Creating & opening A/TEST.TMP'
+			DEFM	'Creating & opening A/TEST.TXT'
 			DEFB	13, '$'
 			
 WMSG		DEFB	13
-			DEFM	'Writing record to A/TEST.TMP'
+			DEFM	'Writing record to A/TEST.TXT'
 			DEFB	13, '$'
 			
 CLMSG		DEFB	13
-			DEFM	'Closing A/TEST.TMP'
+			DEFM	'Closing A/TEST.TXT'
 			DEFB	13, '$'
 			
 SFMSG		DEFB	13
-			DEFM	'Searching directory for TEST.TMP'
+			DEFM	'Searching directory for TEST.TXT'
 			DEFB	13, '$'
 			
 SFMSGF		DEFB	'Found'
@@ -390,19 +454,19 @@ SFMSGNF		DEFB	'NOT found'
 			DEFB	13, '$'
 			
 SFMSG2		DEFB	13
-			DEFM	'Searching directory for garbage'
+			DEFM	'Searching directory for ????????.???'
 			DEFB	13, '$'
 			
 OMSG		DEFB	13
-			DEFM	'Opening A/TEST.TMP'
+			DEFM	'Opening A/TEST.TXT'
 			DEFB	13, '$'
 			
 RMSG		DEFB	13
-			DEFM	'Reading record from A/TEST.TMP'
+			DEFM	'Reading record from A/TEST.TXT'
 			DEFB	13, '$'
 			
 DMSG		DEFB	13
-			DEFM	'Deleting A/TEST.TMP'
+			DEFM	'Deleting A/TEST.TXT'
 			DEFB	13, '$'
 			
 SUCCMSG		DEFM	'Success!'
@@ -823,25 +887,26 @@ ENTPERBLK	EQU		0DH				; Number of file entries per block
 ; Search for first match of filename in directory
 ; DE is the address of the FCB describing the file to look for
 ; Returns error codes in A and L: 0-3 for success, 0FFH for not found
-; TODO: WRITE THIS
+; The matching FCB is always in slot 0, so success return code always 0
 F_SFIRST 	PUSH	DE				; Store pointer to search FCB
 			LD		A,(DE)			; Obtain drive number
 			LD		(DFCBDRV),A		; Copy to directory FCB
 			LD		DE,DFCB			; Use this FCB to open the directory
 			CALL	F_CLOSE			; Close the directory, if open
-			CALL	CHECKOK
 			LD		DE,DFCB			; Use this FCB to open the directory
 			CALL	F_OPEN			; Open the directory
-			CALL	CHECKOK
 
-			;; TODO: FRN is in DFCBS2
-
-			LD		DE,DFCB			; Use this FCB to open the directory
+FSFL1		LD		DE,DFCB			; Use this FCB to read the directory
 			CALL	RDDIRBLK		; Read first 512 byte block
+			CP		0				; See if it was an error
+			JP		NZ,FSFS2		; If error, assume EOF & just return
 
 			LD		HL,DIRBUF		; Skip over directory header
 			LD		BC,DIRHDSZ		; ...
 			ADD		HL,BC			; ...
+			LD		(CDBPTR),HL		; Start out at first file entry
+			LD		A,0				; Set file count to zero
+			LD		(CDBCOUNT),A	; ...
 
 			POP		DE				; Get ptr to search FCB back
 			PUSH	HL				; Preserve HL
@@ -849,12 +914,45 @@ F_SFIRST 	PUSH	DE				; Store pointer to search FCB
 			POP		HL				; Restore HL
 			CP		0				; See if it was a match
 			JP		Z,FSFS1			; If so, return
-			LD		A,0FFH			; No match
-			RET						;
-FSFS1		LD		A,0				; Match
-			RET
-			; TODO Need to read subsequent blocks and work out how to stop!
+			JP		FSFL1			; Loop
 
+FSFS1		LD		A,0				; Match
+			RET						;
+FSFS2		LD		A,0FFH			; No match
+			RET
+
+; Search for next match of filename in directory
+; DE is the address of the FCB describing the file to look for
+; Returns error codes in A and L: 0-3 for success, 0FFH for not found
+; The matching FCB is always in slot 0, so success return code always 0
+F_SNEXT		PUSH	DE				; Store pointer to search FCB
+			LD		HL,(CDBPTR)		; Pointer into current block
+			LD		A,(CDBCOUNT)	; File count for current block
+FSNL1		PUSH	HL				; Preserve HL
+			CALL	CHKDIRBLK		; Search directory block
+			POP		HL				; Restore HL
+			POP		DE				; Restore DE
+			CP		0				; See if it was a match
+			JP		Z,FSNS1			; If so, return
+
+			LD		DE,DFCB			; Use this FCB to read the directory
+			CALL	RDDIRBLK		; Read next 512 byte block
+			CP		0				; See if it was an error
+			JP		NZ,FSNS2		; If error, assume EOF & just return
+
+			LD		HL,DIRBUF		; Skip over directory header
+			LD		BC,DIRHDSZ		; ...
+			ADD		HL,BC			; ...
+			LD		(CDBPTR),HL		; Start out at first file entry
+			LD		A,0				; Set file count to zero
+			LD		(CDBCOUNT),A	; ...
+
+			JP		FSNL1			; Loop
+
+FSNS1		LD		A,0				; Match
+			RET						;
+FSNS2		LD		A,0FFH			; No match
+			RET
 
 ; FCB used for opening ProDOS directory corresponding to drive
 ; We only need the first 16 bytes (no need for allocation map)
@@ -865,15 +963,6 @@ DFCBEX		DEFB	00H				; FCB extent field
 DFCBS1		DEFB	00H				; FCB S1 field
 DFCBS2		DEFB	00H				; FCB S2 field
 DFCBRC		DEFB	00H				; FCB RC field
-
-; Search for next match of filename in directory
-; DE is the address of the FCB describing the file to look for
-; Returns error codes in A and L: 0-3 for success, 0FFH for not found
-; TODO: WRITE THIS
-F_SNEXT
-;			PUSH	DE				; Store pointer to search FCB
-			; ...
-			RET
 
 ; Delete file
 ; DE is the address of the FCB describing the file to delete
@@ -1283,40 +1372,45 @@ P2FS2		LD		DE,FILEBUF+8	; Destination is start of extension
 ; Read 512 byte block of directory
 ; Used by F_SFIRST and F_SNEXT
 ; Trashes HL + registers trashed by F_READ (best to assume all of them!)
+; Returns A=0 for success, A=0FFH on error
 RDDIRBLK	LD		HL,(DMAADDR)	; Save existing DMA address
 			PUSH	HL				; ...
-
 
 			; Read first 512 byte block of directory
 			LD		DE,DFCB			; Use this FCB to open the directory
 			LD		HL,DIRBUF1		; Set DMAADDR to point to DIRBUF1
 			LD		(DMAADDR),HL	; ...
-			CALL	F_READ			; Read first block of directory
-
-			CALL	CHECKOK
+			CALL	F_READ			; Read first record of directory
+			CP		0				; See if there was an error
+			JP		NZ,RDBS1		; If so, quit with error code
 
 			LD		DE,DFCB			; Use this FCB to open the directory
 			LD		HL,DIRBUF2		; Set DMAADDR to point to DIRBUF2
 			LD		(DMAADDR),HL	; ...
-			CALL	F_READ			; Read first block of directory
-
-			CALL	CHECKOK
+			CALL	F_READ			; Read second record of directory
+			CP		0				; See if there was an error
+			JP		NZ,RDBS1		; If so, quit with error code
 
 			LD		DE,DFCB			; Use this FCB to open the directory
 			LD		HL,DIRBUF3		; Set DMAADDR to point to DIRBUF3
 			LD		(DMAADDR),HL	; ...
-			CALL	F_READ			; Read first block of directory
-
-			CALL	CHECKOK
+			CALL	F_READ			; Read third record of directory
+			CP		0				; See if there was an error
+			JP		NZ,RDBS1		; If so, quit with error code
 
 			LD		DE,DFCB			; Use this FCB to open the directory
 			LD		HL,DIRBUF4		; Set DMAADDR to point to DIRBUF4
 			LD		(DMAADDR),HL	; ...
-			CALL	F_READ			; Read first block of directory
+			CALL	F_READ			; Read fourth record of directory
+			CP		0				; See if there was an error
+			JP		NZ,RDBS1		; If so, quit with error code
 
-			CALL	CHECKOK
+			LD		A,0				; Return code for success
+			JP		RDBS2			; Successful return
 
-			POP		HL				; Reset DMA address as we found it
+RDBS1		LD		A,0FFH			; Error return code
+
+RDBS2		POP		HL				; Reset DMA address as we found it
 			LD		(DMAADDR),HL	; ...
 			RET
 
@@ -1378,26 +1472,33 @@ CDES2		LD		A,0				; Match
 ; Search a 512 byte block of a ProDOS directory for a matching file entry
 ; Used by F_SFIRST and F_SNEXT
 ; DE is the address of the FCB describing the file to look for
-; HL points to the first file entry in the ProDOS directory
+; CDBPTR points to the next ProDOS file entry to parse
+; CDBCOUNT is set to the number of file entries already parsed in this block
 ; Returns A=0 if entry matches, A=FFH if no match
-CHKDIRBLK	LD		A,0				; File entry counter
-CDBL1		PUSH	AF				; Preserve A
-			PUSH	HL				; Preserve HL
-			CALL	CHKDIRENT		; Match the file entry at HL
-			POP		HL				; Restore HL
-			CP		0				; Was it a match?
-			JP		Z,CDBS1			; If so, we are done
-			POP		AF				; Restore A
+CHKDIRBLK	LD		A,(CDBCOUNT)	; File entry counter
+			LD		HL,(CDBPTR)		; Pointer to next file entry
+CDBL1		CALL	CHKDIRENT		; Match the file entry at HL
+			EX		AF,AF'			; Stash return code for now
 			LD		BC,FILEENTSZ	; Advance to next file entry
 			ADD		HL,BC			; ...
+			LD		(CDBPTR),HL		; Store the pointer
+			LD		A,(CDBCOUNT)	; File entry counter
 			INC		A				; Increment count of file entries
+			LD		(CDBCOUNT),A	; Store the counter
+			EX		AF,AF'			; Get return code back in A
+			CP		0				; Was it a match?
+			JP		Z,CDBS1			; If so, we are done
+			LD		A,(CDBCOUNT)	; Get the counter back
 			CP		ENTPERBLK		; Done all of them in this block?
 			JP		NZ,CDBL1		; If not, loop
 			LD		A,0FFH			; No match
 			RET						;
-CDBS1		POP		AF				; Restore stack
-			LD		A,0				; Match
+CDBS1		LD		A,0				; Match
 			RET
+
+; The following variables are used to preserve state between calls
+CDBPTR		DEFW	0000H			; Stores pointer to next file entry
+CDBCOUNT	DEFB	0				; Stores file entry counter
 
 ; Find IOBUF address for a file reference number
 ; Scan through FRN1, FRN2, FRN3, FRN4 to find the file reference number in A
