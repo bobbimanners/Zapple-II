@@ -15,12 +15,11 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;
-; TODO: Finish F_SFIRST, F_SNEXT directory calls
 ; TODO: Implement missing system calls:
 ;        - Random read/write (F_READRAND,F_WRITERAND,F_RANDREC)
 ;        - RS232 (A_READ, A_WRITE)
 ;        - Printer (LWRITE)
-;        - Other (DRV_ALLOCVEC, F_ATTRIB, DRV_DPB, F_WRITEZF)
+;        - Other (DRV_ALLOCVEC, F_ATTRIB, F_WRITEZF)
 ; TODO: IOBYTE doesn't do anything
 ; TODO: User number doesn't do anything
 ; TODO: Software R/O disk setting is not respected
@@ -510,6 +509,7 @@ B_DRV_GET		EQU		19H			; Return current drive
 B_F_DMAOFF		EQU		1AH			; Set DMA address
 B_DRV_SRO		EQU		1CH			; Software write-protect current drive
 B_DRV_ROVEC		EQU		1DH			; Return bitmap of read-only drives
+B_DRV_DPB		EQU		1FH			; Get Drive Parameter Block address
 B_F_USERNUM		EQU		20H			; Get/set user number
 B_F_SIZE		EQU		23H			; Compute file size
 B_DRV_RESET		EQU		25H			; Selectively reset disk drives
@@ -577,7 +577,7 @@ BDOSVEC		DEFW	C_TERMCPM		; C=00H
 			DEFW	DRV_SETRO		; C=1CH
 			DEFW	DRV_ROVEC		; C=1DH
 			DEFW	UNIMP			; C=1EH  (F_ATTRIB)
-			DEFW	UNIMP			; C=1FH  (DRV_DPB)
+			DEFW	DRV_DPB			; C=1FH
 			DEFW	F_USERNUM		; C=20H
 			DEFW	UNIMP			; C=21H  (F_READRAND)
 			DEFW	UNIMP			; C=22H  (F_WRITERAND)
@@ -1155,6 +1155,10 @@ DSRL2		RL		B				;
 DRV_ROVEC	LD		HL,(ROVEC)		; Bit 0 of L is A:, bit 7 of H is P:
 			RET
 
+; Return pointer to Drive Parameter Block in HL
+DRV_DPB		LD		HL,DPB			; Pointer to drive parameter block
+			RET
+
 ; Get/set user number
 ; E contains the user number to set, or 0FFH to get current user number
 ; If E is 0FFH then user number is returned in A
@@ -1559,6 +1563,19 @@ N2H2		OR		0F0H			;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Additional private scratch space for BDOS
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+; Drive parameter block (CP/M 2.2 format)
+; See Johnson-Laird Pg 33-34
+DPB			DEFW	32				; # 128 byte records per track (for Disk II)
+			DEFB	7				; Block shift (16384 byte allocation blocks)
+			DEFB	127				; Block mask (16384 byte allocation blocks)
+			DEFB	7				; Extent mask
+			DEFW	2047			; # allocation blocks on disk (32MB)
+			DEFW	1023			; # directory entries 
+			DEFB	0				; Directory allocation bitmap byte 1
+			DEFB	0				; Directory allocation bitmap byte 2
+			DEFW	0				; Checksum vector size
+			DEFW	0				; # of reserved tracks
 
 ; 64 byte buffer for storing a file path as a Pascal style string
 PATHBUF
