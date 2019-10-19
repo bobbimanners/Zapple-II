@@ -16,8 +16,7 @@
 
 ;
 ; TODO: Populate FCBs properly so PIP etc. work!!
-; TODO: OPEN DELETE RENAME F_ATTRIB need to work with FCB with wildcards and
-;       leave the FCB in 0080H
+; TODO: F_ATTRIB needs to work with FCB with wildcards and leave the FCB at DMAADDR
 ; TODO: Implement missing system calls:
 ;        - Random read/write (F_READRAND,F_WRITERAND,F_RANDREC,F_WRITEZF)
 ;        - RS232 (A_READ, A_WRITE)
@@ -27,7 +26,7 @@
 ; TODO: User number doesn't do anything
 ; TODO: Software R/O disk setting is not respected
 ; TODO: C_READSTR - Line editing functions
-; TODO: C_WRITE - ^S,^Q, tabs etc.
+; TODO: C_WRITE - handle tabs
 ; Other Random TODO comments in the code
 ; 
 
@@ -389,15 +388,15 @@ PRFNF3		LD		C,B_C_WRTSTR	;
 
 			; Delete the file
 
-;			LD		DE,DMSG			; Address of string
-;			LD		C,B_C_WRTSTR	;
-;			CALL	BDOS			;
-;
-;			LD		DE,FCB1			; Default FCB address
-;			LD		C,B_F_DELETE	;
-;			CALL	BDOS			;
-;
-;			CALL	CHECKOK
+			LD		DE,DMSG			; Address of string
+			LD		C,B_C_WRTSTR	;
+			CALL	BDOS			;
+
+			LD		DE,FCB1			; Default FCB address
+			LD		C,B_F_DELETE	;
+			CALL	BDOS			;
+
+			CALL	CHECKOK
 
 ; Read keyboard and echo to screen C_READ, C_WRITE
 L2			LD		C,B_C_READ		;
@@ -630,7 +629,7 @@ C_READ		LD		HL,RDKEY		; We are going to call RDKEY
 			RET						; Return to calling program
 
 ; Write character in E to the console
-; TODO: Handle tabs, ^S and ^Q
+; TODO: Handle tabs
 C_WRITE		LD		A,80H			; Set high bit
 			OR		E				; ...
 			CP		8AH				; Check for linefeed
@@ -755,12 +754,20 @@ S_BDOSVER	LD		B,0				; System is 8080 CP/M
 
 ; Reset disks
 ; Makes A: drive the default
-; TODO: Empty all disk buffers (ProDOS FLUSH)
 DRV_ALLRST	LD		A,0				; 0 means drive A:
 			LD		(CURDRV),A		; Store in CURDRV
 			LD		BC,FILEBUF		; FILEBUF is at 0080H
 			LD		(DMAADDR),BC	; Reset DMA address
+			LD		HL,DARMLI		; Pass address of 6502 JSR instruction
+			CALL	PRODOS			; Invoke ProDOS MLI
 			RET
+
+DARMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code		
+			DEFB	0CDH			; ProDOS FLUSH call
+			DEFW	FOMLIPL+OFFSET	; Pointer to parm list in 6502 addr space
+			DEFB	60H				; RTS in 6502 code
+DARMLIP		DEFB	1				; ProDOS PL: One parameter
+DARMLIN		DEFB	0				; ProDOS PL: File ref num (0 = all files)
 
 ; Select disk
 ; Disk to select is passed in E (A: is 0, B: is 1 etc.)
@@ -778,8 +785,12 @@ DSRET		LD		L,A				; Return code in L too
 ; Open file
 ; DE is the address of the FCB describing the file to open
 ; Returns error codes in A and L:
-; 0 through 3 for success, 0FFH is file not found
-F_OPEN		LD		IX,PATHBUF		; Destination buffer
+; Returns 0 for success.  The FCB for the file opened is left at DMAADDR (slot 0)
+; Returns 0FFH if file not found
+F_OPEN		CALL	F_SFIRST
+
+; Alternative entrypoint used for opening ProDOS directory file only
+_F_OPEN		LD		IX,PATHBUF		; Destination buffer
 			CALL	FCB2PATH		; Populate PATHLEN and PATH
 
 			PUSH	DE				; Preserve pointer to FCB
@@ -895,7 +906,7 @@ ENTPERBLK	EQU		0DH				; Number of file entries per block
 
 ; Search for first match of filename in directory
 ; DE is the address of the FCB describing the file to look for
-; Returns error codes in A and L: 0-3 for success, 0FFH for not found
+; Returns error codes in A and L: 0 for success, 0FFH for not found
 ; The matching FCB is always in slot 0, so success return code always 0
 F_SFIRST 	PUSH	DE				; Store pointer to search FCB
 			LD		A,(DE)			; Obtain drive number
@@ -903,7 +914,7 @@ F_SFIRST 	PUSH	DE				; Store pointer to search FCB
 			LD		DE,DFCB			; Use this FCB to open the directory
 			CALL	F_CLOSE			; Close the directory, if open
 			LD		DE,DFCB			; Use this FCB to open the directory
-			CALL	F_OPEN			; Open the directory
+			CALL	_F_OPEN			; Open the directory (avoiding recursion!)
 
 FSFL1		LD		DE,DFCB			; Use this FCB to read the directory
 			CALL	RDDIRBLK		; Read first 512 byte block
@@ -932,7 +943,7 @@ FSFS2		LD		A,0FFH			; No match
 
 ; Search for next match of filename in directory
 ; DE is the address of the FCB describing the file to look for
-; Returns error codes in A and L: 0-3 for success, 0FFH for not found
+; Returns error codes in A and L: 0 for success, 0FFH for not found
 ; The matching FCB is always in slot 0, so success return code always 0
 F_SNEXT		PUSH	DE				; Store pointer to search FCB
 			LD		HL,(CDBPTR)		; Pointer into current block
@@ -976,7 +987,10 @@ DFCBRC		DEFB	00H				; FCB RC field
 ; Delete file
 ; DE is the address of the FCB describing the file to delete
 ; Returns error codes in A and L:
-F_DELETE	LD		IX,PATHBUF		; Destination buffer
+F_DELETE	CALL	F_SFIRST		; Search for file, create FCB
+			CP		0FFH			; If not found ...
+			JP		Z,FDERR			; ... Return with error
+			LD		IX,PATHBUF		; Destination buffer
 			CALL	FCB2PATH		; Populate PATHLEN and PATH
 			LD		HL,FDMLI		; Pass address of 6502 JSR instruction
 			CALL	PRODOS			; Invoke ProDOS MLI
@@ -1071,7 +1085,7 @@ FWMLITC		DEFW	0000H			; ProDOS PL: Number of bytes transferred
 ; Create (and open) file
 ; DE is the address of the FCB describing the file to create
 ; Returns error codes in A and L:
-; 0 through 3 for success, 0FFH is file could not be created
+; 0 for success, 0FFH if file could not be created
 F_MAKE		LD		IX,PATHBUF		; Destination buffer
 			CALL	FCB2PATH		; Populate PATHLEN and PATH
 			LD		HL,FMMLI		; Pass address of 6502 JSR instruction
@@ -1100,10 +1114,19 @@ FMMLICT		DEFW	0000H			; ProDOS PL: Create time (always 0000H)
 ; Rename file
 ; DE is the address of the FCB describing the file to be renamed. The new name
 ; is stuffed into FCB+16 (where the allocation map usually goes)
-; Returns error codes in A and L - 0 to 3 for success, 0FFH for file not found
-F_RENAME	LD		IX,PATHBUF		; Destination buffer 1
+; Returns error codes in A and L - 0 for success, 0FFH for file not found
+F_RENAME	CALL	F_SFIRST		; Search for file, create FCB
+			CP		0FFH			; If not found ...
+			JP		Z,FRNERR		; ... Return with error
+			LD		IX,PATHBUF		; Destination buffer 1
 			CALL	FCB2PATH		; Populate PATHLEN and PATH for first file
 			LD		IX,PATHBUF2		; Destination buffer 2
+			LD		H,D				; DE -> HL for addition
+			LD		L,E				; ...
+			LD		BC,16			; Increment by 16 bytes to 2nd part of FCB
+			ADD		HL,BC			; ...
+			LD		D,H				; HL back to DE
+			LD		E,L				; ...
 			CALL	FCB2PATH		; Populate PATHLEN and PATH for second file
 			LD		HL,FRNMLI		; Pass address of 6502 JSR instruction
 			CALL	PRODOS			; Invoke ProDOS MLI
@@ -1443,11 +1466,11 @@ RDBS2		POP		HL				; Reset DMA address as we found it
 ; Match FCBs
 ; Used by CHKDIRBLK
 ; DE is the address of the FCB describing the file to look for
-; Compare with FCB at FILEBUF (0080H) already created by PATH2FCB
+; Compare with FCB at DMAADDR already created by PATH2FCB
 ; Returns A=0 if entry matches, A=FFH if no match
 ; Trashes A,BC,DE,HL
 MATCHFCB	INC		DE				; Skip over drive byte in FCB
-			LD		HL,(DMAADDR)	;
+			LD		HL,(DMAADDR)	; Will write FCB using DMAADDR pointer
 			INC		HL				; Skip over drive byte in FCB
 			LD		C,0				; Initialize character counter
 MFL1		LD		A,(DE)			; Load byte of search pattern
