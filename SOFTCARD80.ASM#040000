@@ -15,11 +15,14 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;
+; TODO: Populate FCBs properly so PIP etc. work!!
+; TODO: OPEN DELETE RENAME F_ATTRIB need to work with FCB with wildcards and
+;       leave the FCB in 0080H
 ; TODO: Implement missing system calls:
-;        - Random read/write (F_READRAND,F_WRITERAND,F_RANDREC)
+;        - Random read/write (F_READRAND,F_WRITERAND,F_RANDREC,F_WRITEZF)
 ;        - RS232 (A_READ, A_WRITE)
 ;        - Printer (LWRITE)
-;        - Other (DRV_ALLOCVEC, F_ATTRIB, F_WRITEZF)
+;        - Other (F_ATTRIB)
 ; TODO: IOBYTE doesn't do anything
 ; TODO: User number doesn't do anything
 ; TODO: Software R/O disk setting is not respected
@@ -263,6 +266,11 @@ S1			LD		C,B_C_STAT		;
 
 			CALL	CHECKOK
 
+			; Set the DMA buffer to point to FILEBUF (0080H)
+			LD		DE,FILEBUF		;
+			LD		C,B_F_DMAOFF	;
+			CALL	BDOS			;
+			
 			; Search for the file in the directory
 
 			LD		DE,SFMSG		; Address of string
@@ -507,6 +515,7 @@ B_F_RENAME		EQU		17H			; Rename file
 B_DRV_LOGVEC	EQU		18H			; Return bitmap of logged-in drives
 B_DRV_GET		EQU		19H			; Return current drive
 B_F_DMAOFF		EQU		1AH			; Set DMA address
+B_DRV_AVEC		EQU		1BH			; Set DMA address
 B_DRV_SRO		EQU		1CH			; Software write-protect current drive
 B_DRV_ROVEC		EQU		1DH			; Return bitmap of read-only drives
 B_DRV_DPB		EQU		1FH			; Get Drive Parameter Block address
@@ -573,7 +582,7 @@ BDOSVEC		DEFW	C_TERMCPM		; C=00H
 			DEFW	DRV_LOGVEC		; C=18H
 			DEFW	DRV_GET			; C=19H
 			DEFW	F_DMAOFF		; C=1AH
-			DEFW	UNIMP			; C=1BH  (DRV_ALLOCVEC)
+			DEFW	DRV_AVEC		; C=1BH
 			DEFW	DRV_SETRO		; C=1CH
 			DEFW	DRV_ROVEC		; C=1DH
 			DEFW	UNIMP			; C=1EH  (F_ATTRIB)
@@ -746,7 +755,7 @@ S_BDOSVER	LD		B,0				; System is 8080 CP/M
 
 ; Reset disks
 ; Makes A: drive the default
-; TODO: Empty all disk buffers
+; TODO: Empty all disk buffers (ProDOS FLUSH)
 DRV_ALLRST	LD		A,0				; 0 means drive A:
 			LD		(CURDRV),A		; Store in CURDRV
 			LD		BC,FILEBUF		; FILEBUF is at 0080H
@@ -1128,6 +1137,10 @@ DRV_GET		LD		A,(CURDRV)		;
 F_DMAOFF	LD		(DMAADDR),DE	;
 			RET
 
+; Return address of allocation map in HL
+DRV_AVEC	LD		HL,ALLOCVEC		;
+			RET
+
 ; Software write-protect current disk
 DRV_SETRO	LD		B,80H			; Set MS-bit in B, will rotate this below
 			LD		A,(CURDRV)		; Current drive (0 A:, 1 B: ...)
@@ -1323,11 +1336,11 @@ F2PS6		LD		A,C				; Store length of string
 ; spaces for any unused characters.)
 ; HL points to the file entry in the ProDOS directory
 ; B contains the drive number (1 for A:, 2 for B: etc)
-; The FCB is written to the buffer FILEBUF at 0080H
+; The FCB is written to the buffer pointed to by DMAADDR
 ; Trashes pretty much all registers (except IX, IY)
 PATH2FCB	EX		DE,HL			; Stash HL in DE so we can use HL here
 
-			LD		HL,FILEBUF		; Set all 32 bytes to FCB to zero
+			LD		HL,(DMAADDR)	; Set all 32 bytes to FCB to zero
 			LD		C,0				; ...
 			LD		A,0				; ...
 P2FL1		LD		(HL),C			; ...
@@ -1336,7 +1349,8 @@ P2FL1		LD		(HL),C			; ...
 			CP		32				; ...
 			JP		NZ,P2FL1		; ...
 
-			LD		HL,FILEBUF+1	; Set all filename chars in FCB to space
+			LD		HL,(DMAADDR)	; Set all filename chars in FCB to space
+			INC		HL				; ...
 			LD		C,' '			; ...
 			LD		A,0				; ...
 P2FL2		LD		(HL),C			; ...
@@ -1350,7 +1364,7 @@ P2FL2		LD		(HL),C			; ...
 			LD		A,(HL)			; Obtain first char of ProDOS dirent
 			AND		0FH				; Mask to obtain length of the name
 			LD		C,A				; Stash source character count in C
-			LD		DE,FILEBUF		; Initialize DE as write pointer
+			LD		DE,(DMAADDR)	; Initialize DE as write pointer
 			LD		A,B				; Move drive number to A
 			LD		(DE),A			; Write drive number
 			LD		B,0				; Use B to count chars written
@@ -1369,7 +1383,15 @@ P2FL3		INC		HL				; Advance source pointer
 			INC		B				; Increment count of chars written
 P2FS1		DEC		C				; Decrement count of chars remaining
 			JP		P2FL3			; Loop
-P2FS2		LD		DE,FILEBUF+8	; Destination is start of extension
+P2FS2		LD		DE,(DMAADDR)	; Destination is start of extension
+			INC		DE				;
+			INC		DE				;
+			INC		DE				;
+			INC		DE				;
+			INC		DE				;
+			INC		DE				;
+			INC		DE				;
+			INC		DE				;
 			LD		B,8				; 8 chars have been written
 			JP		P2FS1			; Jump back into the read-write loop
 
@@ -1425,7 +1447,8 @@ RDBS2		POP		HL				; Reset DMA address as we found it
 ; Returns A=0 if entry matches, A=FFH if no match
 ; Trashes A,BC,DE,HL
 MATCHFCB	INC		DE				; Skip over drive byte in FCB
-			LD		HL,FILEBUF+1	; Skip over drive byte in FCB
+			LD		HL,(DMAADDR)	;
+			INC		HL				; Skip over drive byte in FCB
 			LD		C,0				; Initialize character counter
 MFL1		LD		A,(DE)			; Load byte of search pattern
 
@@ -1458,12 +1481,12 @@ CHKDIRENT	LD		B,0				; Hardcode drive A: for now. TODO: fix!
 			JP		Z,CDES1			; File is deleted - no match
 			PUSH	HL				; Preserve HL
 			PUSH	DE				; Preserve DE
-			CALL	PATH2FCB		; Create FCB in FILEBUF (0080H)
+			CALL	PATH2FCB		; Create FCB in DMA buffer
 			POP		DE				; Recover DE
 			POP		HL
 			PUSH	HL
 			PUSH	DE
-			CALL	MATCHFCB		; Compare search FCB with FCB in FILEBUF
+			CALL	MATCHFCB		; Compare search FCB w/ FCB in DMA buffer
 			POP		DE
 			POP		HL				; Restore HL
 			CP		0				; Does it match?
@@ -1576,6 +1599,10 @@ DPB			DEFW	32				; # 128 byte records per track (for Disk II)
 			DEFB	0				; Directory allocation bitmap byte 2
 			DEFW	0				; Checksum vector size
 			DEFW	0				; # of reserved tracks
+
+; Fake allocation vector (2048 allocation blocks / 8 = 256 bytes)
+ALLOCVEC	DEFS	256				; TODO: This is a waste of memory
+									; Get rid of it?
 
 ; 64 byte buffer for storing a file path as a Pascal style string
 PATHBUF
