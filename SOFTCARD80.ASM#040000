@@ -226,6 +226,46 @@ S1			LD		C,B_C_STAT		;
 
 			CALL	CHECKOK
 
+			; Search for the file in the directory
+
+			LD		DE,SFMSG		; Address of string
+			LD		C,B_C_WRTSTR	;
+			CALL	BDOS			;
+
+			LD		DE,FCB1			; Default FCB address
+			LD		C,B_F_SFIRST	;
+			CALL	BDOS			;
+
+			CP		0				;
+			JP		Z,FOUND			;
+			LD		DE,SFMSGNF		;
+			JP		PRFNF			;
+FOUND		LD		DE,SFMSGF		;
+PRFNF		LD		C,B_C_WRTSTR	;
+			CALL	BDOS			;
+			
+			;CALL	CHECKOK
+
+			; Search for the file in the directory (not existing)
+
+			LD		DE,SFMSG2		; Address of string
+			LD		C,B_C_WRTSTR	;
+			CALL	BDOS			;
+
+			LD		DE,FCB2			; Default FCB address 2 (uninitialized)
+			LD		C,B_F_SFIRST	;
+			CALL	BDOS			;
+
+			CP		0				;
+			JP		Z,FOUND2		;
+			LD		DE,SFMSGNF		;
+			JP		PRFNF2			;
+FOUND2		LD		DE,SFMSGF		;
+PRFNF2		LD		C,B_C_WRTSTR	;
+			CALL	BDOS			;
+			
+			;CALL	CHECKOK
+
 			; Overwrite DMA buffer just to be sure it is read
 			LD		A,'X'			;
 			LD		HL,(DMAADDR)	;
@@ -337,6 +377,20 @@ WMSG		DEFB	13
 			
 CLMSG		DEFB	13
 			DEFM	'Closing A/TEST.TMP'
+			DEFB	13, '$'
+			
+SFMSG		DEFB	13
+			DEFM	'Searching directory for TEST.TMP'
+			DEFB	13, '$'
+			
+SFMSGF		DEFB	'Found'
+			DEFB	13, '$'
+			
+SFMSGNF		DEFB	'NOT found'
+			DEFB	13, '$'
+			
+SFMSG2		DEFB	13
+			DEFM	'Searching directory for garbage'
 			DEFB	13, '$'
 			
 OMSG		DEFB	13
@@ -775,10 +829,14 @@ F_SFIRST 	PUSH	DE				; Store pointer to search FCB
 			LD		(DFCBDRV),A		; Copy to directory FCB
 			LD		DE,DFCB			; Use this FCB to open the directory
 			CALL	F_CLOSE			; Close the directory, if open
+			CALL	CHECKOK
+			LD		DE,DFCB			; Use this FCB to open the directory
 			CALL	F_OPEN			; Open the directory
+			CALL	CHECKOK
 
-			;; TODO: FRN is in S2
+			;; TODO: FRN is in DFCBS2
 
+			LD		DE,DFCB			; Use this FCB to open the directory
 			CALL	RDDIRBLK		; Read first 512 byte block
 
 			LD		HL,DIRBUF		; Skip over directory header
@@ -1111,6 +1169,10 @@ F2PS1		ADD		A,'A'-1			; Convert to drive letter
 			LD		L,E				; ... to HL
 			INC		HL				; HL points to filename in FCB
 
+			LD		A,(HL)			; First character of filename
+			CP		' '				; Is it space? ie: no file specified
+			JP		Z,F2PS6			; Don't handle filename or extension
+
 F2PL1		; Handle the filename - up to 8 characters
 			LD		A,(HL)			; Obtain filename character
 			CP		' '				; See if it is a space
@@ -1161,7 +1223,7 @@ F2PS5		EX		AF,AF'			; Swap back to original A reg
 
 F2PS6		LD		A,C				; Store length of string
 			LD		(IY+0),A		; We kept size byte in IY at start
-			RET
+			RET						;
 
 ; This operation is almost the inverse of FCB2PATH.  It takes a pointer to the
 ; beginning of the ProDOS dirent and converts it to FCB format (8.3 with
@@ -1212,7 +1274,7 @@ P2FL3		INC		HL				; Advance source pointer
 			INC		B				; Increment count of chars written
 P2FS1		DEC		C				; Decrement count of chars remaining
 			JP		P2FL3			; Loop
-P2FS2		LD		DE,FILEBUF+9	; Destination is start of extension
+P2FS2		LD		DE,FILEBUF+8	; Destination is start of extension
 			LD		B,8				; 8 chars have been written
 			JP		P2FS1			; Jump back into the read-write loop
 
@@ -1222,19 +1284,35 @@ P2FS2		LD		DE,FILEBUF+9	; Destination is start of extension
 RDDIRBLK	LD		HL,(DMAADDR)	; Save existing DMA address
 			PUSH	HL				; ...
 
+
 			; Read first 512 byte block of directory
+			LD		DE,DFCB			; Use this FCB to open the directory
 			LD		HL,DIRBUF1		; Set DMAADDR to point to DIRBUF1
 			LD		(DMAADDR),HL	; ...
 			CALL	F_READ			; Read first block of directory
+
+			CALL	CHECKOK
+
+			LD		DE,DFCB			; Use this FCB to open the directory
 			LD		HL,DIRBUF2		; Set DMAADDR to point to DIRBUF2
 			LD		(DMAADDR),HL	; ...
 			CALL	F_READ			; Read first block of directory
+
+			CALL	CHECKOK
+
+			LD		DE,DFCB			; Use this FCB to open the directory
 			LD		HL,DIRBUF3		; Set DMAADDR to point to DIRBUF3
 			LD		(DMAADDR),HL	; ...
 			CALL	F_READ			; Read first block of directory
+
+			CALL	CHECKOK
+
+			LD		DE,DFCB			; Use this FCB to open the directory
 			LD		HL,DIRBUF4		; Set DMAADDR to point to DIRBUF4
 			LD		(DMAADDR),HL	; ...
 			CALL	F_READ			; Read first block of directory
+
+			CALL	CHECKOK
 
 			POP		HL				; Reset DMA address as we found it
 			LD		(DMAADDR),HL	; ...
