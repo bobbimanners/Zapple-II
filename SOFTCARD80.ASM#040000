@@ -15,7 +15,7 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;
-; TODO: Populate FCBs properly so PIP etc. work!!
+; TODO: Populate FCBs properly so PIP etc. work!! Do this in MAKE2PATH.
 ; TODO: F_ATTRIB needs to work with FCB with wildcards and leave the FCB at DMAADDR
 ; TODO: Implement missing system calls:
 ;        - Random read/write (F_READRAND,F_WRITERAND,F_RANDREC,F_WRITEZF)
@@ -388,15 +388,15 @@ PRFNF3		LD		C,B_C_WRTSTR	;
 
 			; Delete the file
 
-			LD		DE,DMSG			; Address of string
-			LD		C,B_C_WRTSTR	;
-			CALL	BDOS			;
+;			LD		DE,DMSG			; Address of string
+;			LD		C,B_C_WRTSTR	;
+;			CALL	BDOS			;
 
-			LD		DE,FCB1			; Default FCB address
-			LD		C,B_F_DELETE	;
-			CALL	BDOS			;
+;			LD		DE,FCB1			; Default FCB address
+;			LD		C,B_F_DELETE	;
+;			CALL	BDOS			;
 
-			CALL	CHECKOK
+;			CALL	CHECKOK
 
 ; Read keyboard and echo to screen C_READ, C_WRITE
 L2			LD		C,B_C_READ		;
@@ -1026,12 +1026,22 @@ F_READ		LD		H,D				; Pointer to FCB ...
 			LD		(FRMLIDB),HL	; Store I/O buffer address in parm list
 			LD		HL,FRMLI		; Pass address of 6502 JSR instruction
 			CALL	PRODOS			; Invoke ProDOS MLI
-			CP		0				; See if there was an error
-			JP		NZ,FRERR		; Handle error
+			CP		4CH				; See if it was EOF
+			JP		Z,FREOF			; If so, return EOF code (1)
+			CP		43H				; See if it was a bad file ref number
+			JP		Z,FRBFCB		; If so, return invalid FCB code (9)
+			CP		0				; See if there was some other error
+			JP		NZ,FRERR		; If so, return code 0FFH (h/w error)
 			LD		A,0				; Zero for success
 			LD		L,A				; Return code in L also
 			RET						; Done
-FRERR		LD		A,0FFH			; TODO: All errors are 0FFH for now
+FREOF		LD		A,1				; EOF return code
+			LD		L,A				; Return code in L also
+			RET						; Done (EOF)
+FRBFCB		LD		A,9				; Invalid FCB return code
+			LD		L,A				; Return code in L also
+			RET						; Done (EOF)
+FRERR		LD		A,0FFH			; All other errors are 0FFH
 			LD		L,A				; Return code in L aslo
 			RET						; Done (error)
 
