@@ -64,7 +64,9 @@ BELL		EQU		0FBE4H			; Sound the bell
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 IOBYTE		DEFB	0				; Maps virtual to real devices
-CURDRV		DEFB	0				; Currently selected drive 0=A: etc
+
+CURDRV		DEFB	0				; LS 4 bits; Current drive 0=A: etc
+									; MS 4 bits: Current user number
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; BDOS entry point must be at address 0005H for CP/M compatibility
@@ -85,7 +87,6 @@ RVEC7		DEFW	0000H			; Restart vector 7
 DMAADDR		DEFW	0080H			; DMA address defaults to FILEBUF (0080H)
 LOGVEC		DEFW	0000H			; Vector of logged in drives
 ROVEC		DEFW	0000H			; Vector of read-only drives
-USERNUM		DEFB	00H				; User number  TODO: This goes elsewhere
 ; End of private, implementation dependent space
 
 			ORG		005CH			; Standard addr of 32 byte FCB1
@@ -528,7 +529,7 @@ B_DRV_RESET		EQU		25H			; Selectively reset disk drives
 BDOSINIT	LD		SP,STCKTOP		; Initialize SP
 			LD		A,0				; 
 			LD		(IOBYTE),A		; Initialize IOBYTE
-			LD		(CURDRV),A		; Drive A:
+			LD		(CURDRV),A		; Drive A:, User 0
 			LD		(FILEBUF),A		; Zero chars in command tail
 			LD		(FRN1),A		; Initialize FRNs to zero
 			LD		(FRN2),A		; ...
@@ -754,7 +755,8 @@ S_BDOSVER	LD		B,0				; System is 8080 CP/M
 
 ; Reset disks
 ; Makes A: drive the default
-DRV_ALLRST	LD		A,0				; 0 means drive A:
+DRV_ALLRST	LD		A,(CURDRV)		; Contains both user & current drive
+			AND		0F0H			; Set drive to 0, meaning A:
 			LD		(CURDRV),A		; Store in CURDRV
 			LD		BC,FILEBUF		; FILEBUF is at 0080H
 			LD		(DMAADDR),BC	; Reset DMA address
@@ -775,6 +777,10 @@ DARMLIN		DEFB	0				; ProDOS PL: File ref num (0 = all files)
 DRV_SET		LD		A,E				; Prepare to compare disk number
 			CP		16				; Support 16 'drives' A: - P:
 			JP		NC,DSERR		; If A>15 ... error
+			LD		B,A				; Stash in B for now
+			LD		A,(CURDRV)		; Has both user number & current drive
+			AND		0F0H			; Mask out old drive number
+			OR		B				; Replace with new drive number
 			LD		(CURDRV),A		; Store the requested drive number
 			LD		A,0				; Return code meaning success
 			JP		DSRET			; 
@@ -1172,7 +1178,8 @@ DRV_LOGVEC	LD		HL,(LOGVEC)		;
 			RET
 
 ; Return current drive in A
-DRV_GET		LD		A,(CURDRV)		;
+DRV_GET		LD		A,(CURDRV)		; Contains user number & current drive
+			AND		0FH				; Mask out user number
 			RET
 
 ; Set DMA address
@@ -1187,6 +1194,7 @@ DRV_AVEC	LD		HL,ALLOCVEC		;
 ; Software write-protect current disk
 DRV_SETRO	LD		B,80H			; Set MS-bit in B, will rotate this below
 			LD		A,(CURDRV)		; Current drive (0 A:, 1 B: ...)
+			AND		0FH				; Mask out user number
 			INC		A				; It is easier if A: is 1, B is 2 etc.
 			CP		9				; See if it in LS-byte or MS-byte of ROVEC
 			JP		NC,DSRMSB		; If A>8 then drive bit in in MS-byte
@@ -1221,9 +1229,22 @@ DRV_DPB		LD		HL,DPB			; Pointer to drive parameter block
 F_USERNUM	LD		A,E				; See if it is get or set
 			CP		0FFH			; 0FFH means 'get'
 			JP		Z,FUNS1			; It is 'get'
-			LD		(USERNUM),A		; Set user number
-			RET
-FUNS1		LD		A,(USERNUM)		; Get user number
+			LD		B,A				; Stash the user number to set in B
+			SLA		B				; Left shift four times
+			SLA		B				; ...
+			SLA		B				; ...
+			SLA		B				; ...
+			LD		A,(CURDRV)		; Contains user number & current drive
+			AND		0FH				; Mask out current user number
+			OR		B				; OR in the new user number
+			LD		(CURDRV),A		; Store updated user number & curr drv
+			RET						;
+FUNS1		LD		A,(CURDRV)		; Contains user number & current drive
+			AND		0F0H			; Mask out current drive
+			SRA		A				; Right shift the user number 4 times
+			SRA		A				; ...
+			SRA		A				; ...
+			SRA		A				; ...
 			RET
 
 ; Compute file size
@@ -1306,6 +1327,7 @@ FCB2PATH	PUSH	IX				; Copy IX->IY
 			CP		0				; See if it is zero (default drive)
 			JP		NZ,F2PS1		; If drive explicit
 			LD		A,(CURDRV)		; If default drive use CURDRV
+			AND		0FH				; Mask out user number
 			INC		A				; CURDRV is zero based
 F2PS1		ADD		A,'A'-1			; Convert to drive letter
 			LD		(IX+0),A		; Store as first char of path
