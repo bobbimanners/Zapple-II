@@ -515,7 +515,7 @@ B_F_RENAME		EQU		17H			; Rename file
 B_DRV_LOGVEC	EQU		18H			; Return bitmap of logged-in drives
 B_DRV_GET		EQU		19H			; Return current drive
 B_F_DMAOFF		EQU		1AH			; Set DMA address
-B_DRV_AVEC		EQU		1BH			; Set DMA address
+B_DRV_AVEC		EQU		1BH			; Return address of allocation map
 B_DRV_SRO		EQU		1CH			; Software write-protect current drive
 B_DRV_ROVEC		EQU		1DH			; Return bitmap of read-only drives
 B_DRV_DPB		EQU		1FH			; Get Drive Parameter Block address

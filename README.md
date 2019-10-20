@@ -90,15 +90,17 @@ calls.  Only console I/O has been tested and confirmed to be working so far:
 - BDOS call 0Eh: `DRV_SET` - Select disk
 - BDOS call 0FH: `F_OPEN` - Open file
 - BDOS call 10H: `F_CLOSE` - Close file
-- BDOS call 11H: `F_SFIRST` - Search for first match in directory **IN PROGRESS**
-- BDOS call 12H: `F_SNEXT` - Search for next match in directory **IN PROGRESS**
+- BDOS call 11H: `F_SFIRST` - Search for first match in directory
+- BDOS call 12H: `F_SNEXT` - Search for next match in directory
 - BDOS call 13H: `F_DELETE` - Delete file
 - BDOS call 14h: `F_READ` - Read file sequentially
 - BDOS call 15h: `F_WRITE` - Write file sequentially
 - BDOS call 16H: `F_MAKE` - Create (and open) file
-- BDOS call 17H: `DRV_LOGVEC`- Return bitmap of logged-in drives
+- BDOS call 17H: `F_RENAME` - Rename file
+- BDOS call 18H: `DRV_LOGVEC`- Return bitmap of logged-in drives
 - BDOS call 19H: `DRV_GET` - Return current drive
 - BDOS call 1AH: `F_DMAOFF` - Set DMA address
+- BDOS call 1BH: `DRV_ALLOCVEC` - Return address of allocation map
 - BDOS call 1CH: `DRV_SETRO` - Software write-protect current drive
 - BDOS call 1DH: `DRV_ROVEC` - Return bitmap of read-only drives
 - BDOS call 1FH: `DRV_DPB` - Get Drive Parameter Block address
