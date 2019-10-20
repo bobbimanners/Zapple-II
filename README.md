@@ -73,8 +73,11 @@ support for all the CP/M 2.2 system calls, which should allow a CP/M program
 to run on the Softcard Z80 CPU and have all the system calls routed to the
 6502 and serviced using the Apple II ROM monitor routines and the ProDOS MLI.
 
-This is at an embryonic stage at the moment as it only provides a few system
-calls.  Only console I/O has been tested and confirmed to be working so far:
+I have most of the calls now and most of them have been tested to some degree
+and aren't *totally* broken.  The biggest gap right now is that none of the
+random access filesystem calls have been implemented.  Also the code does not
+really fill out all the proper fields of the FCB.  I am still working out what
+CP/M programs really need to see.
 
 - BDOS call 00h: `C_TERMCPM` - System reset
 - BDOS call 01h: `C_READ` - Console input
@@ -115,7 +118,7 @@ There are two parts to the BDOS emulation:
   assembling this using `Z80asm` under Linux (it got too large to assemble
   with `Z80asm` under ProDOS on the Apple II.
 - `softcard65.asm` - This is the 6502 back end code.  Written in Merlin8 v2.58.
-  Loads at $0900 in 6502 space.
+  Loads at $0900 in 6502 space.  This is less than 100 bytes of code!
 
 # Sample Programs
 
