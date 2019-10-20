@@ -1073,12 +1073,22 @@ F_WRITE		LD		H,D				; Pointer to FCB ...
 
 			LD		HL,FWMLI		; Pass address of 6502 JSR instruction
 			CALL	PRODOS			; Invoke ProDOS MLI
-			CP		0				; See if there was an error
-			JP		NZ,FWERR		; Handle error
+			CP		43H				; See if it is a bad reference number
+			JP		Z,FWBFCB		; If so, return invalid FCB code (9)
+			CP		48H				; See if it was an overrun error
+			JP		Z,FWDF			; If so, return disk full code (2)
+			CP		0				; See if there was some other error
+			JP		NZ,FWERR		; If so, return code 0FFH (h/w error)
 			LD		A,0				; Zero for success
 			LD		L,A				; Return code in L also
 			RET						; Done
-FWERR		LD		A,0FFH			; TODO: All errors are 0FFH for now
+FWBFCB		LD		A,9				; Invalid FCB return code
+			LD		L,A				; Return code in L also
+			RET						; Done (EOF)
+FWDF		LD		A,2				; Disk full return code
+			LD		L,A				; Return code in L also
+			RET						; Done (EOF)
+FWERR		LD		A,0FFH			; All other errors are 0FFH
 			LD		L,A				; Return code in L aslo
 			RET						; Done (error)
 
