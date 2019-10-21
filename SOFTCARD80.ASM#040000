@@ -15,10 +15,11 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;
-; TODO: Populate FCBs properly so PIP etc. work!! Do this in MAKE2PATH.
+; TODO: Populate FCBs properly so PIP etc. work!! Do this in PATH2FCB.
+; TODO: Note that PIP uses random reads and writes.
 ; TODO: F_ATTRIB needs to work with FCB with wildcards and leave the FCB at DMAADDR
 ; TODO: Implement missing system calls:
-;        - Random read/write (F_READRAND,F_WRITERAND,F_RANDREC,F_WRITEZF)
+;        - Random read/write (F_READRAND,F_WRITERAND,F_WRITEZF)
 ;        - RS232 (A_READ, A_WRITE)
 ;        - Printer (LWRITE)
 ;        - Other (F_ATTRIB)
@@ -96,7 +97,7 @@ FCB1NAM		DEFM	'FILENAMEEXT'	; FCB filename and extension
 FCB1EX		DEFB	00H				; FCB extent field
 FCB1S1		DEFB	00H				; FCB S1 field
 FCB1S2		DEFB	00H				; FCB S2 field
-FCB1RC		DEFB	00H				; FCB RC field
+FCB1RC		DEFB	00H				; FCB RC field (# recs used this extent)
 FCB1MAP								; Map of blocks in file (overlaps FCB2)
 
 			ORG		006CH			; Standard addr of 32 byte FCB2
@@ -106,7 +107,7 @@ FCB2NAM		DEFM	'FILENAMEEXT'	; FCB filename and extension
 FCB2EX		DEFB	00H				; FCB extent field
 FCB2S1		DEFB	00H				; FCB S1 field
 FCB2S2		DEFB	00H				; FCB S2 field
-FCB2RC		DEFB	00H				; FCB RC field
+FCB2RC		DEFB	00H				; FCB RC field (# recs used this extent)
 FCB2MAP								; Map of blocks in file (overlaps buffer)
 
 			ORG		0080H			; Standard addr of 128 byte File Buffer
@@ -521,13 +522,14 @@ B_DRV_ROVEC		EQU		1DH			; Return bitmap of read-only drives
 B_DRV_DPB		EQU		1FH			; Get Drive Parameter Block address
 B_F_USERNUM		EQU		20H			; Get/set user number
 B_F_SIZE		EQU		23H			; Compute file size
+B_F_RANDREC		EQU		24H			; Update random access pointer
 B_DRV_RESET		EQU		25H			; Selectively reset disk drives
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 			ORG		BDOSADDR
 
 BDOSINIT	LD		SP,STCKTOP		; Initialize SP
-			LD		A,0				; 
+			XOR		A				; A=0
 			LD		(IOBYTE),A		; Initialize IOBYTE
 			LD		(CURDRV),A		; Drive A:, User 0
 			LD		(FILEBUF),A		; Zero chars in command tail
@@ -591,7 +593,7 @@ BDOSVEC		DEFW	C_TERMCPM		; C=00H
 			DEFW	UNIMP			; C=21H  (F_READRAND)
 			DEFW	UNIMP			; C=22H  (F_WRITERAND)
 			DEFW	F_SIZE			; C=23H
-			DEFW	UNIMP			; C=24H  (F_RANDREC)
+			DEFW	F_RANDREC		; C=24H
 			DEFW	DRV_RESET		; C=25H
 			DEFW	UNIMP			; C=26H  (*nothing* in CP/M 2.2)
 			DEFW	UNIMP			; C=27H  (*nothing* in CP/M 2.2)
@@ -680,7 +682,7 @@ RIS1		LD		A,3				; CMD=3 means peek at keyboard
 			AND		7FH				; Mask high bit
 			LD		L,A				; Copy A to L
 			RET						; 
-RIS2		LD		A,0				; No chars waiting, A=0
+RIS2		XOR		A				; No chars waiting, A=0
 			LD		L,A				; Return in L also
 			RET
 
@@ -718,7 +720,7 @@ C_READSTR	LD		H,D				; HL will be the working pointer
 			INC		HL				; ... 3rd byte of the buffer
 			PUSH	DE				; Put DE into IX
 			POP		IX				; ...
-			LD		A,0				; Set number of chars read to zero
+			XOR		A				; Set number of chars read to zero
 			LD		(IX+1),A		; ...
 CRSL1		PUSH	HL				; Preserve HL
 			CALL	C_READ			; Read a character into A
@@ -782,7 +784,7 @@ DRV_SET		LD		A,E				; Prepare to compare disk number
 			AND		0F0H			; Mask out old drive number
 			OR		B				; Replace with new drive number
 			LD		(CURDRV),A		; Store the requested drive number
-			LD		A,0				; Return code meaning success
+			XOR		A				; A=0: Return code meaning success
 			JP		DSRET			; 
 DSERR		LD		A,0FFH			; Return code for error
 DSRET		LD		L,A				; Return code in L too
@@ -802,7 +804,7 @@ _F_OPEN		LD		IX,PATHBUF		; Destination buffer
 			PUSH	DE				; Preserve pointer to FCB
 
 			; Work out which IOBUF to allocate for this file
-			LD		A,0				; Looking for FRN slot with value 0
+			XOR		A				; Looking for FRN slot with value 0
 			CALL	GETIOADDR		; Returns FRN slot in A, IOBUF in HL
 			CP		0FFH			; Check for error
 			JP		Z,FOERR			; If no slots available, error out
@@ -823,9 +825,39 @@ _F_OPEN		LD		IX,PATHBUF		; Destination buffer
 			LD		A,(FOMLIN)		; Get ProDOS file reference number
 			LD		H,D				; Pointer to FCB ...
 			LD		L,E				; ... into HL
-			LD		BC,14			; Offset to S2 field (reserved field)
+			LD		BC,0EH			; Offset to S2 field (reserved field)
 			ADD		HL,BC			; Compute address
 			LD		(HL),A			; Store file reference number is S2 field
+			PUSH	HL				; Keep pointer into FCB for later
+
+			; ProDOS GET_EOF call.  Convert bytes to records (ie: divide by 128)
+			; Assumes no files > 64K on ProDOS filesystem
+			LD      HL,FO2MLI       ; Pass address of 6502 JSR instruction
+			CALL    PRODOS          ; Invoke ProDOS MLI (GET_EOF)
+			LD      A,(FO2MLIE2)    ; Most significant byte of length
+			SLA     A               ; Max file size per extent is 16K: 128*128
+			LD      B,A             ; Stash in B for now
+			LD      A,(FO2MLIE1)    ; Least significant byte of length
+			AND     80H             ; Keep most significant bit, mask off others
+			SRA     A               ; Move to LSB (shift seven times)
+			SRA     A               ; ...
+			SRA     A               ; ...
+			SRA     A               ; ...
+			SRA     A               ; ...
+			SRA     A               ; ...
+			SRA     A               ; ...
+			OR      B               ; Leaves file length in records in A
+
+			; Store records used
+			POP		HL				; Recover pointer into FCB	
+			INC		HL				; Advance to records used field
+			LD		(HL),A			; Set records used
+
+			; Set sequential record number to zero
+			LD		BC,20H-0FH		; Skip ahead to offset 20H - seq rec num
+			ADD		HL,BC			; ...
+			XOR		A				; Zero the sequential record number
+			LD		(HL),A			; ...
 
 			; Store ProDOS FRN in slot FRN1 - FRN4
 			LD		A,(FOIOB)		; Obtain IOBUF idx (1,2,3,4)
@@ -836,7 +868,7 @@ _F_OPEN		LD		IX,PATHBUF		; Destination buffer
 			lD		A,(FOMLIN)		; Get ProDOS file reference number
 			LD		(HL),A			; Store in FRN slot
 
-			LD		A,0				; Success
+			XOR		A				; Success
 			LD		L,A				; Copy to L
 			RET						; Done
 
@@ -853,6 +885,16 @@ FOMLIPL		DEFB	3				; ProDOS PL: Three parameters
 FOMLIP		DEFW	PATHBUF+OFFSET	; ProDOS PL: pointer to path in 6502 addr
 FOMLII		DEFW	0000H			; ProDOS PL: pointer to IO buffer
 FOMLIN		DEFB	0				; ProDOS PL: File reference number
+
+FO2MLI      DEFB    20H,00H,0BFH    ; JSR $BF00 in 6502 code
+            DEFB    0D1H            ; ProDOS GET_EOF call
+            DEFW    FO2MLIPL+OFFSET ; Pointer to parm list in 6502 addr space
+            DEFB    60H             ; RTS in 6502 code
+FO2MLIPL    DEFB    2               ; ProDOS PL: Two parameters
+FO2MLIN     DEFB    0               ; ProDOS PL: File reference number
+FO2MLIE1    DEFB    0               ; ProDOS PL: EOF position (LS-byte)
+FO2MLIE2    DEFB    0               ; ProDOS PL: EOF position
+FO2MLIE3    DEFB    0               ; ProDOS PL: EOF position (MS-byte)
 
 FOIOB		DEFB	0				; Local variable to record IOBUF idx
 
@@ -881,17 +923,17 @@ F_CLOSE		LD		H,D				; Pointer to FCB ...
 			LD		B,0				; ...
 			LD		C,A				; ...
 			ADD		HL,BC			; ...
-			LD		A,0				; And zero it
+			XOR		A				; And zero it
 			LD		(HL),A			; ...
 
 			LD		H,D				; Pointer to FCB ...
 			LD		L,E				; ... into HL
 			LD		BC,14			; Offset to S2 field (reserved field)
 			ADD		HL,BC			; Compute address
-			LD		A,0				; Zero out the S2 field
+			XOR		A				; Zero out the S2 field
 			LD		(HL),A			; ...
 
-FCSUCC		LD		A,0				; Return zero for error
+FCSUCC		XOR		A				; Return zero for error
 			LD		L,A				; Return in L also
 			RET
 
@@ -931,7 +973,7 @@ FSFL1		LD		DE,DFCB			; Use this FCB to read the directory
 			LD		BC,DIRHDSZ		; ...
 			ADD		HL,BC			; ...
 			LD		(CDBPTR),HL		; Start out at first file entry
-			LD		A,0				; Set file count to zero
+			XOR		A				; Set file count to zero
 			LD		(CDBCOUNT),A	; ...
 
 			POP		DE				; Get ptr to search FCB back
@@ -942,7 +984,7 @@ FSFL1		LD		DE,DFCB			; Use this FCB to read the directory
 			JP		Z,FSFS1			; If so, return
 			JP		FSFL1			; Loop
 
-FSFS1		LD		A,0				; Match
+FSFS1		XOR		A				; Match
 			RET						;
 FSFS2		LD		A,0FFH			; No match
 			RET
@@ -970,12 +1012,12 @@ FSNL1		PUSH	HL				; Preserve HL
 			LD		BC,DIRHDSZ		; ...
 			ADD		HL,BC			; ...
 			LD		(CDBPTR),HL		; Start out at first file entry
-			LD		A,0				; Set file count to zero
+			XOR		A				; Set file count to zero
 			LD		(CDBCOUNT),A	; ...
 
 			JP		FSNL1			; Loop
 
-FSNS1		LD		A,0				; Match
+FSNS1		XOR		A				; Match
 			RET						;
 FSNS2		LD		A,0FFH			; No match
 			RET
@@ -1019,6 +1061,8 @@ FDMLIP		DEFW	PATHBUF+OFFSET	; ProDOS PL: Pointer to path in 6502 addr
 ; DE is the address of the FCB describing the file from which to read
 ; Returns error codes in A and L:
 ; 0 OK, 1 EOF, 9 invalid FCB, 10 media changed, 0FFH h/w error
+; TODO: Use Sequential Record field of FCB to determine from where to begin
+;       reading.  Increment it so next read advances to next record.
 F_READ		LD		H,D				; Pointer to FCB ...
 			LD		L,E				; ... into HL
 			LD		BC,14			; Offset to S2 field (reserved field)
@@ -1038,7 +1082,7 @@ F_READ		LD		H,D				; Pointer to FCB ...
 			JP		Z,FRBFCB		; If so, return invalid FCB code (9)
 			CP		0				; See if there was some other error
 			JP		NZ,FRERR		; If so, return code 0FFH (h/w error)
-			LD		A,0				; Zero for success
+			XOR		A				; Zero for success
 			LD		L,A				; Return code in L also
 			RET						; Done
 FREOF		LD		A,1				; EOF return code
@@ -1065,6 +1109,8 @@ FRMLITC		DEFW	0000H			; ProDOS PL: Number of bytes transferred
 ; DE is the address of the FCB describing the file to which to write
 ; Returns error codes in A and L:
 ; 0 OK, 1 dir full, 2 disk full, 9 invalid FCB, 10 media changed, 0FFH h/w error
+; TODO: Use Sequential Record field of FCB to determine from where to begin
+;       writing.  Increment it so next write advances to next record.
 F_WRITE		LD		H,D				; Pointer to FCB ...
 			LD		L,E				; ... into HL
 			LD		BC,14			; Offset to S2 field (reserved field)
@@ -1085,7 +1131,7 @@ F_WRITE		LD		H,D				; Pointer to FCB ...
 			JP		Z,FWDF			; If so, return disk full code (2)
 			CP		0				; See if there was some other error
 			JP		NZ,FWERR		; If so, return code 0FFH (h/w error)
-			LD		A,0				; Zero for success
+			XOR		A				; Zero for success
 			LD		L,A				; Return code in L also
 			RET						; Done
 FWBFCB		LD		A,9				; Invalid FCB return code
@@ -1158,7 +1204,7 @@ F_RENAME	CALL	F_SFIRST		; Search for file, create FCB
 			CALL	PRODOS			; Invoke ProDOS MLI
 			CP		0				; See if there was an error
 			JP		NZ,FRNERR		; Handle error
-			LD		A,0				; Success
+			XOR		A				; Success
 			LD		L,A				; Return code in L also
 			RET
 FRNERR		LD		A,0FFH			; 0FFH for error
@@ -1264,10 +1310,10 @@ F_SIZE		CALL	FCB2PATH		; Populate PATHLEN and PATH
 			POP		IX				; ... into IX
 			LD		(IX+21H),L		; Store LSB of recs used in R0
 			LD		(IX+22H),H		; Store LSB of recs used in R1
-			LD		A,0				; Store zero in R2
+			XOR		A				; Store zero in R2
 			LD		(IX+23H),A		; ...
 
-			LD		A,0				; Success
+			XOR		A				; Success
 			LD		L,A				; Return in L also
 			RET
 FSERR		LD		A,0FFH			; File not found
@@ -1290,6 +1336,23 @@ FSMLIMT		DEFW	0000H			; ProDOS PL: Modification time
 FSMLICD		DEFW	0000H			; ProDOS PL: Create date
 FSMLICT		DEFW	0000H			; ProDOS PL: Create time
 
+
+; Update random access pointer
+; DE contains the pointer to the FCB to update
+; Sets the random access record of the FCB to the value of the last record
+; read or written sequentially
+F_RANDREC	LD		H,D				; Copy FCB pointer into HL for arithmetic
+			LD		L,E				; ...
+			LD		BC,20H			; Offset 20H is the sequential rec number
+			ADD		HL,BC			; ...
+			LD		A,(HL)			; Put sequential record number in A
+			DEC		A				; Remember F_READ/F_WRITE increment this
+			INC		HL				; Offset 21H is LSB of random rec number
+			LD		(HL),A			; Write sequential rec # to random LSB
+			INC		HL				; Offset 22H is MSB of random rec number
+			XOR		A				; A=0
+			LD		(HL),A			; Set MSB of random rec number to 0
+			RET
 
 ; Selectively reset disk drives
 ; DE contains bitmap of drives to reset (bit 0 of E if A:, bit 7 of D is P:)
@@ -1407,7 +1470,7 @@ PATH2FCB	EX		DE,HL			; Stash HL in DE so we can use HL here
 
 			LD		HL,(DMAADDR)	; Set all 32 bytes to FCB to zero
 			LD		C,0				; ...
-			LD		A,0				; ...
+			XOR		A				; ...
 P2FL1		LD		(HL),C			; ...
 			INC		HL				; ...
 			INC		A				; ...
@@ -1417,7 +1480,7 @@ P2FL1		LD		(HL),C			; ...
 			LD		HL,(DMAADDR)	; Set all filename chars in FCB to space
 			INC		HL				; ...
 			LD		C,' '			; ...
-			LD		A,0				; ...
+			XOR		A				; ...
 P2FL2		LD		(HL),C			; ...
 			INC		HL				; ...
 			INC		A				; ...
@@ -1496,7 +1559,7 @@ RDDIRBLK	LD		HL,(DMAADDR)	; Save existing DMA address
 			CP		0				; See if there was an error
 			JP		NZ,RDBS1		; If so, quit with error code
 
-			LD		A,0				; Return code for success
+			XOR		A				; Return code for success
 			JP		RDBS2			; Successful return
 
 RDBS1		LD		A,0FFH			; Error return code
@@ -1529,7 +1592,7 @@ MFS1		INC		DE				; Advance source pointer
 			LD		A,8+3			; Compare character counter
 			CP		C				; ...
 			JP		NZ,MFL1			; Loop if characters left
-			LD		A,0				; We have a match
+			XOR		A				; We have a match
 			RET						;
 MFS2		LD		A,0FFH			; No match
 			RET
@@ -1558,7 +1621,7 @@ CHKDIRENT	LD		B,0				; Hardcode drive A: for now. TODO: fix!
 			JP		Z,CDES2			; If so, return
 CDES1		LD		A,0FFH			; No match
 			RET						;
-CDES2		LD		A,0				; Match
+CDES2		XOR		A				; Match
 			RET
 
 ; Search a 512 byte block of a ProDOS directory for a matching file entry
@@ -1585,7 +1648,7 @@ CDBL1		CALL	CHKDIRENT		; Match the file entry at HL
 			JP		NZ,CDBL1		; If not, loop
 			LD		A,0FFH			; No match
 			RET						;
-CDBS1		LD		A,0				; Match
+CDBS1		XOR		A				; Match
 			RET
 
 ; The following variables are used to preserve state between calls
