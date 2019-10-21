@@ -15,7 +15,7 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;
-; TODO: F_WRITE bug - getting the offset wrong -> attempt to seek past EOF.
+; TODO: F_WRITE bug turns out to be bug in ProDOS 2.5.0a7
 ; TODO: Only handles files with one extent (16KB) for now.  Improve this!
 ; TODO: Note that PIP uses random reads and writes.
 ; TODO: F_ATTRIB needs to work with FCB with wildcards and leave the FCB at
@@ -764,16 +764,17 @@ DRV_ALLRST	LD		A,(CURDRV)		; Contains both user & current drive
 			LD		(CURDRV),A		; Store in CURDRV
 			LD		BC,FILEBUF		; FILEBUF is at 0080H
 			LD		(DMAADDR),BC	; Reset DMA address
-			LD		HL,DARMLI		; Pass address of 6502 JSR instruction
-			CALL	PRODOS			; Invoke ProDOS MLI
+			LD		HL,FLMLI		; Pass address of 6502 JSR instruction
+			CALL	PRODOS			; Invoke ProDOS MLI to flush all files
 			RET
 
-DARMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code		
+; Parameter list for ProDOS FLUSH call
+FLMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code		
 			DEFB	0CDH			; ProDOS FLUSH call
-			DEFW	FOMLIPL+OFFSET	; Pointer to parm list in 6502 addr space
+			DEFW	FLMLIPL+OFFSET	; Pointer to parm list in 6502 addr space
 			DEFB	60H				; RTS in 6502 code
-DARMLIP		DEFB	1				; ProDOS PL: One parameter
-DARMLIN		DEFB	0				; ProDOS PL: File ref num (0 = all files)
+FLMLIPL		DEFB	1				; ProDOS PL: One parameter
+FLMLIN		DEFB	0				; ProDOS PL: File ref num (0 = all files)
 
 ; Select disk
 ; Disk to select is passed in E (A: is 0, B: is 1 etc.)
@@ -1155,14 +1156,24 @@ F_WRITE		PUSH	DE				; Preserve pointer to FCB
 			ADD		HL,BC			; Compute address
 			LD		A,(HL)			; Obtain file reference num from FCB S2
 			LD		(SMMLIN),A		; Store in parameter list for SET_MARK
-			LD		(FWMLIN),A		; Store in parameter list
+			LD		(FWMLIN),A		; Store in parameter list for WRITE
 
 			LD		BC,20H-0EH		; Skip ahead to seq record num in FCB
 			ADD		HL,BC			; ...
 			LD		A,(HL)			; Obtain sequential record number
 			CALL	RECS2LEN		; Leaves the length in bytes in HL
-			LD		(SMMLIP1),HL	; Write 16 bit length in FRMLIP1,FRMLIP2
-			XOR		A				; Set FRMLIP3 to zero
+
+;;			; DEBUG
+;;			PUSH	HL
+;;			LD		DE,HEXBUF		; Generate hex string to HEXBUF
+;;			CALL	NUM2HEX			; ...
+;;			LD		DE,HEXBUF		; Write hex value to console
+;;			CALL	C_WRITESTR		;
+;;			POP		HL
+;;			; END DEBUG
+
+			LD		(SMMLIP1),HL	; Write 16 bit length in SMMLIP1,SMMLIP2
+			XOR		A				; Set SMMLIP3 to zero
 			LD		(SMMLIP3),A		; ...
 			LD		HL,SMMLI		; Pass address of 6502 JSR instruction
 			CALL	PRODOS			; Invoke ProDOS MLI - SET_MARK
@@ -1173,7 +1184,7 @@ F_WRITE		PUSH	DE				; Preserve pointer to FCB
 			CP		0				; See if there was some other error
 			JP		NZ,FWERR		; If so, return code 0FFH (h/w error)
 
-			LD		HL,(DMAADDR)	; Write to DMA address
+			LD		HL,(DMAADDR)	; Write data at DMA address
 			LD		BC,OFFSET		; Convert to 6502 address
 			ADD		HL,BC			; ...
 			LD		(FWMLIDB),HL	; Store I/O buffer address in parm list
