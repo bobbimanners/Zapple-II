@@ -1233,20 +1233,14 @@ FUNS1		LD		A,(CURDRV)		; Contains user number & current drive
 ; 0 success, 1 reading unwritten data, 4 reading unwritten extent,
 ; 6 rec number out of range, 9 invalid FCB, 10 media changed, 0FFH h/w err
 ; TODO Update sequential record number & extent
-F_READRAND	PUSH	DE				; Preserve pointer to FCB
-			LD		H,D				; Pointer to FCB ...
-			LD		L,E				; ... into HL
-			LD		BC,0EH			; Offset to S2 field (reserved field)
-			ADD		HL,BC			; Compute address
-			LD		A,(HL)			; Obtain file reference num from FCB S2
+F_READRAND	PUSH	DE				; Copy pointer to FCB ...
+			POP		IX				; ...
+			LD		A,(IX+0EH)		; Obtain file reference num from FCB S2
 			LD		(SMMLIN),A		; Store in parameter list for SET_MARK
 			LD		(FRMLIN),A		; Store in parameter list for READ
 
-			LD		BC,21H-0EH		; Skip ahead to random record num in FCB
-			ADD		HL,BC			; ...
-			LD		B,(HL)			; Load LSB of random record number
-			INC		HL				; Load MSB of random record number
-			LD		C,(HL)			; ...
+			LD		B,(IX+21H)		; Load LSB of random record number
+			LD		C,(IX+22H)		; ...
 			LD		H,B				; Leave it in HL
 			LD		L,C				; ...
 			CALL	RECS2LN2		; Leaves the length in bytes in HL
@@ -1275,27 +1269,19 @@ F_READRAND	PUSH	DE				; Preserve pointer to FCB
 			CP		0				; See if there was some other error
 			JP		NZ,FRRERR		; If so, return code 0FFH (h/w error)
 
-			POP		DE				; Get pointer to FCB back
-			LD		H,D				; Pointer to FCB ...
-			LD		L,E				; ... into HL
-			LD		BC,20H			; Advance to sequential rec number field
-			ADD		HL,BC			; ...
 ;;;;TODO Should copy random record number to seq
-;;			INC		(HL)			; Increment sequential record number
+;;			INC		(IX+20H)		; Increment sequential record number
 
 			XOR		A				; Zero for success
 			LD		L,A				; Return code in L also
 			RET						; Done
-FRREOF		POP		DE				; Fix up stack
-			LD		A,1				; EOF return code
+FRREOF		LD		A,1				; EOF return code
 			LD		L,A				; Return code in L also
 			RET						; Done (EOF)
-FRRBFCB		POP		DE				; Fix up stack
-			LD		A,9				; Invalid FCB return code
+FRRBFCB		LD		A,9				; Invalid FCB return code
 			LD		L,A				; Return code in L also
 			RET						; Done (Bad FCB)
-FRRERR		POP		DE				; Fix up stack
-			LD		A,0FFH			; All other errors are 0FFH
+FRRERR		LD		A,0FFH			; All other errors are 0FFH
 			LD		L,A				; Return code in L aslo
 			RET						; Done (error)
 
