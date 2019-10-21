@@ -15,13 +15,13 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;
-; TODO: F_WRITE bug turns out to be bug in ProDOS 2.5.0a7
+; TODO: F_WRITE bug turns out to be bug in ProDOS 2.5.0a7 (SET_MARK)
 ; TODO: Only handles files with one extent (16KB) for now.  Improve this!
 ; TODO: Note that PIP uses random reads and writes.
 ; TODO: F_ATTRIB needs to work with FCB with wildcards and leave the FCB at
 ;       DMAADDR
 ; TODO: Implement missing system calls:
-;        - Random read/write (F_READRAND,F_WRITERAND,F_WRITEZF)
+;        - Random write (F_WRITERAND,F_WRITEZF)
 ;        - RS232 (A_READ, A_WRITE)
 ;        - Printer (LWRITE)
 ;        - Other (F_ATTRIB)
@@ -90,6 +90,7 @@ RVEC7		DEFW	0000H			; Restart vector 7
 DMAADDR		DEFW	0080H			; DMA address defaults to FILEBUF (0080H)
 LOGVEC		DEFW	0000H			; Vector of logged in drives
 ROVEC		DEFW	0000H			; Vector of read-only drives
+TEMPBYTE	DEFB	0				; Used by routines as a scratch space
 ; End of private, implementation dependent space
 
 			ORG		005CH			; Standard addr of 32 byte FCB1
@@ -523,6 +524,7 @@ B_DRV_SRO		EQU		1CH			; Software write-protect current drive
 B_DRV_ROVEC		EQU		1DH			; Return bitmap of read-only drives
 B_DRV_DPB		EQU		1FH			; Get Drive Parameter Block address
 B_F_USERNUM		EQU		20H			; Get/set user number
+B_F_RDRAND		EQU		21H			; Random access read record
 B_F_SIZE		EQU		23H			; Compute file size
 B_F_RANDREC		EQU		24H			; Update random access pointer
 B_DRV_RESET		EQU		25H			; Selectively reset disk drives
@@ -592,7 +594,7 @@ BDOSVEC		DEFW	C_TERMCPM		; C=00H
 			DEFW	UNIMP			; C=1EH  (F_ATTRIB)
 			DEFW	DRV_DPB			; C=1FH
 			DEFW	F_USERNUM		; C=20H
-			DEFW	UNIMP			; C=21H  (F_READRAND)
+			DEFW	F_READRAND		; C=21H
 			DEFW	UNIMP			; C=22H  (F_WRITERAND)
 			DEFW	F_SIZE			; C=23H
 			DEFW	F_RANDREC		; C=24H
@@ -768,14 +770,6 @@ DRV_ALLRST	LD		A,(CURDRV)		; Contains both user & current drive
 			CALL	PRODOS			; Invoke ProDOS MLI to flush all files
 			RET
 
-; Parameter list for ProDOS FLUSH call
-FLMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code		
-			DEFB	0CDH			; ProDOS FLUSH call
-			DEFW	FLMLIPL+OFFSET	; Pointer to parm list in 6502 addr space
-			DEFB	60H				; RTS in 6502 code
-FLMLIPL		DEFB	1				; ProDOS PL: One parameter
-FLMLIN		DEFB	0				; ProDOS PL: File ref num (0 = all files)
-
 ; Select disk
 ; Disk to select is passed in E (A: is 0, B: is 1 etc.)
 ; Return 00 for success, 0FFH for error in A and L
@@ -798,6 +792,8 @@ DSRET		LD		L,A				; Return code in L too
 ; Returns error codes in A and L:
 ; Returns 0 for success.  The FCB for the file opened is left at DMAADDR (slot 0)
 ; Returns 0FFH if file not found
+; TODO: F_OPEN should use the extent field of the FCB and (if non zero) seek
+; to appropriate point in the file
 F_OPEN		CALL	F_SFIRST
 
 ; Alternative entrypoint used for opening ProDOS directory file only
@@ -812,7 +808,7 @@ _F_OPEN		LD		IX,PATHBUF		; Destination buffer
 			CP		0FFH			; Check for error
 			JP		Z,FOERR			; If no slots available, error out
 
-			LD		(FOIOB),A		; Record the buffer index in local var
+			LD		(TEMPBYTE),A	; Record the buffer index in local var
 			LD		BC,OFFSET		; Add offset to convert to 6502 address
 			ADD		HL,BC			; ...
 			LD		(FOMLII),HL		; Store in parameter list
@@ -855,7 +851,7 @@ _F_OPEN		LD		IX,PATHBUF		; Destination buffer
 			LD		(HL),A			; ...
 
 			; Store ProDOS FRN in slot FRN1 - FRN4
-			LD		A,(FOIOB)		; Obtain IOBUF idx (1,2,3,4)
+			LD		A,(TEMPBYTE)	; Obtain IOBUF idx (1,2,3,4)
 			LD		HL,FRN1-1		; Compute address of FRN slot to use
 			LD		B,0				; ...
 			LD		C,A				; ...
@@ -871,29 +867,6 @@ FOERR		POP		DE				; Restore the stack
 			LD		A,0FFH			; Error return status
 			LD		L,A				; Copy to L
 			RET						; Done (error)
-
-; Parameter list for ProDOS OPEN call
-FOMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code		
-			DEFB	0C8H			; ProDOS OPEN call
-			DEFW	FOMLIPL+OFFSET	; Pointer to parm list in 6502 addr space
-			DEFB	60H				; RTS in 6502 code
-FOMLIPL		DEFB	3				; ProDOS PL: Three parameters
-FOMLIP		DEFW	PATHBUF+OFFSET	; ProDOS PL: pointer to path in 6502 addr
-FOMLII		DEFW	0000H			; ProDOS PL: pointer to IO buffer
-FOMLIN		DEFB	0				; ProDOS PL: File reference number
-
-; Parameter list for ProDOS GET_EOF call
-FO2MLI      DEFB    20H,00H,0BFH    ; JSR $BF00 in 6502 code
-            DEFB    0D1H            ; ProDOS GET_EOF call
-            DEFW    FO2MLIPL+OFFSET ; Pointer to parm list in 6502 addr space
-            DEFB    60H             ; RTS in 6502 code
-FO2MLIPL    DEFB    2               ; ProDOS PL: Two parameters
-FO2MLIN     DEFB    0               ; ProDOS PL: File reference number
-FO2MLIE1    DEFB    0               ; ProDOS PL: EOF position (LS-byte)
-FO2MLIE2    DEFB    0               ; ProDOS PL: EOF position
-FO2MLIE3    DEFB    0               ; ProDOS PL: EOF position (MS-byte)
-
-FOIOB		DEFB	0				; Local variable to record IOBUF idx
 
 ; Close file
 ; DE is the address of the FCB describing the file to close
@@ -938,14 +911,6 @@ FCERR		LD		A,0FFH			; 0FFH for error
 			LD		L,A				; Return code in L also
 			RET
 
-; Parameter list for ProDOS CLOSE call
-FCMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code		
-			DEFB	0CCH			; ProDOS CLOSE call
-			DEFW	FCMLIPL+OFFSET	; Pointer to parm list in 6502 addr space
-			DEFB	60H				; RTS in 6502 code
-FCMLIPL		DEFB	1				; ProDOS PB: One parameter
-FCMLIN		DEFB	0				; ProDOS PB: File reference number
-
 DIRHDSZ		EQU		2BH				; Size of ProDOS directory header
 FILEENTSZ	EQU		27H				; Size of ProDOS file entry
 ENTPERBLK	EQU		0DH				; Number of file entries per block
@@ -954,6 +919,7 @@ ENTPERBLK	EQU		0DH				; Number of file entries per block
 ; DE is the address of the FCB describing the file to look for
 ; Returns error codes in A and L: 0 for success, 0FFH for not found
 ; The matching FCB is always in slot 0, so success return code always 0
+; TODO: Should handle '?' in extent field also
 F_SFIRST 	PUSH	DE				; Store pointer to search FCB
 			LD		A,(DE)			; Obtain drive number
 			LD		(DFCBDRV),A		; Copy to directory FCB
@@ -991,6 +957,7 @@ FSFS2		LD		A,0FFH			; No match
 ; DE is the address of the FCB describing the file to look for
 ; Returns error codes in A and L: 0 for success, 0FFH for not found
 ; The matching FCB is always in slot 0, so success return code always 0
+; TODO: Should handle '?' in extent field also
 F_SNEXT		PUSH	DE				; Store pointer to search FCB
 			LD		HL,(CDBPTR)		; Pointer into current block
 			LD		A,(CDBCOUNT)	; File count for current block
@@ -1020,18 +987,6 @@ FSNS1		XOR		A				; Match
 FSNS2		LD		A,0FFH			; No match
 			RET
 
-; FCB used for opening ProDOS directory corresponding to drive
-DFCB								; File control block for directory
-DFCBDRV		DEFB	00H				; FCB Drive (0 current, 1 A:, 2 B: etc)
-DFCBNAM		DEFM	'           '	; FCB filename and extension (all spaces)
-DFCBEX		DEFB	00H				; FCB extent field
-DFCBS1		DEFB	00H				; FCB S1 field
-DFCBS2		DEFB	00H				; FCB S2 field
-DFCBRC		DEFB	00H				; FCB RC field
-DFCBMAP		DEFS	16				; Map of blocks in file
-DFCBSR		DEFB	0				; FCB seq record number
-DFCBRR		DEFB	0,0,0			; FCB rand record number
-
 ; Delete file
 ; DE is the address of the FCB describing the file to delete
 ; Returns error codes in A and L:
@@ -1050,18 +1005,11 @@ FDERR		LD		A,0FFH			; 0FFH for error
 			LD		L,A				; Return code in L also
 			RET
 
-; Parameter list for ProDOS DESTROY call
-FDMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code		
-			DEFB	0C1H			; ProDOS DESTROY call
-			DEFW	FDMLIPL+OFFSET	; Pointer to parm list in 6502 addr space
-			DEFB	60H				; RTS in 6502 code
-FDMLIPL		DEFB	1				; ProDOS PL: Seven parameters
-FDMLIP		DEFW	PATHBUF+OFFSET	; ProDOS PL: Pointer to path in 6502 addr
-
 ; Read next record
 ; DE is the address of the FCB describing the file from which to read
 ; Returns error codes in A and L:
 ; 0 OK, 1 EOF, 9 invalid FCB, 10 media changed, 0FFH h/w error
+; TODO Handle multiple extents
 F_READ		PUSH	DE				; Preserve pointer to FCB
 			LD		H,D				; Pointer to FCB ...
 			LD		L,E				; ... into HL
@@ -1117,38 +1065,17 @@ FREOF		POP		DE				; Fix up stack
 FRBFCB		POP		DE				; Fix up stack
 			LD		A,9				; Invalid FCB return code
 			LD		L,A				; Return code in L also
-			RET						; Done (EOF)
+			RET						; Done (Bad FCB)
 FRERR		POP		DE				; Fix up stack
 			LD		A,0FFH			; All other errors are 0FFH
 			LD		L,A				; Return code in L aslo
 			RET						; Done (error)
 
-; ProDOS parameter block for SET_MARK call
-SMMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code		
-			DEFB	0CEH			; ProDOS SET_MARK call
-			DEFW	SMMLIPL+OFFSET	; Pointer to parm list in 6502 addr space
-			DEFB	60H				; RTS in 6502 code
-SMMLIPL		DEFB	2				; ProDOS PL: Two parameters
-SMMLIN		DEFB	0				; ProDOS PL: File reference number
-SMMLIP1		DEFB	0				; ProDOS PL: Position (LSB)
-SMMLIP2		DEFB	0				; ProDOS PL: Position
-SMMLIP3		DEFB	0				; ProDOS PL: Position (MSB)
-
-; ProDOS parameter block for READ call
-FRMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code		
-			DEFB	0CAH			; ProDOS READ call
-			DEFW	FRMLIPL+OFFSET	; Pointer to parm list in 6502 addr space
-			DEFB	60H				; RTS in 6502 code
-FRMLIPL		DEFB	4				; ProDOS PL: Four parameters
-FRMLIN		DEFB	0				; ProDOS PL: File reference number
-FRMLIDB		DEFW	0000H			; ProDOS PL: Data buffer
-FRMLIRC		DEFW	128				; ProDOS PL: Request count (bytes to read)
-FRMLITC		DEFW	0000H			; ProDOS PL: Number of bytes transferred
-
 ; Write next record
 ; DE is the address of the FCB describing the file to which to write
 ; Returns error codes in A and L:
 ; 0 OK, 1 dir full, 2 disk full, 9 invalid FCB, 10 media changed, 0FFH h/w error
+; TODO Handle multiple extents
 F_WRITE		PUSH	DE				; Preserve pointer to FCB
 			LD		H,D				; Pointer to FCB ...
 			LD		L,E				; ... into HL
@@ -1215,22 +1142,11 @@ FWBFCB		POP		DE				; Clean up the stack
 FWDF		POP		DE				; Clean up the stack
 			LD		A,2				; Disk full return code
 			LD		L,A				; Return code in L also
-			RET						; Done (EOF)
+			RET						; Done (Disk Full)
 FWERR		POP		DE				; Clean up the stack
 			LD		A,0FFH			; All other errors are 0FFH
 			LD		L,A				; Return code in L aslo
 			RET						; Done (error)
-
-; Parameter list for ProDOS WRITE call
-FWMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code		
-			DEFB	0CBH			; ProDOS WRITE call
-			DEFW	FWMLIPL+OFFSET	; Pointer to parm list in 6502 addr space
-			DEFB	60H				; RTS in 6502 code
-FWMLIPL		DEFB	4				; ProDOS PL: Four parameters
-FWMLIN		DEFB	0				; ProDOS PL: File reference number
-FWMLIDB		DEFW	0000H			; ProDOS PL: Data buffer
-FWMLIRC		DEFW	128				; ProDOS PL: Request count (bytes to read)
-FWMLITC		DEFW	0000H			; ProDOS PL: Number of bytes transferred
 
 ; Create (and open) file
 ; DE is the address of the FCB describing the file to create
@@ -1247,20 +1163,6 @@ F_MAKE		LD		IX,PATHBUF		; Destination buffer
 FMERR		LD		A,0FFH			; 0FFH for error
 			LD		L,A				; Return code in L also
 			RET
-
-; Parameter list for ProDOS CREATE call
-FMMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code		
-			DEFB	0C0H			; ProDOS CREATE call
-			DEFW	FMMLIPL+OFFSET	; Pointer to parm list in 6502 addr space
-			DEFB	60H				; RTS in 6502 code
-FMMLIPL		DEFB	7				; ProDOS PL: Seven parameters
-FMMLIP		DEFW	PATHBUF+OFFSET	; ProDOS PL: Pointer to path in 6502 addr
-FMMLIA		DEFB	0C3H			; ProDOS PL: Access (0C3H full access)
-FMMLIT		DEFB	0				; ProDOS PL: File type (0 means typeless)
-FMMLIAT		DEFW	0000H			; ProDOS PL: Aux file type (always 0000H)
-FMMLIS		DEFB	1				; ProDOS PL: Storage type (1 for file)
-FMMLICD		DEFW	0000H			; ProDOS PL: Create date (always 0000H)
-FMMLICT		DEFW	0000H			; ProDOS PL: Create time (always 0000H)
 
 ; Rename file
 ; DE is the address of the FCB describing the file to be renamed. The new name
@@ -1289,15 +1191,6 @@ F_RENAME	CALL	F_SFIRST		; Search for file, create FCB
 FRNERR		LD		A,0FFH			; 0FFH for error
 			LD		L,A				; Return code in L also
 			RET
-
-; Parameter list for ProDOS RENAME call
-FRNMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code		
-			DEFB	0C2H			; ProDOS RENAME call
-			DEFW	FRNMLIPL+OFFSET	; Pointer to parm list in 6502 addr space
-			DEFB	60H				; RTS in 6502 code
-FRNMLIPL	DEFB	2				; ProDOS PL: Two parameters
-FRNMLIP1	DEFW	PATHBUF+OFFSET	; ProDOS PL: Pointer to path in 6502 addr
-FRNMLIP2	DEFW	PATHBUF2+OFFSET	; ProDOS PL: Pointer to path in 6502 addr
 
 ; Return bitmap of logged-in drives in HL
 DRV_LOGVEC	LD		HL,(LOGVEC)		;
@@ -1373,6 +1266,78 @@ FUNS1		LD		A,(CURDRV)		; Contains user number & current drive
 			SRA		A				; ...
 			RET
 
+; Random access read record
+; DE contains address of FCB describing the file to read
+; Return code in A and L:
+; 0 success, 1 reading unwritten data, 4 reading unwritten extent,
+; 6 rec number out of range, 9 invalid FCB, 10 media changed, 0FFH h/w err
+; TODO Update sequential record number & extent
+F_READRAND	PUSH	DE				; Preserve pointer to FCB
+			LD		H,D				; Pointer to FCB ...
+			LD		L,E				; ... into HL
+			LD		BC,0EH			; Offset to S2 field (reserved field)
+			ADD		HL,BC			; Compute address
+			LD		A,(HL)			; Obtain file reference num from FCB S2
+			LD		(SMMLIN),A		; Store in parameter list for SET_MARK
+			LD		(FRMLIN),A		; Store in parameter list for READ
+
+			LD		BC,21H-0EH		; Skip ahead to random record num in FCB
+			ADD		HL,BC			; ...
+			LD		B,(HL)			; Load LSB of random record number
+			INC		HL				; Load MSB of random record number
+			LD		C,(HL)			; ...
+			LD		H,B				; Leave it in HL
+			LD		L,C				; ...
+			CALL	RECS2LN2		; Leaves the length in bytes in HL
+			LD		(SMMLIP1),HL	; Write 16 bit length in FRMLIP1,FRMLIP2
+			XOR		A				; Set FRMLIP3 to zero
+			LD		(SMMLIP3),A		; ...
+			LD		HL,SMMLI		; Pass address of 6502 JSR instruction
+			CALL	PRODOS			; Invoke ProDOS MLI - SET_MARK
+			CP		4DH				; See if position was out of range
+			JP		Z,FRRBFCB		; If so, return invalid FCB code (9)
+			CP		43H				; See if it was a bad file ref number
+			JP		Z,FRRBFCB		; If so, return invalid FCB code (9)
+			CP		0				; See if there was some other error
+			JP		NZ,FRRERR		; If so, return code 0FFH (h/w error)
+
+			LD		HL,(DMAADDR)	; Read from DMA buffer address
+			LD		BC,OFFSET		; Convert to 6502 address
+			ADD		HL,BC			; ...
+			LD		(FRMLIDB),HL	; Store I/O buffer address in parm list
+			LD		HL,FRMLI		; Pass address of 6502 JSR instruction
+			CALL	PRODOS			; Invoke ProDOS MLI - READ
+			CP		4CH				; See if it was EOF
+			JP		Z,FRREOF		; If so, return EOF code (1)
+			CP		43H				; See if it was a bad file ref number
+			JP		Z,FRBFCB		; If so, return invalid FCB code (9)
+			CP		0				; See if there was some other error
+			JP		NZ,FRRERR		; If so, return code 0FFH (h/w error)
+
+			POP		DE				; Get pointer to FCB back
+			LD		H,D				; Pointer to FCB ...
+			LD		L,E				; ... into HL
+			LD		BC,20H			; Advance to sequential rec number field
+			ADD		HL,BC			; ...
+;;;;TODO Should copy random record number to seq
+;;			INC		(HL)			; Increment sequential record number
+
+			XOR		A				; Zero for success
+			LD		L,A				; Return code in L also
+			RET						; Done
+FRREOF		POP		DE				; Fix up stack
+			LD		A,1				; EOF return code
+			LD		L,A				; Return code in L also
+			RET						; Done (EOF)
+FRRBFCB		POP		DE				; Fix up stack
+			LD		A,9				; Invalid FCB return code
+			LD		L,A				; Return code in L also
+			RET						; Done (Bad FCB)
+FRRERR		POP		DE				; Fix up stack
+			LD		A,0FFH			; All other errors are 0FFH
+			LD		L,A				; Return code in L aslo
+			RET						; Done (error)
+
 ; Compute file size
 ; DE contains address of FCB describing the file
 ; Error codes are returned in A and L (0 for success, 0FFH if file not found)
@@ -1399,24 +1364,6 @@ F_SIZE		CALL	FCB2PATH		; Populate PATHLEN and PATH
 FSERR		LD		A,0FFH			; File not found
 			LD		L,A				; Return in L also
 			RET
-
-; Parameter list for ProDOS GET_FILE_INFO call
-FSMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code		
-			DEFB	0C4H			; ProDOS GET_FILE_INFO call
-			DEFW	FSMLIPL+OFFSET	; Pointer to parm list in 6502 addr space
-			DEFB	60H				; RTS in 6502 code
-FSMLIPL		DEFB	0AH				; ProDOS PL: Ten parameters
-FSMLIP		DEFW	PATHBUF+OFFSET	; ProDOS PL: Pointer to path in 6502 addr
-FSMLIAC		DEFB	0				; ProDOS PL: Access
-FSMLIT		DEFB	0				; ProDOS PL: File type
-FSMLIAT		DEFW	0000H			; ProDOS PL: Aux type
-FSMLIS		DEFB	1				; ProDOS PL: Storage type
-FSMLIBU		DEFW	0000H			; ProDOS PL: Blocks used
-FSMLIMD		DEFW	0000H			; ProDOS PL: Modification date
-FSMLIMT		DEFW	0000H			; ProDOS PL: Modification time
-FSMLICD		DEFW	0000H			; ProDOS PL: Create date
-FSMLICT		DEFW	0000H			; ProDOS PL: Create time
-
 
 ; Update random access pointer
 ; DE contains the pointer to the FCB to update
@@ -1793,7 +1740,7 @@ LEN2RECS	LD      A,H				; Most significant byte of length
 ; Returns the length in bytes in HL
 RECS2LEN	LD		L,A				; A->HL
 			LD		H,0				; ...
-			ADD		HL,HL			; Shift left seven times
+RECS2LN2	ADD		HL,HL			; Shift left seven times
 			ADD		HL,HL			; ...
 			ADD		HL,HL			; ...
 			ADD		HL,HL			; ...
@@ -1827,6 +1774,144 @@ N2H2		OR		0F0H			;
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Additional private scratch space for BDOS
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; ProDOS Parameter Lists
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+; Parameter list for ProDOS CREATE call
+FMMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code		
+			DEFB	0C0H			; ProDOS CREATE call
+			DEFW	FMMLIPL+OFFSET	; Pointer to parm list in 6502 addr space
+			DEFB	60H				; RTS in 6502 code
+FMMLIPL		DEFB	7				; ProDOS PL: Seven parameters
+FMMLIP		DEFW	PATHBUF+OFFSET	; ProDOS PL: Pointer to path in 6502 addr
+FMMLIA		DEFB	0C3H			; ProDOS PL: Access (0C3H full access)
+FMMLIT		DEFB	0				; ProDOS PL: File type (0 means typeless)
+FMMLIAT		DEFW	0000H			; ProDOS PL: Aux file type (always 0000H)
+FMMLIS		DEFB	1				; ProDOS PL: Storage type (1 for file)
+FMMLICD		DEFW	0000H			; ProDOS PL: Create date (always 0000H)
+FMMLICT		DEFW	0000H			; ProDOS PL: Create time (always 0000H)
+
+; Parameter list for ProDOS DESTROY call
+FDMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code		
+			DEFB	0C1H			; ProDOS DESTROY call
+			DEFW	FDMLIPL+OFFSET	; Pointer to parm list in 6502 addr space
+			DEFB	60H				; RTS in 6502 code
+FDMLIPL		DEFB	1				; ProDOS PL: Seven parameters
+FDMLIP		DEFW	PATHBUF+OFFSET	; ProDOS PL: Pointer to path in 6502 addr
+
+; Parameter list for ProDOS RENAME call
+FRNMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code		
+			DEFB	0C2H			; ProDOS RENAME call
+			DEFW	FRNMLIPL+OFFSET	; Pointer to parm list in 6502 addr space
+			DEFB	60H				; RTS in 6502 code
+FRNMLIPL	DEFB	2				; ProDOS PL: Two parameters
+FRNMLIP1	DEFW	PATHBUF+OFFSET	; ProDOS PL: Pointer to path in 6502 addr
+FRNMLIP2	DEFW	PATHBUF2+OFFSET	; ProDOS PL: Pointer to path in 6502 addr
+
+; Parameter list for ProDOS GET_FILE_INFO call
+FSMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code		
+			DEFB	0C4H			; ProDOS GET_FILE_INFO call
+			DEFW	FSMLIPL+OFFSET	; Pointer to parm list in 6502 addr space
+			DEFB	60H				; RTS in 6502 code
+FSMLIPL		DEFB	0AH				; ProDOS PL: Ten parameters
+FSMLIP		DEFW	PATHBUF+OFFSET	; ProDOS PL: Pointer to path in 6502 addr
+FSMLIAC		DEFB	0				; ProDOS PL: Access
+FSMLIT		DEFB	0				; ProDOS PL: File type
+FSMLIAT		DEFW	0000H			; ProDOS PL: Aux type
+FSMLIS		DEFB	1				; ProDOS PL: Storage type
+FSMLIBU		DEFW	0000H			; ProDOS PL: Blocks used
+FSMLIMD		DEFW	0000H			; ProDOS PL: Modification date
+FSMLIMT		DEFW	0000H			; ProDOS PL: Modification time
+FSMLICD		DEFW	0000H			; ProDOS PL: Create date
+FSMLICT		DEFW	0000H			; ProDOS PL: Create time
+
+; Parameter list for ProDOS OPEN call
+FOMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code		
+			DEFB	0C8H			; ProDOS OPEN call
+			DEFW	FOMLIPL+OFFSET	; Pointer to parm list in 6502 addr space
+			DEFB	60H				; RTS in 6502 code
+FOMLIPL		DEFB	3				; ProDOS PL: Three parameters
+FOMLIP		DEFW	PATHBUF+OFFSET	; ProDOS PL: pointer to path in 6502 addr
+FOMLII		DEFW	0000H			; ProDOS PL: pointer to IO buffer
+FOMLIN		DEFB	0				; ProDOS PL: File reference number
+
+; Parameter list for ProDOS READ call
+FRMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code		
+			DEFB	0CAH			; ProDOS READ call
+			DEFW	FRMLIPL+OFFSET	; Pointer to parm list in 6502 addr space
+			DEFB	60H				; RTS in 6502 code
+FRMLIPL		DEFB	4				; ProDOS PL: Four parameters
+FRMLIN		DEFB	0				; ProDOS PL: File reference number
+FRMLIDB		DEFW	0000H			; ProDOS PL: Data buffer
+FRMLIRC		DEFW	128				; ProDOS PL: Request count (bytes to read)
+FRMLITC		DEFW	0000H			; ProDOS PL: Number of bytes transferred
+
+; Parameter list for ProDOS WRITE call
+FWMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code		
+			DEFB	0CBH			; ProDOS WRITE call
+			DEFW	FWMLIPL+OFFSET	; Pointer to parm list in 6502 addr space
+			DEFB	60H				; RTS in 6502 code
+FWMLIPL		DEFB	4				; ProDOS PL: Four parameters
+FWMLIN		DEFB	0				; ProDOS PL: File reference number
+FWMLIDB		DEFW	0000H			; ProDOS PL: Data buffer
+FWMLIRC		DEFW	128				; ProDOS PL: Request count (bytes to read)
+FWMLITC		DEFW	0000H			; ProDOS PL: Number of bytes transferred
+
+; Parameter list for ProDOS CLOSE call
+FCMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code		
+			DEFB	0CCH			; ProDOS CLOSE call
+			DEFW	FCMLIPL+OFFSET	; Pointer to parm list in 6502 addr space
+			DEFB	60H				; RTS in 6502 code
+FCMLIPL		DEFB	1				; ProDOS PB: One parameter
+FCMLIN		DEFB	0				; ProDOS PB: File reference number
+
+; Parameter list for ProDOS FLUSH call
+FLMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code		
+			DEFB	0CDH			; ProDOS FLUSH call
+			DEFW	FLMLIPL+OFFSET	; Pointer to parm list in 6502 addr space
+			DEFB	60H				; RTS in 6502 code
+FLMLIPL		DEFB	1				; ProDOS PL: One parameter
+FLMLIN		DEFB	0				; ProDOS PL: File ref num (0 = all files)
+
+; Parameter list for ProDOS SET_MARK call
+SMMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code		
+			DEFB	0CEH			; ProDOS SET_MARK call
+			DEFW	SMMLIPL+OFFSET	; Pointer to parm list in 6502 addr space
+			DEFB	60H				; RTS in 6502 code
+SMMLIPL		DEFB	2				; ProDOS PL: Two parameters
+SMMLIN		DEFB	0				; ProDOS PL: File reference number
+SMMLIP1		DEFB	0				; ProDOS PL: Position (LSB)
+SMMLIP2		DEFB	0				; ProDOS PL: Position
+SMMLIP3		DEFB	0				; ProDOS PL: Position (MSB)
+
+; Parameter list for ProDOS GET_EOF call
+FO2MLI      DEFB    20H,00H,0BFH    ; JSR $BF00 in 6502 code
+            DEFB    0D1H            ; ProDOS GET_EOF call
+            DEFW    FO2MLIPL+OFFSET ; Pointer to parm list in 6502 addr space
+            DEFB    60H             ; RTS in 6502 code
+FO2MLIPL    DEFB    2               ; ProDOS PL: Two parameters
+FO2MLIN     DEFB    0               ; ProDOS PL: File reference number
+FO2MLIE1    DEFB    0               ; ProDOS PL: EOF position (LS-byte)
+FO2MLIE2    DEFB    0               ; ProDOS PL: EOF position
+FO2MLIE3    DEFB    0               ; ProDOS PL: EOF position (MS-byte)
+
+; FCB used for opening ProDOS directory corresponding to drive
+DFCB								; File control block for directory
+DFCBDRV		DEFB	00H				; FCB Drive (0 current, 1 A:, 2 B: etc)
+DFCBNAM		DEFM	'           '	; FCB filename and extension (all spaces)
+DFCBEX		DEFB	00H				; FCB extent field
+DFCBS1		DEFB	00H				; FCB S1 field
+DFCBS2		DEFB	00H				; FCB S2 field
+DFCBRC		DEFB	00H				; FCB RC field
+DFCBMAP		DEFS	16				; Map of blocks in file
+DFCBSR		DEFB	0				; FCB seq record number
+DFCBRR		DEFB	0,0,0			; FCB rand record number
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; End of ProDOS Parameter Lists
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ; Drive parameter block (CP/M 2.2 format)
