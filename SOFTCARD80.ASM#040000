@@ -15,9 +15,11 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;
-; TODO: Populate FCBs properly so PIP etc. work!! Do this in PATH2FCB.
+; TODO: F_WRITE bug - getting the offset wrong -> attempt to seek past EOF.
+; TODO: Only handles files with one extent (16KB) for now.  Improve this!
 ; TODO: Note that PIP uses random reads and writes.
-; TODO: F_ATTRIB needs to work with FCB with wildcards and leave the FCB at DMAADDR
+; TODO: F_ATTRIB needs to work with FCB with wildcards and leave the FCB at
+;       DMAADDR
 ; TODO: Implement missing system calls:
 ;        - Random read/write (F_READRAND,F_WRITERAND,F_WRITEZF)
 ;        - RS232 (A_READ, A_WRITE)
@@ -869,6 +871,7 @@ FOERR		POP		DE				; Restore the stack
 			LD		L,A				; Copy to L
 			RET						; Done (error)
 
+; Parameter list for ProDOS OPEN call
 FOMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code		
 			DEFB	0C8H			; ProDOS OPEN call
 			DEFW	FOMLIPL+OFFSET	; Pointer to parm list in 6502 addr space
@@ -878,6 +881,7 @@ FOMLIP		DEFW	PATHBUF+OFFSET	; ProDOS PL: pointer to path in 6502 addr
 FOMLII		DEFW	0000H			; ProDOS PL: pointer to IO buffer
 FOMLIN		DEFB	0				; ProDOS PL: File reference number
 
+; Parameter list for ProDOS GET_EOF call
 FO2MLI      DEFB    20H,00H,0BFH    ; JSR $BF00 in 6502 code
             DEFB    0D1H            ; ProDOS GET_EOF call
             DEFW    FO2MLIPL+OFFSET ; Pointer to parm list in 6502 addr space
@@ -933,6 +937,7 @@ FCERR		LD		A,0FFH			; 0FFH for error
 			LD		L,A				; Return code in L also
 			RET
 
+; Parameter list for ProDOS CLOSE call
 FCMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code		
 			DEFB	0CCH			; ProDOS CLOSE call
 			DEFW	FCMLIPL+OFFSET	; Pointer to parm list in 6502 addr space
@@ -1044,6 +1049,7 @@ FDERR		LD		A,0FFH			; 0FFH for error
 			LD		L,A				; Return code in L also
 			RET
 
+; Parameter list for ProDOS DESTROY call
 FDMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code		
 			DEFB	0C1H			; ProDOS DESTROY call
 			DEFW	FDMLIPL+OFFSET	; Pointer to parm list in 6502 addr space
@@ -1061,17 +1067,17 @@ F_READ		PUSH	DE				; Preserve pointer to FCB
 			LD		BC,0EH			; Offset to S2 field (reserved field)
 			ADD		HL,BC			; Compute address
 			LD		A,(HL)			; Obtain file reference num from FCB S2
-			LD		(FRMLIN),A		; Store in parameter list for SET_MARK
-			LD		(FR2MLIN),A		; Store in parameter list for READ
+			LD		(SMMLIN),A		; Store in parameter list for SET_MARK
+			LD		(FRMLIN),A		; Store in parameter list for READ
 
 			LD		BC,20H-0EH		; Skip ahead to seq record num in FCB
 			ADD		HL,BC			; ...
 			LD		A,(HL)			; Obtain sequential record number
 			CALL	RECS2LEN		; Leaves the length in bytes in HL
-			LD		(FRMLIP1),HL	; Write 16 bit length in FRMLIP1,FRMLIP2
+			LD		(SMMLIP1),HL	; Write 16 bit length in FRMLIP1,FRMLIP2
 			XOR		A				; Set FRMLIP3 to zero
-			LD		(FRMLIP3),A		; ...
-			LD		HL,FRMLI		; Pass address of 6502 JSR instruction
+			LD		(SMMLIP3),A		; ...
+			LD		HL,SMMLI		; Pass address of 6502 JSR instruction
 			CALL	PRODOS			; Invoke ProDOS MLI - SET_MARK
 			CP		4DH				; See if position was out of range
 			JP		Z,FRBFCB		; If so, return invalid FCB code (9)
@@ -1083,8 +1089,8 @@ F_READ		PUSH	DE				; Preserve pointer to FCB
 			LD		HL,(DMAADDR)	; Read from DMA buffer address
 			LD		BC,OFFSET		; Convert to 6502 address
 			ADD		HL,BC			; ...
-			LD		(FR2MLIDB),HL	; Store I/O buffer address in parm list
-			LD		HL,FR2MLI		; Pass address of 6502 JSR instruction
+			LD		(FRMLIDB),HL	; Store I/O buffer address in parm list
+			LD		HL,FRMLI		; Pass address of 6502 JSR instruction
 			CALL	PRODOS			; Invoke ProDOS MLI - READ
 			CP		4CH				; See if it was EOF
 			JP		Z,FREOF			; If so, return EOF code (1)
@@ -1116,38 +1122,56 @@ FRERR		POP		DE				; Fix up stack
 			LD		L,A				; Return code in L aslo
 			RET						; Done (error)
 
-FRMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code		
+; ProDOS parameter block for SET_MARK call
+SMMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code		
 			DEFB	0CEH			; ProDOS SET_MARK call
+			DEFW	SMMLIPL+OFFSET	; Pointer to parm list in 6502 addr space
+			DEFB	60H				; RTS in 6502 code
+SMMLIPL		DEFB	2				; ProDOS PL: Two parameters
+SMMLIN		DEFB	0				; ProDOS PL: File reference number
+SMMLIP1		DEFB	0				; ProDOS PL: Position (LSB)
+SMMLIP2		DEFB	0				; ProDOS PL: Position
+SMMLIP3		DEFB	0				; ProDOS PL: Position (MSB)
+
+; ProDOS parameter block for READ call
+FRMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code		
+			DEFB	0CAH			; ProDOS READ call
 			DEFW	FRMLIPL+OFFSET	; Pointer to parm list in 6502 addr space
 			DEFB	60H				; RTS in 6502 code
-FRMLIPL		DEFB	2				; ProDOS PL: Two parameters
+FRMLIPL		DEFB	4				; ProDOS PL: Four parameters
 FRMLIN		DEFB	0				; ProDOS PL: File reference number
-FRMLIP1		DEFB	0				; ProDOS PL: Position (LSB)
-FRMLIP2		DEFB	0				; ProDOS PL: Position
-FRMLIP3		DEFB	0				; ProDOS PL: Position (MSB)
-
-FR2MLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code		
-			DEFB	0CAH			; ProDOS READ call
-			DEFW	FR2MLIPL+OFFSET	; Pointer to parm list in 6502 addr space
-			DEFB	60H				; RTS in 6502 code
-FR2MLIPL	DEFB	4				; ProDOS PL: Four parameters
-FR2MLIN		DEFB	0				; ProDOS PL: File reference number
-FR2MLIDB	DEFW	0000H			; ProDOS PL: Data buffer
-FR2MLIRC	DEFW	128				; ProDOS PL: Request count (bytes to read)
-FR2MLITC	DEFW	0000H			; ProDOS PL: Number of bytes transferred
+FRMLIDB		DEFW	0000H			; ProDOS PL: Data buffer
+FRMLIRC		DEFW	128				; ProDOS PL: Request count (bytes to read)
+FRMLITC		DEFW	0000H			; ProDOS PL: Number of bytes transferred
 
 ; Write next record
 ; DE is the address of the FCB describing the file to which to write
 ; Returns error codes in A and L:
 ; 0 OK, 1 dir full, 2 disk full, 9 invalid FCB, 10 media changed, 0FFH h/w error
-; TODO: Use Sequential Record field of FCB to determine from where to begin
-;       writing.  Increment it so next write advances to next record.
-F_WRITE		LD		H,D				; Pointer to FCB ...
+F_WRITE		PUSH	DE				; Preserve pointer to FCB
+			LD		H,D				; Pointer to FCB ...
 			LD		L,E				; ... into HL
 			LD		BC,0EH			; Offset to S2 field (reserved field)
 			ADD		HL,BC			; Compute address
 			LD		A,(HL)			; Obtain file reference num from FCB S2
+			LD		(SMMLIN),A		; Store in parameter list for SET_MARK
 			LD		(FWMLIN),A		; Store in parameter list
+
+			LD		BC,20H-0EH		; Skip ahead to seq record num in FCB
+			ADD		HL,BC			; ...
+			LD		A,(HL)			; Obtain sequential record number
+			CALL	RECS2LEN		; Leaves the length in bytes in HL
+			LD		(SMMLIP1),HL	; Write 16 bit length in FRMLIP1,FRMLIP2
+			XOR		A				; Set FRMLIP3 to zero
+			LD		(SMMLIP3),A		; ...
+			LD		HL,SMMLI		; Pass address of 6502 JSR instruction
+			CALL	PRODOS			; Invoke ProDOS MLI - SET_MARK
+			CP		4DH				; See if position was out of range
+			JP		Z,FWBFCB		; If so, return invalid FCB code (9)
+			CP		43H				; See if it was a bad file ref number
+			JP		Z,FWBFCB		; If so, return invalid FCB code (9)
+			CP		0				; See if there was some other error
+			JP		NZ,FWERR		; If so, return code 0FFH (h/w error)
 
 			LD		HL,(DMAADDR)	; Write to DMA address
 			LD		BC,OFFSET		; Convert to 6502 address
@@ -1162,19 +1186,31 @@ F_WRITE		LD		H,D				; Pointer to FCB ...
 			JP		Z,FWDF			; If so, return disk full code (2)
 			CP		0				; See if there was some other error
 			JP		NZ,FWERR		; If so, return code 0FFH (h/w error)
+
+			POP		DE				; Get pointer to FCB back
+			LD		H,D				; Pointer to FCB ...
+			LD		L,E				; ... into HL
+			LD		BC,20H			; Advance to sequential rec number field
+			ADD		HL,BC			; ...
+			INC		(HL)			; Increment sequential record number
+
 			XOR		A				; Zero for success
 			LD		L,A				; Return code in L also
 			RET						; Done
-FWBFCB		LD		A,9				; Invalid FCB return code
+FWBFCB		POP		DE				; Clean up the stack
+			LD		A,9				; Invalid FCB return code
 			LD		L,A				; Return code in L also
 			RET						; Done (EOF)
-FWDF		LD		A,2				; Disk full return code
+FWDF		POP		DE				; Clean up the stack
+			LD		A,2				; Disk full return code
 			LD		L,A				; Return code in L also
 			RET						; Done (EOF)
-FWERR		LD		A,0FFH			; All other errors are 0FFH
+FWERR		POP		DE				; Clean up the stack
+			LD		A,0FFH			; All other errors are 0FFH
 			LD		L,A				; Return code in L aslo
 			RET						; Done (error)
 
+; Parameter list for ProDOS WRITE call
 FWMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code		
 			DEFB	0CBH			; ProDOS WRITE call
 			DEFW	FWMLIPL+OFFSET	; Pointer to parm list in 6502 addr space
@@ -1201,6 +1237,7 @@ FMERR		LD		A,0FFH			; 0FFH for error
 			LD		L,A				; Return code in L also
 			RET
 
+; Parameter list for ProDOS CREATE call
 FMMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code		
 			DEFB	0C0H			; ProDOS CREATE call
 			DEFW	FMMLIPL+OFFSET	; Pointer to parm list in 6502 addr space
@@ -1242,6 +1279,7 @@ FRNERR		LD		A,0FFH			; 0FFH for error
 			LD		L,A				; Return code in L also
 			RET
 
+; Parameter list for ProDOS RENAME call
 FRNMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code		
 			DEFB	0C2H			; ProDOS RENAME call
 			DEFW	FRNMLIPL+OFFSET	; Pointer to parm list in 6502 addr space
@@ -1351,6 +1389,7 @@ FSERR		LD		A,0FFH			; File not found
 			LD		L,A				; Return in L also
 			RET
 
+; Parameter list for ProDOS GET_FILE_INFO call
 FSMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code		
 			DEFB	0C4H			; ProDOS GET_FILE_INFO call
 			DEFW	FSMLIPL+OFFSET	; Pointer to parm list in 6502 addr space
@@ -1722,8 +1761,7 @@ GIOAS4		LD		HL,IOBUF4		; Address of I/O buf 4 -> HL
 ; Convert length in bytes to the number of 128 byte records
 ; Length in bytes is passed in HL
 ; Length in records is returned in A
-; TODO This function returns one record more than it should if length is an
-;      exact multiple of 128
+; Only works for files whose size in multiple of 128 bytes
 LEN2RECS	LD      A,H				; Most significant byte of length
 			SLA     A				; Shift left to make space
 			LD      B,A				; Stash in B for now
@@ -1737,7 +1775,6 @@ LEN2RECS	LD      A,H				; Most significant byte of length
 			SRA     A				; ...
 			SRA     A				; ...
 			OR      B				; Leaves file length in records in A
-			INC		A				; Round up
 			RET
 
 ; Convert number of 128 byte records to length in bytes
