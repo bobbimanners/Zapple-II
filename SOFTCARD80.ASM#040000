@@ -827,11 +827,12 @@ _F_OPEN		LD		IX,PATHBUF		; Destination buffer
 			LD		L,E				; ... into HL
 			LD		BC,0EH			; Offset to S2 field (reserved field)
 			ADD		HL,BC			; Compute address
-			LD		(HL),A			; Store file reference number is S2 field
+			LD		(HL),A			; Store file reference number in S2 field
 			PUSH	HL				; Keep pointer into FCB for later
 
 			; ProDOS GET_EOF call.  Convert bytes to records (ie: divide by 128)
 			; Assumes no files > 64K on ProDOS filesystem
+			LD		(FO2MLIN),A		; Store file ref num in param list
 			LD      HL,FO2MLI       ; Pass address of 6502 JSR instruction
 			CALL    PRODOS          ; Invoke ProDOS MLI (GET_EOF)
 			LD      A,(FO2MLIE2)    ; Most significant byte of length
@@ -865,7 +866,7 @@ _F_OPEN		LD		IX,PATHBUF		; Destination buffer
 			LD		B,0				; ...
 			LD		C,A				; ...
 			ADD		HL,BC			; ...
-			lD		A,(FOMLIN)		; Get ProDOS file reference number
+			LD		A,(FOMLIN)		; Get ProDOS file reference number
 			LD		(HL),A			; Store in FRN slot
 
 			XOR		A				; Success
@@ -903,7 +904,7 @@ FOIOB		DEFB	0				; Local variable to record IOBUF idx
 ; Returns error codes in A and L:
 F_CLOSE		LD		H,D				; Pointer to FCB ...
 			LD		L,E				; ... into HL
-			LD		BC,14			; Offset to S2 field (reserved field)
+			LD		BC,0EH			; Offset to S2 field (reserved field)
 			ADD		HL,BC			; Compute address
 			LD		A,(HL)			; Obtain file reference num from FCB S2
 			CP		0				; If file reference number is zero ...
@@ -928,7 +929,7 @@ F_CLOSE		LD		H,D				; Pointer to FCB ...
 
 			LD		H,D				; Pointer to FCB ...
 			LD		L,E				; ... into HL
-			LD		BC,14			; Offset to S2 field (reserved field)
+			LD		BC,0EH			; Offset to S2 field (reserved field)
 			ADD		HL,BC			; Compute address
 			XOR		A				; Zero out the S2 field
 			LD		(HL),A			; ...
@@ -1065,16 +1066,16 @@ FDMLIP		DEFW	PATHBUF+OFFSET	; ProDOS PL: Pointer to path in 6502 addr
 ;       reading.  Increment it so next read advances to next record.
 F_READ		LD		H,D				; Pointer to FCB ...
 			LD		L,E				; ... into HL
-			LD		BC,14			; Offset to S2 field (reserved field)
+			LD		BC,0EH			; Offset to S2 field (reserved field)
 			ADD		HL,BC			; Compute address
 			LD		A,(HL)			; Obtain file reference num from FCB S2
-			LD		(FRMLIN),A		; Store in parameter list
+			LD		(FR2MLIN),A		; Store in parameter list
 
 			LD		HL,(DMAADDR)	; Read from DMA buffer address
 			LD		BC,OFFSET		; Convert to 6502 address
 			ADD		HL,BC			; ...
-			LD		(FRMLIDB),HL	; Store I/O buffer address in parm list
-			LD		HL,FRMLI		; Pass address of 6502 JSR instruction
+			LD		(FR2MLIDB),HL	; Store I/O buffer address in parm list
+			LD		HL,FR2MLI		; Pass address of 6502 JSR instruction
 			CALL	PRODOS			; Invoke ProDOS MLI
 			CP		4CH				; See if it was EOF
 			JP		Z,FREOF			; If so, return EOF code (1)
@@ -1095,15 +1096,15 @@ FRERR		LD		A,0FFH			; All other errors are 0FFH
 			LD		L,A				; Return code in L aslo
 			RET						; Done (error)
 
-FRMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code		
+FR2MLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code		
 			DEFB	0CAH			; ProDOS READ call
-			DEFW	FRMLIPL+OFFSET	; Pointer to parm list in 6502 addr space
+			DEFW	FR2MLIPL+OFFSET	; Pointer to parm list in 6502 addr space
 			DEFB	60H				; RTS in 6502 code
-FRMLIPL		DEFB	4				; ProDOS PL: Four parameters
-FRMLIN		DEFB	0				; ProDOS PL: File reference number
-FRMLIDB		DEFW	0000H			; ProDOS PL: Data buffer
-FRMLIRC		DEFW	128				; ProDOS PL: Request count (bytes to read)
-FRMLITC		DEFW	0000H			; ProDOS PL: Number of bytes transferred
+FR2MLIPL	DEFB	4				; ProDOS PL: Four parameters
+FR2MLIN		DEFB	0				; ProDOS PL: File reference number
+FR2MLIDB	DEFW	0000H			; ProDOS PL: Data buffer
+FR2MLIRC	DEFW	128				; ProDOS PL: Request count (bytes to read)
+FR2MLITC	DEFW	0000H			; ProDOS PL: Number of bytes transferred
 
 ; Write next record
 ; DE is the address of the FCB describing the file to which to write
@@ -1113,7 +1114,7 @@ FRMLITC		DEFW	0000H			; ProDOS PL: Number of bytes transferred
 ;       writing.  Increment it so next write advances to next record.
 F_WRITE		LD		H,D				; Pointer to FCB ...
 			LD		L,E				; ... into HL
-			LD		BC,14			; Offset to S2 field (reserved field)
+			LD		BC,0EH			; Offset to S2 field (reserved field)
 			ADD		HL,BC			; Compute address
 			LD		A,(HL)			; Obtain file reference num from FCB S2
 			LD		(FWMLIN),A		; Store in parameter list
