@@ -800,7 +800,8 @@ F_OPEN		CALL	F_SFIRST
 _F_OPEN		LD		IX,PATHBUF		; Destination buffer
 			CALL	FCB2PATH		; Populate PATHLEN and PATH
 
-			PUSH	DE				; Preserve pointer to FCB
+			PUSH	DE				; Copy pointer to FCB ...
+			POP		IY				; ... into IY
 
 			; Work out which IOBUF to allocate for this file
 			XOR		A				; Looking for FRN slot with value 0
@@ -818,16 +819,9 @@ _F_OPEN		LD		IX,PATHBUF		; Destination buffer
 			CP		0				; See if there was an error
 			JP		NZ,FOERR		; Handle error
 
-			POP		DE				; Restore pointer to FCB
-
 			; Store ProDOS FRN in S2 field of FCB
 			LD		A,(FOMLIN)		; Get ProDOS file reference number
-			LD		H,D				; Pointer to FCB ...
-			LD		L,E				; ... into HL
-			LD		BC,0EH			; Offset to S2 field (reserved field)
-			ADD		HL,BC			; Compute address
-			LD		(HL),A			; Store file reference number in S2 field
-			PUSH	HL				; Keep pointer into FCB for later
+			LD		(IY+0EH),A		; Store file reference number in S2 field
 
 			; ProDOS GET_EOF call
 			; Assumes no files > 64K on ProDOS filesystem
@@ -840,15 +834,11 @@ _F_OPEN		LD		IX,PATHBUF		; Destination buffer
 			CALL	LEN2RECS		; Leaves number of records in A
 
 			; Store records used
-			POP		HL				; Recover pointer into FCB	
-			INC		HL				; Advance to records used (offset 0FH)
-			LD		(HL),A			; Set records used
+			LD		(IY+0FH),A		; Set records used field
 
 			; Set sequential record number to zero
-			LD		BC,20H-0FH		; Skip ahead to offset 20H - seq rec num
-			ADD		HL,BC			; ...
 			XOR		A				; Zero the sequential record number
-			LD		(HL),A			; ...
+			LD		(IY+20H),A		; ...
 
 			; Store ProDOS FRN in slot FRN1 - FRN4
 			LD		A,(TEMPBYTE)	; Obtain IOBUF idx (1,2,3,4)
@@ -863,8 +853,7 @@ _F_OPEN		LD		IX,PATHBUF		; Destination buffer
 			LD		L,A				; Copy to L
 			RET						; Done
 
-FOERR		POP		DE				; Restore the stack
-			LD		A,0FFH			; Error return status
+FOERR		LD		A,0FFH			; Error return status
 			LD		L,A				; Copy to L
 			RET						; Done (error)
 
@@ -896,12 +885,10 @@ F_CLOSE		LD		H,D				; Pointer to FCB ...
 			XOR		A				; And zero it
 			LD		(HL),A			; ...
 
-			LD		H,D				; Pointer to FCB ...
-			LD		L,E				; ... into HL
-			LD		BC,0EH			; Offset to S2 field (reserved field)
-			ADD		HL,BC			; Compute address
+			PUSH	DE				; Copy pointer to FCB ...
+			POP		IX				; ... into IX
 			XOR		A				; Zero out the S2 field
-			LD		(HL),A			; ...
+			LD		(IX+0EH),A		; ...
 
 FCSUCC		XOR		A				; Return zero for error
 			LD		L,A				; Return in L also
@@ -1010,18 +997,13 @@ FDERR		LD		A,0FFH			; 0FFH for error
 ; Returns error codes in A and L:
 ; 0 OK, 1 EOF, 9 invalid FCB, 10 media changed, 0FFH h/w error
 ; TODO Handle multiple extents
-F_READ		PUSH	DE				; Preserve pointer to FCB
-			LD		H,D				; Pointer to FCB ...
-			LD		L,E				; ... into HL
-			LD		BC,0EH			; Offset to S2 field (reserved field)
-			ADD		HL,BC			; Compute address
-			LD		A,(HL)			; Obtain file reference num from FCB S2
+F_READ		PUSH	DE				; Copy pointer to FCB ...
+			POP		IX				; ... into IX
+			LD		A,(IX+0EH)		; Obtain file reference num from FCB S2
 			LD		(SMMLIN),A		; Store in parameter list for SET_MARK
 			LD		(FRMLIN),A		; Store in parameter list for READ
 
-			LD		BC,20H-0EH		; Skip ahead to seq record num in FCB
-			ADD		HL,BC			; ...
-			LD		A,(HL)			; Obtain sequential record number
+			LD		A,(IX+20H)		; Obtain sequential record number
 			CALL	RECS2LEN		; Leaves the length in bytes in HL
 			LD		(SMMLIP1),HL	; Write 16 bit length in FRMLIP1,FRMLIP2
 			XOR		A				; Set FRMLIP3 to zero
@@ -1048,26 +1030,18 @@ F_READ		PUSH	DE				; Preserve pointer to FCB
 			CP		0				; See if there was some other error
 			JP		NZ,FRERR		; If so, return code 0FFH (h/w error)
 
-			POP		DE				; Get pointer to FCB back
-			LD		H,D				; Pointer to FCB ...
-			LD		L,E				; ... into HL
-			LD		BC,20H			; Advance to sequential rec number field
-			ADD		HL,BC			; ...
-			INC		(HL)			; Increment sequential record number
+			INC		(IX+20H)		; Increment sequential record number
 
 			XOR		A				; Zero for success
 			LD		L,A				; Return code in L also
 			RET						; Done
-FREOF		POP		DE				; Fix up stack
-			LD		A,1				; EOF return code
+FREOF		LD		A,1				; EOF return code
 			LD		L,A				; Return code in L also
 			RET						; Done (EOF)
-FRBFCB		POP		DE				; Fix up stack
-			LD		A,9				; Invalid FCB return code
+FRBFCB		LD		A,9				; Invalid FCB return code
 			LD		L,A				; Return code in L also
 			RET						; Done (Bad FCB)
-FRERR		POP		DE				; Fix up stack
-			LD		A,0FFH			; All other errors are 0FFH
+FRERR		LD		A,0FFH			; All other errors are 0FFH
 			LD		L,A				; Return code in L aslo
 			RET						; Done (error)
 
@@ -1076,18 +1050,13 @@ FRERR		POP		DE				; Fix up stack
 ; Returns error codes in A and L:
 ; 0 OK, 1 dir full, 2 disk full, 9 invalid FCB, 10 media changed, 0FFH h/w error
 ; TODO Handle multiple extents
-F_WRITE		PUSH	DE				; Preserve pointer to FCB
-			LD		H,D				; Pointer to FCB ...
-			LD		L,E				; ... into HL
-			LD		BC,0EH			; Offset to S2 field (reserved field)
-			ADD		HL,BC			; Compute address
-			LD		A,(HL)			; Obtain file reference num from FCB S2
+F_WRITE		PUSH	DE				; Copy pointer to FCB ...
+			POP		IX				; ... into IX
+			LD		A,(IX+0EH)		; Obtain file reference num from FCB S2
 			LD		(SMMLIN),A		; Store in parameter list for SET_MARK
 			LD		(FWMLIN),A		; Store in parameter list for WRITE
 
-			LD		BC,20H-0EH		; Skip ahead to seq record num in FCB
-			ADD		HL,BC			; ...
-			LD		A,(HL)			; Obtain sequential record number
+			LD		A,(IX+20H)		; Obtain sequential record number
 			CALL	RECS2LEN		; Leaves the length in bytes in HL
 
 ;;			; DEBUG
@@ -1125,26 +1094,18 @@ F_WRITE		PUSH	DE				; Preserve pointer to FCB
 			CP		0				; See if there was some other error
 			JP		NZ,FWERR		; If so, return code 0FFH (h/w error)
 
-			POP		DE				; Get pointer to FCB back
-			LD		H,D				; Pointer to FCB ...
-			LD		L,E				; ... into HL
-			LD		BC,20H			; Advance to sequential rec number field
-			ADD		HL,BC			; ...
-			INC		(HL)			; Increment sequential record number
+			INC		(IX+20H)		; Increment sequential record number
 
 			XOR		A				; Zero for success
 			LD		L,A				; Return code in L also
 			RET						; Done
-FWBFCB		POP		DE				; Clean up the stack
-			LD		A,9				; Invalid FCB return code
+FWBFCB		LD		A,9				; Invalid FCB return code
 			LD		L,A				; Return code in L also
 			RET						; Done (EOF)
-FWDF		POP		DE				; Clean up the stack
-			LD		A,2				; Disk full return code
+FWDF		LD		A,2				; Disk full return code
 			LD		L,A				; Return code in L also
 			RET						; Done (Disk Full)
-FWERR		POP		DE				; Clean up the stack
-			LD		A,0FFH			; All other errors are 0FFH
+FWERR		LD		A,0FFH			; All other errors are 0FFH
 			LD		L,A				; Return code in L aslo
 			RET						; Done (error)
 
