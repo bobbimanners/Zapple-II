@@ -109,6 +109,7 @@ CP/M programs really need to see.
 - BDOS call 1FH: `DRV_DPB` - Get Drive Parameter Block address
 - BDOS call 20H: `F_USERNUM` - Get/set user number
 - BDOS call 22H: `F_SIZE` - Compute file size
+- BDOS call 24H: `F_RANDREC` - Update random access pointer
 - BDOS call 25H: `DRV_RESET` - Selectively reset disk drives
 
 There are two parts to the BDOS emulation:
