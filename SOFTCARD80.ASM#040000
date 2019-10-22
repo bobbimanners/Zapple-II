@@ -1005,7 +1005,7 @@ F_READ		PUSH	DE				; Copy pointer to FCB ...
 
 			LD		A,(IX+20H)		; Obtain sequential record number
 			LD		B,(IX+0CH)		; Obtain extent from FCB
-			CALL	RECS2LEN		; Leaves the length in bytes in HL
+			CALL	EXRC2LEN		; Leaves the length in bytes in HL
 			LD		(SMMLIP1),HL	; Write 16 bit length in FRMLIP1,FRMLIP2
 			XOR		A				; Set FRMLIP3 to zero
 			LD		(SMMLIP3),A		; ...
@@ -1065,7 +1065,7 @@ F_WRITE		PUSH	DE				; Copy pointer to FCB ...
 
 			LD		A,(IX+20H)		; Obtain sequential record number
 			LD		B,(IX+0CH)		; Obtain extent from FCB
-			CALL	RECS2LEN		; Leaves the length in bytes in HL
+			CALL	EXRC2LEN		; Leaves the length in bytes in HL
 
 ;;			; DEBUG
 ;;			PUSH	HL
@@ -1330,14 +1330,14 @@ FSERR		LD		A,0FFH			; File not found
 ; DE contains the pointer to the FCB to update
 ; Sets the random access record of the FCB to the value of the last record
 ; read or written sequentially
-; TODO: This needs to be fixed to handle multiple extents
 F_RANDREC	PUSH	DE				; Copy pointer to FCB ...
 			POP		IX				; ... into IX
-			LD		A,(IX+20H)		; Put sequential record number in A
-			DEC		A				; Remember F_READ/F_WRITE increment this
-			LD		(IX+21H),A		; Write seq rec # to LSB of random rec #
-			XOR		A				; A=0
-			LD		(IX+22H),A		; Set MSB of random rec number to 0
+			LD		A,(IX+20H)		; Obtain sequential record number
+			LD		B,(IX+0CH)		; Obtain extent from FCB
+			CALL	EXRC2RECS		; Leaves the length in records in HL
+			DEC		HL				; Because F_READ/F_WRITE advance this
+			LD		(IX+21H),L		; Store in random access pointer ...
+			LD		(IX+22H),H		; ... In little endian format
 			RET
 
 ; Selectively reset disk drives
@@ -1693,12 +1693,11 @@ LEN2RECS	LD      A,H				; Most significant byte of length
 			OR      B				; Leaves file length in records in A
 			RET
 
-; Convert number of 128 byte records to length in bytes
-; Length in records is passed in A
+; Convert pos in extent/recs format to a linear position in 128 byte records
 ; Extent number is passed in B
-; Returns the length in bytes in HL
-; HL = ((B*128)+A)*128
-RECS2LEN	LD		L,B				; Extent number in LSB of HL
+; Records within the extent is passed in A
+; Returns the length in records in HL - HL = (B*128)+A
+EXRC2RECS	LD		L,B				; Extent number in LSB of HL
 			LD		H,0				; ...
 			ADD		HL,HL			; Shift left seven times
 			ADD		HL,HL			; ...
@@ -1710,13 +1709,6 @@ RECS2LEN	LD		L,B				; Extent number in LSB of HL
 			LD		B,0				; Put recs in this extent in BC
 			LD		C,A				; ...
 			ADD		HL,BC			; Now we have total offset in records
-			ADD		HL,HL			; Shift left seven times
-			ADD		HL,HL			; ...
-			ADD		HL,HL			; ...
-			ADD		HL,HL			; ...
-			ADD		HL,HL			; ...
-			ADD		HL,HL			; ...
-			ADD		HL,HL			; ...
 			RET
 
 ; Convert random record number of 128 byte records to length in bytes
@@ -1729,6 +1721,14 @@ RRN2LEN		ADD		HL,HL			; Shift left seven times
 			ADD		HL,HL			; ...
 			ADD		HL,HL			; ...
 			ADD		HL,HL			; ...
+			RET
+
+; Convert pos in extent/recs format to a linear position in bytes
+; Extent number is passed in B
+; Records within the extent is passed in A
+; Returns the length in bytes in HL - HL = ((B*128)+A)*128
+EXRC2LEN	CALL	EXRC2RECS		; Does most of the work
+			CALL	RRN2LEN			; Does the rest!
 			RET
 
 ; Convert value in HL into an HEX ASCII string, pointed to by DE
