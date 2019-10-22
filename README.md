@@ -108,9 +108,12 @@ CP/M programs really need to see.
 - BDOS call 1DH: `DRV_ROVEC` - Return bitmap of read-only drives
 - BDOS call 1FH: `DRV_DPB` - Get Drive Parameter Block address
 - BDOS call 20H: `F_USERNUM` - Get/set user number
-- BDOS call 22H: `F_SIZE` - Compute file size
+- BDOS call 21H: `F_READRAND` - Random access read record
+- BDOS call 22H: `F_WRITERAND` - Random access write record
+- BDOS call 23H: `F_SIZE` - Compute file size
 - BDOS call 24H: `F_RANDREC` - Update random access pointer
 - BDOS call 25H: `DRV_RESET` - Selectively reset disk drives
+- BDOS call 28H: `F_WRITEZF` - Random access write record zero-filled
 
 There are two parts to the BDOS emulation:
 
