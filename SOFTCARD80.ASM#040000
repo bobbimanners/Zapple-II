@@ -17,14 +17,12 @@
 ;
 ; TODO: F_WRITE bug turns out to be bug in ProDOS 2.5.0a7 (SET_MARK)
 ; TODO: How does DIR / NSWEEP work out file sizes? Need to support this.
-; TODO: Note that PIP uses random reads and writes.
-; TODO: F_ATTRIB needs to work with FCB with wildcards and leave the FCB at
-;       DMAADDR
 ; TODO: Implement missing system calls:
-;        - Random write (F_WRITERAND,F_WRITEZF)
+;        - F_ATTRIB
 ;        - RS232 (A_READ, A_WRITE)
 ;        - Printer (LWRITE)
-;        - Other (F_ATTRIB)
+; TODO: F_ATTRIB needs to work with FCB with wildcards and leave the FCB at
+;       DMAADDR
 ; TODO: IOBYTE doesn't do anything
 ; TODO: User number doesn't do anything
 ; TODO: Software R/O disk setting is not respected
@@ -525,6 +523,7 @@ B_DRV_ROVEC		EQU		1DH			; Return bitmap of read-only drives
 B_DRV_DPB		EQU		1FH			; Get Drive Parameter Block address
 B_F_USERNUM		EQU		20H			; Get/set user number
 B_F_RDRAND		EQU		21H			; Random access read record
+B_F_WRTRAND		EQU		22H			; Random access write record
 B_F_SIZE		EQU		23H			; Compute file size
 B_F_RANDREC		EQU		24H			; Update random access pointer
 B_DRV_RESET		EQU		25H			; Selectively reset disk drives
@@ -595,13 +594,13 @@ BDOSVEC		DEFW	C_TERMCPM		; C=00H
 			DEFW	DRV_DPB			; C=1FH
 			DEFW	F_USERNUM		; C=20H
 			DEFW	F_READRAND		; C=21H
-			DEFW	UNIMP			; C=22H  (F_WRITERAND)
+			DEFW	F_WRITERAND		; C=22H
 			DEFW	F_SIZE			; C=23H
 			DEFW	F_RANDREC		; C=24H
 			DEFW	DRV_RESET		; C=25H
 			DEFW	UNIMP			; C=26H  (*nothing* in CP/M 2.2)
 			DEFW	UNIMP			; C=27H  (*nothing* in CP/M 2.2)
-			DEFW	UNIMP			; C=28H  (F_WRITEZF)
+			DEFW	F_WRITERAND		; C=28H  (F_WRITEZF)
 
 ; Unimplemented BDOS call, just ring the bell
 UNIMP		LD		HL,BELL			; We are going to call BELL
@@ -825,12 +824,12 @@ _F_OPEN		LD		IX,PATHBUF		; Destination buffer
 
 			; ProDOS GET_EOF call
 			; Assumes no files > 64K on ProDOS filesystem
-			LD		(FO2MLIN),A		; Store file ref num in param list
-			LD      HL,FO2MLI       ; Pass address of 6502 JSR instruction
+			LD		(GEMLIN),A		; Store file ref num in param list
+			LD      HL,GEMLI       ; Pass address of 6502 JSR instruction
 			CALL    PRODOS          ; Invoke ProDOS MLI (GET_EOF)
 
 			; Convert length in bytes to length in records
-			LD		HL,(FO2MLIE2)	; Load 16 bit length
+			LD		HL,(GEMLIE2)	; Load 16 bit length
 			CALL	LEN2RECS		; Leaves number of records in A
 
 			; Store records used
@@ -1093,7 +1092,7 @@ F_WRITE		PUSH	DE				; Copy pointer to FCB ...
 			LD		(FWMLIDB),HL	; Store I/O buffer address in parm list
 
 			LD		HL,FWMLI		; Pass address of 6502 JSR instruction
-			CALL	PRODOS			; Invoke ProDOS MLI
+			CALL	PRODOS			; Invoke ProDOS MLI - WRITE
 			CP		43H				; See if it is a bad reference number
 			JP		Z,FWBFCB		; If so, return invalid FCB code (9)
 			CP		48H				; See if it was an overrun error
@@ -1297,6 +1296,81 @@ FRRBFCB		LD		A,9				; Invalid FCB return code
 FRRERR		LD		A,0FFH			; All other errors are 0FFH
 			LD		L,A				; Return code in L aslo
 			RET						; Done (error)
+
+; Random access write record
+; DE contains address of FCB describing the file to write
+; Return code in A and L:
+; 0 success, 1 reading unwritten data, 4 reading unwritten extent,
+; 6 rec number out of range, 9 invalid FCB, 10 media changed, 0FFH h/w err
+F_WRITERAND	PUSH	DE				; Copy pointer to FCB ...
+			POP		IX				; ...
+			LD		A,(IX+0EH)		; Obtain file reference num from FCB S2
+			LD		(GEMLIN),A		; Store in parameter list for GET_EOF
+			LD		(SEMLIN),A		; Store in parameter list for SET_EOF
+			LD		(SMMLIN),A		; Store in parameter list for SET_MARK
+			LD		(FWMLIN),A		; Store in parameter list for WRITE
+
+			LD		HL,GEMLI		; Pass address of 6502 JSR instruction
+			CALL	PRODOS			; Invoke ProDOS MLI - GET_EOF
+		
+			LD		H,(IX+21H)		; Load LSB of random record number
+			LD		L,(IX+22H)		; ...
+			CALL	RRN2LEN			; Leaves the length in bytes in HL
+			LD		(SMMLIP1),HL	; 16 bit len in SMMLIP1,2 for SET_MARK
+			XOR		A				; Set SMMLIP3 to zero
+			LD		(SMMLIP3),A		; ...
+
+			LD		HL,(GEMLIE1)	; Load current EOF into HL
+			LD		BC,(SMMLIP1)	; Load requested offset into BC
+			AND		A				; Clear carry
+			SBC		HL,BC			; Subtract requested byte offset from EOF
+			JP		NC,FWRS1		; If >=0 no need to SET_EOF
+
+			LD		(SEMLIE1),BC	; Requested offset for SET_EOF
+			LD		HL,SEMLI		; Pass address of 6502 JSR instruction
+			CALL	PRODOS			; Invoke ProDOS MLI - SET_EOF
+
+FWRS1		LD		HL,SMMLI		; Pass address of 6502 JSR instruction
+			CALL	PRODOS			; Invoke ProDOS MLI - SET_MARK
+			CP		4DH				; See if position was out of range
+			JP		Z,FWRBFCB		; If so, return invalid FCB code (9)
+			CP		43H				; See if it was a bad file ref number
+			JP		Z,FWRBFCB		; If so, return invalid FCB code (9)
+			CP		0				; See if there was some other error
+			JP		NZ,FWRERR		; If so, return code 0FFH (h/w error)
+
+			LD		HL,(DMAADDR)	; Get DMA buffer address
+			LD		BC,OFFSET		; Convert to 6502 address
+			ADD		HL,BC			; ...
+			LD		(FWMLIDB),HL	; Store I/O buffer address in parm list
+			LD		HL,FWMLI		; Pass address of 6502 JSR instruction
+			CALL	PRODOS			; Invoke ProDOS MLI - WRITE
+			CP		43H				; See if it was a bad file ref number
+			JP		Z,FWRBFCB		; If so, return invalid FCB code (9)
+			CP		48H				; See if it was a bad file ref number
+			JP		Z,FWRDF			; If so, return invalid FCB code (9)
+			CP		0				; See if there was some other error
+			JP		NZ,FWRERR		; If so, return code 0FFH (h/w error)
+
+			LD		H,(IX+21H)		; Load LSB of random record number
+			LD		L,(IX+22H)		; ...
+			CALL	RECS2EXRC		; Puts extent in B, recs in A
+			LD		A,(IX+20H),A	; Update sequential record number
+			LD		B,(IX+0CH),B	; Update sequential extent number
+
+			XOR		A				; Zero for success
+			LD		L,A				; Return code in L also
+			RET						; Done
+FWRBFCB		LD		A,9				; Invalid FCB return code
+			LD		L,A				; Return code in L also
+			RET						; Done (Disk Full)
+FWRDF		LD		A,2				; Disk fill return code
+			LD		L,A				; Return code in L also
+			RET						; Done (Bad FCB)
+FWRERR		LD		A,0FFH			; All other errors are 0FFH
+			LD		L,A				; Return code in L aslo
+			RET						; Done (error)
+
 
 ; Compute file size
 ; DE contains address of FCB describing the file
@@ -1880,16 +1954,27 @@ SMMLIP1		DEFB	0				; ProDOS PL: Position (LSB)
 SMMLIP2		DEFB	0				; ProDOS PL: Position
 SMMLIP3		DEFB	0				; ProDOS PL: Position (MSB)
 
+; Parameter list for ProDOS SET_EOF call
+SEMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code
+			DEFB	0D0H			; ProDOS SET_EOF call
+			DEFW	SEMLIPL+OFFSET	; Pointer to parm list in 6502 addr space
+			DEFB	60H				; RTS in 6502 code
+SEMLIPL		DEFB	2				; ProDOS PL: Two parameters
+SEMLIN		DEFB	0				; ProDOS PL: File reference number
+SEMLIE1		DEFB	0				; ProDOS PL: EOF position (LS-byte)
+SEMLIE2		DEFB	0				; ProDOS PL: EOF position
+SEMLIE3		DEFB	0				; ProDOS PL: EOF position (MS-byte)
+
 ; Parameter list for ProDOS GET_EOF call
-FO2MLI      DEFB    20H,00H,0BFH    ; JSR $BF00 in 6502 code
-            DEFB    0D1H            ; ProDOS GET_EOF call
-            DEFW    FO2MLIPL+OFFSET ; Pointer to parm list in 6502 addr space
-            DEFB    60H             ; RTS in 6502 code
-FO2MLIPL    DEFB    2               ; ProDOS PL: Two parameters
-FO2MLIN     DEFB    0               ; ProDOS PL: File reference number
-FO2MLIE1    DEFB    0               ; ProDOS PL: EOF position (LS-byte)
-FO2MLIE2    DEFB    0               ; ProDOS PL: EOF position
-FO2MLIE3    DEFB    0               ; ProDOS PL: EOF position (MS-byte)
+GEMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code
+			DEFB	0D1H			; ProDOS GET_EOF call
+			DEFW	GEMLIPL+OFFSET	; Pointer to parm list in 6502 addr space
+			DEFB	60H				; RTS in 6502 code
+GEMLIPL		DEFB	2				; ProDOS PL: Two parameters
+GEMLIN		DEFB	0				; ProDOS PL: File reference number
+GEMLIE1		DEFB	0				; ProDOS PL: EOF position (LS-byte)
+GEMLIE2		DEFB	0				; ProDOS PL: EOF position
+GEMLIE3		DEFB	0				; ProDOS PL: EOF position (MS-byte)
 
 ; FCB used for opening ProDOS directory corresponding to drive
 DFCB								; File control block for directory
