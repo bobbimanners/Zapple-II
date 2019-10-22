@@ -16,7 +16,6 @@
 
 ;
 ; TODO: F_WRITE bug turns out to be bug in ProDOS 2.5.0a7 (SET_MARK)
-; TODO: Random read only handles files with one extent (16KB) for now.
 ; TODO: How does DIR / NSWEEP work out file sizes? Need to support this.
 ; TODO: Note that PIP uses random reads and writes.
 ; TODO: F_ATTRIB needs to work with FCB with wildcards and leave the FCB at
@@ -793,7 +792,7 @@ DSRET		LD		L,A				; Return code in L too
 ; Returns error codes in A and L:
 ; Returns 0 for success.  The FCB for the file opened is left at DMAADDR (slot 0)
 ; Returns 0FFH if file not found
-; TODO: F_OPEN should use the extent field of the FCB and (if non zero) seek
+; TODO: F_OPEN should use the record count field of the FCB and (if non zero) seek
 ; to appropriate point in the file
 F_OPEN		CALL	F_SFIRST
 
@@ -1246,17 +1245,14 @@ FUNS1		LD		A,(CURDRV)		; Contains user number & current drive
 ; Return code in A and L:
 ; 0 success, 1 reading unwritten data, 4 reading unwritten extent,
 ; 6 rec number out of range, 9 invalid FCB, 10 media changed, 0FFH h/w err
-; TODO Update sequential record number & extent
 F_READRAND	PUSH	DE				; Copy pointer to FCB ...
 			POP		IX				; ...
 			LD		A,(IX+0EH)		; Obtain file reference num from FCB S2
 			LD		(SMMLIN),A		; Store in parameter list for SET_MARK
 			LD		(FRMLIN),A		; Store in parameter list for READ
 
-			LD		B,(IX+21H)		; Load LSB of random record number
-			LD		C,(IX+22H)		; ...
-			LD		H,B				; Leave it in HL
-			LD		L,C				; ...
+			LD		H,(IX+21H)		; Load LSB of random record number
+			LD		L,(IX+22H)		; ...
 			CALL	RRN2LEN			; Leaves the length in bytes in HL
 			LD		(SMMLIP1),HL	; Write 16 bit length in FRMLIP1,FRMLIP2
 			XOR		A				; Set FRMLIP3 to zero
@@ -1283,8 +1279,11 @@ F_READRAND	PUSH	DE				; Copy pointer to FCB ...
 			CP		0				; See if there was some other error
 			JP		NZ,FRRERR		; If so, return code 0FFH (h/w error)
 
-;;;;TODO Should copy random record number to seq
-;;			INC		(IX+20H)		; Increment sequential record number
+			LD		H,(IX+21H)		; Load LSB of random record number
+			LD		L,(IX+22H)		; ...
+			CALL	RECS2EXRC		; Puts extent in B, recs in A
+			LD		A,(IX+20H),A	; Update sequential record number
+			LD		B,(IX+0CH),B	; Update sequential extent number
 
 			XOR		A				; Zero for success
 			LD		L,A				; Return code in L also
@@ -1721,6 +1720,18 @@ RRN2LEN		ADD		HL,HL			; Shift left seven times
 			ADD		HL,HL			; ...
 			ADD		HL,HL			; ...
 			ADD		HL,HL			; ...
+			RET
+
+; Convert position in terms of random record number to extent/recs
+; Length in records in passed in HL
+; Returns extent number in B and records within extent in A
+RECS2EXRC	SLA		H				; 7 MS-bits of extent number
+			BIT		7,L				; See if MS-bit is set
+			JP		NZ,R2ERS1		; If set ...
+			INC		H				; ... set LSB of extent number
+R2ERS1		LD		B,H				; Return extent in B
+			LD		A,L				; Now for the recs in the extent
+			AND		7FH				; Just need to mask out MS-bit
 			RET
 
 ; Convert pos in extent/recs format to a linear position in bytes
