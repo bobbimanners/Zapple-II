@@ -16,7 +16,8 @@
 
 ;
 ; TODO: F_WRITE bug turns out to be bug in ProDOS 2.5.0a7 (SET_MARK)
-; TODO: Only handles files with one extent (16KB) for now.  Improve this!
+; TODO: Random read only handles files with one extent (16KB) for now.
+; TODO: How does DIR / NSWEEP work out file sizes? Need to support this.
 ; TODO: Note that PIP uses random reads and writes.
 ; TODO: F_ATTRIB needs to work with FCB with wildcards and leave the FCB at
 ;       DMAADDR
@@ -996,7 +997,6 @@ FDERR		LD		A,0FFH			; 0FFH for error
 ; DE is the address of the FCB describing the file from which to read
 ; Returns error codes in A and L:
 ; 0 OK, 1 EOF, 9 invalid FCB, 10 media changed, 0FFH h/w error
-; TODO Handle multiple extents
 F_READ		PUSH	DE				; Copy pointer to FCB ...
 			POP		IX				; ... into IX
 			LD		A,(IX+0EH)		; Obtain file reference num from FCB S2
@@ -1004,6 +1004,7 @@ F_READ		PUSH	DE				; Copy pointer to FCB ...
 			LD		(FRMLIN),A		; Store in parameter list for READ
 
 			LD		A,(IX+20H)		; Obtain sequential record number
+			LD		B,(IX+0CH)		; Obtain extent from FCB
 			CALL	RECS2LEN		; Leaves the length in bytes in HL
 			LD		(SMMLIP1),HL	; Write 16 bit length in FRMLIP1,FRMLIP2
 			XOR		A				; Set FRMLIP3 to zero
@@ -1021,6 +1022,7 @@ F_READ		PUSH	DE				; Copy pointer to FCB ...
 			LD		BC,OFFSET		; Convert to 6502 address
 			ADD		HL,BC			; ...
 			LD		(FRMLIDB),HL	; Store I/O buffer address in parm list
+
 			LD		HL,FRMLI		; Pass address of 6502 JSR instruction
 			CALL	PRODOS			; Invoke ProDOS MLI - READ
 			CP		4CH				; See if it was EOF
@@ -1030,9 +1032,15 @@ F_READ		PUSH	DE				; Copy pointer to FCB ...
 			CP		0				; See if there was some other error
 			JP		NZ,FRERR		; If so, return code 0FFH (h/w error)
 
+			LD		A,(IX+20H)		; Get sequential rec num from FCB
 			INC		(IX+20H)		; Increment sequential record number
+			CP		129				; Is it 129? 128 is the max
+			JP		NZ,FRS1			; If not, then nothing else to do
+			XOR		A				; Set sequential rec num to zero
+			LD		(IX+20H),A		; ...
+			INC		(IX+0CH)		; Increment the extent
 
-			XOR		A				; Zero for success
+FRS1		XOR		A				; Zero for success
 			LD		L,A				; Return code in L also
 			RET						; Done
 FREOF		LD		A,1				; EOF return code
@@ -1049,7 +1057,6 @@ FRERR		LD		A,0FFH			; All other errors are 0FFH
 ; DE is the address of the FCB describing the file to which to write
 ; Returns error codes in A and L:
 ; 0 OK, 1 dir full, 2 disk full, 9 invalid FCB, 10 media changed, 0FFH h/w error
-; TODO Handle multiple extents
 F_WRITE		PUSH	DE				; Copy pointer to FCB ...
 			POP		IX				; ... into IX
 			LD		A,(IX+0EH)		; Obtain file reference num from FCB S2
@@ -1057,6 +1064,7 @@ F_WRITE		PUSH	DE				; Copy pointer to FCB ...
 			LD		(FWMLIN),A		; Store in parameter list for WRITE
 
 			LD		A,(IX+20H)		; Obtain sequential record number
+			LD		B,(IX+0CH)		; Obtain extent from FCB
 			CALL	RECS2LEN		; Leaves the length in bytes in HL
 
 ;;			; DEBUG
@@ -1094,9 +1102,15 @@ F_WRITE		PUSH	DE				; Copy pointer to FCB ...
 			CP		0				; See if there was some other error
 			JP		NZ,FWERR		; If so, return code 0FFH (h/w error)
 
+			LD		A,(IX+20H)		; Get sequential rec num from FCB
 			INC		(IX+20H)		; Increment sequential record number
+			CP		129				; Is it 129? 128 is the max
+			JP		NZ,FWS1			; If not, then nothing else to do
+			XOR		A				; Set sequential rec num to zero
+			LD		(IX+20H),A		; ...
+			INC		(IX+0CH)		; Increment the extent
 
-			XOR		A				; Zero for success
+FWS1		XOR		A				; Zero for success
 			LD		L,A				; Return code in L also
 			RET						; Done
 FWBFCB		LD		A,9				; Invalid FCB return code
@@ -1243,7 +1257,7 @@ F_READRAND	PUSH	DE				; Copy pointer to FCB ...
 			LD		C,(IX+22H)		; ...
 			LD		H,B				; Leave it in HL
 			LD		L,C				; ...
-			CALL	RECS2LN2		; Leaves the length in bytes in HL
+			CALL	RRN2LEN			; Leaves the length in bytes in HL
 			LD		(SMMLIP1),HL	; Write 16 bit length in FRMLIP1,FRMLIP2
 			XOR		A				; Set FRMLIP3 to zero
 			LD		(SMMLIP3),A		; ...
@@ -1316,17 +1330,14 @@ FSERR		LD		A,0FFH			; File not found
 ; DE contains the pointer to the FCB to update
 ; Sets the random access record of the FCB to the value of the last record
 ; read or written sequentially
-F_RANDREC	LD		H,D				; Copy FCB pointer into HL for arithmetic
-			LD		L,E				; ...
-			LD		BC,20H			; Offset 20H is the sequential rec number
-			ADD		HL,BC			; ...
-			LD		A,(HL)			; Put sequential record number in A
+; TODO: This needs to be fixed to handle multiple extents
+F_RANDREC	PUSH	DE				; Copy pointer to FCB ...
+			POP		IX				; ... into IX
+			LD		A,(IX+20H)		; Put sequential record number in A
 			DEC		A				; Remember F_READ/F_WRITE increment this
-			INC		HL				; Offset 21H is LSB of random rec number
-			LD		(HL),A			; Write sequential rec # to random LSB
-			INC		HL				; Offset 22H is MSB of random rec number
+			LD		(IX+21H),A		; Write seq rec # to LSB of random rec #
 			XOR		A				; A=0
-			LD		(HL),A			; Set MSB of random rec number to 0
+			LD		(IX+22H),A		; Set MSB of random rec number to 0
 			RET
 
 ; Selectively reset disk drives
@@ -1684,10 +1695,34 @@ LEN2RECS	LD      A,H				; Most significant byte of length
 
 ; Convert number of 128 byte records to length in bytes
 ; Length in records is passed in A
+; Extent number is passed in B
 ; Returns the length in bytes in HL
-RECS2LEN	LD		L,A				; A->HL
+; HL = ((B*128)+A)*128
+RECS2LEN	LD		L,B				; Extent number in LSB of HL
 			LD		H,0				; ...
-RECS2LN2	ADD		HL,HL			; Shift left seven times
+			ADD		HL,HL			; Shift left seven times
+			ADD		HL,HL			; ...
+			ADD		HL,HL			; ...
+			ADD		HL,HL			; ...
+			ADD		HL,HL			; ...
+			ADD		HL,HL			; ...
+			ADD		HL,HL			; ...
+			LD		B,0				; Put recs in this extent in BC
+			LD		C,A				; ...
+			ADD		HL,BC			; Now we have total offset in records
+			ADD		HL,HL			; Shift left seven times
+			ADD		HL,HL			; ...
+			ADD		HL,HL			; ...
+			ADD		HL,HL			; ...
+			ADD		HL,HL			; ...
+			ADD		HL,HL			; ...
+			ADD		HL,HL			; ...
+			RET
+
+; Convert random record number of 128 byte records to length in bytes
+; Length in records is passed in HL
+; Returns the length in bytes in HL
+RRN2LEN		ADD		HL,HL			; Shift left seven times
 			ADD		HL,HL			; ...
 			ADD		HL,HL			; ...
 			ADD		HL,HL			; ...
