@@ -1624,13 +1624,13 @@ RDBS2		POP		HL				; Reset DMA address as we found it
 			RET
 
 ; Match FCBs
-; Used by CHKDIRBLK
+; Used by CHKDIRENT
 ; DE is the address of the FCB describing the file to look for
 ; Compare with FCB at DMAADDR already created by PATH2FCB
 ; Returns A=0 if entry matches, A=FFH if no match
 ; Trashes A,BC,DE,HL
 MATCHFCB	INC		DE				; Skip over drive byte in FCB
-			LD		HL,(DMAADDR)	; Will write FCB using DMAADDR pointer
+			LD		HL,(DMAADDR)	; Will read FCB at DMAADDR pointer
 			INC		HL				; Skip over drive byte in FCB
 			LD		C,0				; Initialize character counter
 MFL1		LD		A,(DE)			; Load byte of search pattern
