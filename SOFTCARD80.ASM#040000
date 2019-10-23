@@ -88,6 +88,7 @@ RVEC7		DEFW	0000H			; Restart vector 7
 DMAADDR		DEFW	0080H			; DMA address defaults to FILEBUF (0080H)
 LOGVEC		DEFW	0000H			; Vector of logged in drives
 ROVEC		DEFW	0000H			; Vector of read-only drives
+TEMPWORD	DEFW	0000H			; Used by routines as a scratch space
 TEMPBYTE	DEFB	0				; Used by routines as a scratch space
 ; End of private, implementation dependent space
 
@@ -793,7 +794,9 @@ DSRET		LD		L,A				; Return code in L too
 ; Returns 0FFH if file not found
 ; TODO: F_OPEN should use the record count field of the FCB and (if non zero) seek
 ; to appropriate point in the file
-F_OPEN		CALL	F_SFIRST
+F_OPEN		PUSH	DE				; Preserve pointer to FCB
+			CALL	F_SFIRST		; Find first matching directory entry
+			POP		DE				; Restore pointer to FCB
 
 ; Alternative entrypoint used for opening ProDOS directory file only
 _F_OPEN		LD		IX,PATHBUF		; Destination buffer
@@ -906,7 +909,7 @@ ENTPERBLK	EQU		0DH				; Number of file entries per block
 ; Returns error codes in A and L: 0 for success, 0FFH for not found
 ; The matching FCB is always in slot 0, so success return code always 0
 ; TODO: Should handle '?' in extent field also
-F_SFIRST 	PUSH	DE				; Store pointer to search FCB
+F_SFIRST 	LD		(TEMPWORD),DE	; Store pointer to search FCB
 			LD		A,(DE)			; Obtain drive number
 			LD		(DFCBDRV),A		; Copy to directory FCB
 			LD		DE,DFCB			; Use this FCB to open the directory
@@ -914,8 +917,7 @@ F_SFIRST 	PUSH	DE				; Store pointer to search FCB
 			LD		DE,DFCB			; Use this FCB to open the directory
 			CALL	_F_OPEN			; Open the directory (avoiding recursion!)
 
-FSFL1		LD		DE,DFCB			; Use this FCB to read the directory
-			CALL	RDDIRBLK		; Read first 512 byte block
+FSFL1		CALL	RDDIRBLK		; Read first 512 byte block
 			CP		0				; See if it was an error
 			JP		NZ,FSFS2		; If error, assume EOF & just return
 
@@ -926,10 +928,8 @@ FSFL1		LD		DE,DFCB			; Use this FCB to read the directory
 			XOR		A				; Set file count to zero
 			LD		(CDBCOUNT),A	; ...
 
-			POP		DE				; Get ptr to search FCB back
-			PUSH	HL				; Preserve HL
+			LD		DE,(TEMPWORD)	; Get ptr to search FCB back
 			CALL	CHKDIRBLK		; Search directory block
-			POP		HL				; Restore HL
 			CP		0				; See if it was a match
 			JP		Z,FSFS1			; If so, return
 			JP		FSFL1			; Loop
@@ -944,17 +944,13 @@ FSFS2		LD		A,0FFH			; No match
 ; Returns error codes in A and L: 0 for success, 0FFH for not found
 ; The matching FCB is always in slot 0, so success return code always 0
 ; TODO: Should handle '?' in extent field also
-F_SNEXT		PUSH	DE				; Store pointer to search FCB
+F_SNEXT		LD		(TEMPWORD),DE	; Store pointer to search FCB
 			LD		HL,(CDBPTR)		; Pointer into current block
 			LD		A,(CDBCOUNT)	; File count for current block
-FSNL1		PUSH	HL				; Preserve HL
-			CALL	CHKDIRBLK		; Search directory block
-			POP		HL				; Restore HL
-			POP		DE				; Restore DE
+FSNL1		CALL	CHKDIRBLK		; Search directory block
 			CP		0				; See if it was a match
 			JP		Z,FSNS1			; If so, return
 
-			LD		DE,DFCB			; Use this FCB to read the directory
 			CALL	RDDIRBLK		; Read next 512 byte block
 			CP		0				; See if it was an error
 			JP		NZ,FSNS2		; If error, assume EOF & just return
@@ -1661,7 +1657,7 @@ MFS2		LD		A,0FFH			; No match
 ; DE is the address of the FCB describing the file to look for
 ; HL points to the first file entry in the ProDOS directory
 ; Returns A=0 if entry matches, A=FFH if no match
-CHKDIRENT	LD		B,0				; Hardcode drive A: for now. TODO: fix!
+CHKDIRENT	LD		B,0				; Hardcode drive A: MATCHFCB ignores it
 			LD		A,(HL)			; Get first byte of file entry
 			AND		0FH				; Mask to get the filename length
 			CP		0				; If zero ...
