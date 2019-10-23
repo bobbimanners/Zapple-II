@@ -416,8 +416,7 @@ CHECKOK		LD		A,(AREG)		; Look at the return code
 			JP		Z,COKS1			;
 			PUSH	AF				; Preserve A
 			LD		DE,FAILMSG1		; Fail message
-			LD		C,B_C_WRTSTR	;
-			CALL	BDOS			;
+			CALL	C_WRITESTR		;
 			POP		AF				; Restore A
 			LD		L,A				; Copy to HL for NUM2HEX
 			LD		H,0				; ...
@@ -426,15 +425,20 @@ CHECKOK		LD		A,(AREG)		; Look at the return code
 			LD		A,0FFH			; 0FFH for error
 			LD		L,A				; Return code in L also
 			LD		DE,HEXBUF+2		; Write hex value to console
-			LD		C,B_C_WRTSTR	;
-			CALL	BDOS			;
+			CALL	C_WRITESTR		;
 			LD		DE,FAILMSG2		; Fail message
-			LD		C,B_C_WRTSTR	;
-			CALL	BDOS			;
-			RET						;
+			CALL	C_WRITESTR		;
+			JP		COKS2			;
 COKS1		LD		DE,SUCCMSG		; Success message
-			LD		C,B_C_WRTSTR	;
-			CALL	BDOS			;
+			CALL	C_WRITESTR		;
+COKS2		LD		(TEMPWORD),SP	; Print out stack pointer
+			LD		HL,(TEMPWORD)	;
+			LD		DE,HEXBUF		; Generate hex string to HEXBUF
+			CALL	NUM2HEX			;
+			LD		DE,HEXBUF		;
+			CALL	C_WRITESTR		;
+			LD		DE,CRMSG		; Carriage return
+			CALL	C_WRITESTR		;
 			RET
 
 WELCOME		DEFB	13
@@ -479,13 +483,13 @@ DMSG		DEFB	13
 			DEFM	'Deleting A/TEST.TXT'
 			DEFB	13, '$'
 			
-SUCCMSG		DEFM	'Success!'
-			DEFB	13, '$'
+SUCCMSG		DEFM	'Success! SP=$'
 			
 FAILMSG1	DEFM	'FAIL (0x$'
 			
-FAILMSG2	DEFM	')'
-			DEFB	13, '$'
+FAILMSG2	DEFM	') SP=$'
+
+CRMSG		DEFB	13, '$'
 
 TEXTBUF		DEFM	'Mary had a little lamb. Its fleece was white as snow. '
 			DEFM	'And everywhere that Mary went, that lamb was sure to go.$'
