@@ -124,6 +124,8 @@ PROGSTRT	LD		DE,WELCOME		; Address of string
 			LD		C,B_C_WRTSTR	;
 			CALL	BDOS			;
 
+			CALL	CCP				; Run the CCP
+
 ; Print the alphabet using C_WRITE
 			LD		B,'A'			; First character
 L1			LD		E,B 			; Character to print
@@ -1868,6 +1870,41 @@ N2H2		OR		0F0H			;
 			INC		DE				;
 			RET
 
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Very simple CCP
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+; Get a line of text from the console & handle it
+CCP			LD		DE,PRMSG		; Display the prompt
+			CALL	C_WRITESTR		; ...
+
+			LD		DE,FILEBUF		; Use FILEBUF as line buffer
+			LD		A,120			; Max line length
+			LD		(DE),A			; Stored in first char of buffer
+			CALL	C_READSTR		; Get a line from the user
+
+			LD		HL,(DMAADDR)	; Preserve DMAADDR
+			PUSH	HL				; ...
+			LD		HL,FCB1			; Set DMAADDR to point to FCB1
+			LD		(DMAADDR),HL	; ...
+			LD		HL,FILEBUF+1	; Skip over capacity byte
+			LD		B,0				; Hard code drive A: for now
+			CALL	PATH2FCB		; Create FCB at FCB1
+			POP		HL				; Restore DMAADDR
+			LD		(DMAADDR),HL	;
+			LD		DE,FCB1			; Point to our new FCB
+
+			LD		HL,FILEBUF		; Stuff zero in first char of FILEBUF
+			LD		A,0				; ...
+			LD		(HL),A			; ...
+
+			LD		DE,FCB1			; Use FCB1
+			CALL	RUNCOM			; Try to run it
+			JP		CCP				; Go again
+
+PRMSG		DEFM	'A>$'
+
 ; Load and run a .COM file to 0100H
 ; DE is the address of the FCB describing the file to run
 RUNCOM		CALL	F_OPEN			;
@@ -1878,23 +1915,39 @@ RUNCOM		CALL	F_OPEN			;
 			LD		HL,0100H		; Set DMAADDR to 0100H
 			LD		(DMAADDR),HL	; ...
 RCL1		CALL	F_READ			; Read records until done
-			CP		0				; ...
-			JP		Z,RCL1			; ...
+			PUSH	AF				; Preserve A
+			LD		HL,(DMAADDR)	; Advance DMAADDR for each record
+			LD		BC,80H			; ...
+			ADD		HL,BC			; ...
+			LD		(DMAADDR),HL	; ...
+			POP		AF				; Restore A
+			CP		0				; Check return code from F_READ
+			JP		Z,RCL1			; If zero, keep looping
+			CP		1				; Check return code from F_READ
+			JP		NZ,RCLERR		; If not EOF (1), then error
 			POP		HL				; Restore DMAADDR
 			LD		(DMAADDR),HL	; ...
-			CP		1				; Check it was EOF
-			JP		NZ,RCLERR		; Load error
-			JP		PROGSTRT		; 0100H
-			RET
+			LD		DE,LMSG			; Print 'Loaded'
+			CALL	C_WRITESTR		; ...
+			CALL	PROGSTRT		; 0100H
+			RET						;
 RCOERR		LD		DE,OEMSG		; 'Open error' message
 			CALL	C_WRITESTR		;
 			RET
 RCLERR		LD		DE,REMSG		; 'Read error' message
 			CALL	C_WRITESTR		;
+			POP		HL				; Restore DMAADDR
+			LD		(DMAADDR),HL	; ...
 			RET
 
-OEMSG		DEFM	'Not found',13,'$'
-REMSG		DEFM	'Read error',13,'$'
+LMSG		DEFM	'Loaded'
+			DEFB	13,'$'
+
+OEMSG		DEFM	'Not found'
+			DEFB	13,'$'
+
+REMSG		DEFM	'Read error'
+			DEFB	13,'$'
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Additional private scratch space for BDOS
