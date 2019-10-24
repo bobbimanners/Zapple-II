@@ -74,10 +74,11 @@ to run on the Softcard Z80 CPU and have all the system calls routed to the
 6502 and serviced using the Apple II ROM monitor routines and the ProDOS MLI.
 
 I have most of the calls now and most of them have been tested to some degree
-and aren't *totally* broken.  The biggest gap right now is that none of the
-random access filesystem calls have been implemented.  Also the code does not
-really fill out all the proper fields of the FCB.  I am still working out what
-CP/M programs really need to see.
+and aren't *totally* broken.
+
+The directory calls do not return any size information in the FCB yet.  I will
+fix this in due course.  There are doubtless loads of other issues and bugs.
+See `SOFTCARD80.ASM` for TODO comments.
 
 - BDOS call 00h: `C_TERMCPM` - System reset
 - BDOS call 01h: `C_READ` - Console input
