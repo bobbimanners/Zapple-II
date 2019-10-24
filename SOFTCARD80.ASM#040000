@@ -31,8 +31,8 @@
 ; Other Random TODO comments in the code
 ; 
 
-BDOSADDR	EQU		06000H			; 
-STCKTOP		EQU		06FFFH			; Top of Z80 stack (below IOBUFs)
+BDOSADDR	EQU		08800H			; 
+STCKTOP		EQU		097FFH			; Top of Z80 stack (below IOBUFs)
 
 SOFTCARD	EQU		0E400H			; Softcard in slot 4 ($C400)
 
@@ -209,9 +209,6 @@ S1			LD		C,B_C_STAT		;
 			CALL	BDOS			;
 
 			CALL	CHECKOK
-
-			JP		END				; *** DEBUG ***
-
 
 			; Set the DMA buffer to point to our text
 			LD		DE,TEXTBUF		;
@@ -2044,13 +2041,12 @@ DIRBUF4		DEFS	128
 ; Four 1024 byte ProDOS I/O buffers
 ; These must start on a page boundary
 ; ProDOS occupies the space from $BF00 up (in 6502 addresses)
-; Also ProDOS has one buffer from $BB00-$BEFF I think.  (Check with John Brooks!)
-; IOBUF1 $AB00-$AEFF = starts at 9B00H for Z80
-; IOBUF2 $AF00-$B2FF
-; IOBUF3 $B300-$B6FF 
-; IOBUF4 $B700-$BAFF 
+; 6502 code is loaded at $B800 for now
+; So in theory the I/O buffers could go from $A800-$B800 (09800H base)
 
-			ORG		7000H	; Try this
+
+			;ORG		9000H	; Try this - WORKS
+			ORG		9800H	; Try this - WORKS
 IOBUF1		DEFS	1024
 IOBUF2		DEFS	1024
 IOBUF3		DEFS	1024
