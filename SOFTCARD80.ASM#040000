@@ -16,6 +16,7 @@
 
 ;
 ; TODO: F_WRITE bug turns out to be bug in ProDOS 2.5.0a7 (SET_MARK)
+;       Or maybe I was trashing memory. Need to retest.
 ; TODO: How does DIR / NSWEEP work out file sizes? Need to support this.
 ; TODO: Implement missing system calls:
 ;        - F_ATTRIB
@@ -1252,8 +1253,8 @@ F_READRAND	PUSH	DE				; Copy pointer to FCB ...
 			LD		(SMMLIN),A		; Store in parameter list for SET_MARK
 			LD		(FRMLIN),A		; Store in parameter list for READ
 
-			LD		H,(IX+21H)		; Load LSB of random record number
-			LD		L,(IX+22H)		; ...
+			LD		L,(IX+21H)		; Load LSB of random record number
+			LD		H,(IX+22H)		; Load MSB of random record number
 			CALL	RRN2LEN			; Leaves the length in bytes in HL
 			LD		(SMMLIP1),HL	; Write 16 bit length in FRMLIP1,FRMLIP2
 			XOR		A				; Set FRMLIP3 to zero
@@ -1280,8 +1281,8 @@ F_READRAND	PUSH	DE				; Copy pointer to FCB ...
 			CP		0				; See if there was some other error
 			JP		NZ,FRRERR		; If so, return code 0FFH (h/w error)
 
-			LD		H,(IX+21H)		; Load LSB of random record number
-			LD		L,(IX+22H)		; ...
+			LD		L,(IX+21H)		; Load LSB of random record number
+			LD		H,(IX+22H)		; Load MSB of random record number
 			CALL	RECS2EXRC		; Puts extent in B, recs in A
 			LD		A,(IX+20H),A	; Update sequential record number
 			LD		B,(IX+0CH),B	; Update sequential extent number
@@ -1315,8 +1316,8 @@ F_WRITERAND	PUSH	DE				; Copy pointer to FCB ...
 			LD		HL,GEMLI		; Pass address of 6502 JSR instruction
 			CALL	PRODOS			; Invoke ProDOS MLI - GET_EOF
 		
-			LD		H,(IX+21H)		; Load LSB of random record number
-			LD		L,(IX+22H)		; ...
+			LD		L,(IX+21H)		; Load LSB of random record number
+			LD		H,(IX+22H)		; Load MSB of random record number
 			CALL	RRN2LEN			; Leaves the length in bytes in HL
 			LD		(SMMLIP1),HL	; 16 bit len in SMMLIP1,2 for SET_MARK
 			XOR		A				; Set SMMLIP3 to zero
@@ -1354,8 +1355,8 @@ FWRS1		LD		HL,SMMLI		; Pass address of 6502 JSR instruction
 			CP		0				; See if there was some other error
 			JP		NZ,FWRERR		; If so, return code 0FFH (h/w error)
 
-			LD		H,(IX+21H)		; Load LSB of random record number
-			LD		L,(IX+22H)		; ...
+			LD		L,(IX+21H)		; Load LSB of random record number
+			LD		H,(IX+22H)		; Load MSB of random record number
 			CALL	RECS2EXRC		; Puts extent in B, recs in A
 			LD		A,(IX+20H),A	; Update sequential record number
 			LD		B,(IX+0CH),B	; Update sequential extent number
@@ -1379,12 +1380,13 @@ FWRERR		LD		A,0FFH			; All other errors are 0FFH
 ; Error codes are returned in A and L (0 for success, 0FFH if file not found)
 ; Returns the number of 128 byte records in random record count field of FCB
 F_SIZE		CALL	FCB2PATH		; Populate PATHLEN and PATH
-			LD		HL,FSMLI		; Pass address of 6502 JSR instruction
+			LD		HL,GFIMLI		; Pass address of 6502 JSR instruction
 			CALL	PRODOS			; Invoke ProDOS MLI
 			CP		0				; See if there was an error
 			JP		NZ,FSERR		; Handle error
-			LD		HL,(FSMLIBU)	; Obtain the blocks used field
-			ADD		HL,HL			; Mult x 2 to get 128 byte records
+			LD		HL,(GFIMLIBU)	; Obtain the blocks used field
+			ADD		HL,HL			; Mult x 4 to get 128 byte records
+			ADD		HL,HL			; ...
 
 			; Store records used in R0,R1 fields of FCB
 			PUSH	DE				; Copy DE ...
@@ -1561,17 +1563,19 @@ P2FL3		INC		HL				; Advance source pointer
 			INC		DE				; Advance destination pointer
 			LD		A,C				; Get count of chars remaining
 			CP		0				; If none left ...
-			RET		Z				; We are done
+			JP		Z,P2FS3			; We are done
 			LD		A,B				; Get count of chars written
 			CP		8+3				; If 8+3 chars have been written ...
-			RET		Z				; We are done
+			JP		Z,P2FS3			; We are done
 			LD		A,(HL)			; Read character
 			CP		'.'				; See if it is a period
-			JP		Z,P2FS2			; Initialize things to copy the extension
+			JP		Z,P2FS2			; Prepare to copy the extension
 			LD		(DE),A			; Write character
 			INC		B				; Increment count of chars written
 P2FS1		DEC		C				; Decrement count of chars remaining
 			JP		P2FL3			; Loop
+
+			; Initialize DE, B to start processing the extension
 P2FS2		LD		DE,(DMAADDR)	; Destination is start of extension
 			INC		DE				;
 			INC		DE				;
@@ -1583,6 +1587,33 @@ P2FS2		LD		DE,(DMAADDR)	; Destination is start of extension
 			INC		DE				;
 			LD		B,8				; 8 chars have been written
 			JP		P2FS1			; Jump back into the read-write loop
+
+			; Handle file size info
+P2FS3		LD		DE,(DMAADDR)	; Pointer to start of FCB
+			LD		IX,PATHBUF		; Destination buffer
+			CALL	FCB2PATH		; Populate PATHLEN and PATH from new FCB
+			LD		HL,GFIMLI		; Pass address of 6502 JSR instruction
+			CALL	PRODOS			; Invoke ProDOS MLI
+			CP		0				; See if there was an error
+			JP		NZ,P2FERR		; Handle error
+			LD		HL,(GFIMLIBU)	; Obtain the blocks used field
+			ADD		HL,HL			; Mult x 4 to get 128 byte records
+			ADD		HL,HL			; ...
+			CALL	RECS2EXRC		; Puts extent in B, recs in A
+			LD		DE,(DMAADDR)	; Pointer to start of FCB
+			PUSH	DE				; Copy into IX
+			POP		IX				; ...
+			LD		(IX+0CH),B		; Store num extents in EX field of FCB
+			LD		(IX+0FH),A		; Store num recs in RC field of FCB
+			RET	
+P2FERR		LD		DE,(DMAADDR)	; Pointer to start of FCB
+			PUSH	DE				; Copy into IX
+			POP		IX				; ...
+			LD		A,0				; If error, set num extents to zero
+			LD		(IX+0CH),A		; Store in EX field of FCB
+			LD		A,0				; If error, set record count to zero
+			LD		(IX+0FH),A		; Store in RC field of FCB
+			RET	
 
 ; Read 512 byte block of directory
 ; Used by F_SFIRST and F_SNEXT
@@ -1802,8 +1833,8 @@ RRN2LEN		ADD		HL,HL			; Shift left seven times
 ; Length in records in passed in HL
 ; Returns extent number in B and records within extent in A
 RECS2EXRC	SLA		H				; 7 MS-bits of extent number
-			BIT		7,L				; See if MS-bit is set
-			JP		NZ,R2ERS1		; If set ...
+			BIT		7,L				; See if MS-bit of L is set
+			JP		Z,R2ERS1		; If set ...
 			INC		H				; ... set LSB of extent number
 R2ERS1		LD		B,H				; Return extent in B
 			LD		A,L				; Now for the recs in the extent
@@ -1881,21 +1912,21 @@ FRNMLIP1	DEFW	PATHBUF+OFFSET	; ProDOS PL: Pointer to path in 6502 addr
 FRNMLIP2	DEFW	PATHBUF2+OFFSET	; ProDOS PL: Pointer to path in 6502 addr
 
 ; Parameter list for ProDOS GET_FILE_INFO call
-FSMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code		
+GFIMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code		
 			DEFB	0C4H			; ProDOS GET_FILE_INFO call
-			DEFW	FSMLIPL+OFFSET	; Pointer to parm list in 6502 addr space
+			DEFW	GFIMLIPL+OFFSET	; Pointer to parm list in 6502 addr space
 			DEFB	60H				; RTS in 6502 code
-FSMLIPL		DEFB	0AH				; ProDOS PL: Ten parameters
-FSMLIP		DEFW	PATHBUF+OFFSET	; ProDOS PL: Pointer to path in 6502 addr
-FSMLIAC		DEFB	0				; ProDOS PL: Access
-FSMLIT		DEFB	0				; ProDOS PL: File type
-FSMLIAT		DEFW	0000H			; ProDOS PL: Aux type
-FSMLIS		DEFB	1				; ProDOS PL: Storage type
-FSMLIBU		DEFW	0000H			; ProDOS PL: Blocks used
-FSMLIMD		DEFW	0000H			; ProDOS PL: Modification date
-FSMLIMT		DEFW	0000H			; ProDOS PL: Modification time
-FSMLICD		DEFW	0000H			; ProDOS PL: Create date
-FSMLICT		DEFW	0000H			; ProDOS PL: Create time
+GFIMLIPL	DEFB	0AH				; ProDOS PL: Ten parameters
+GFIMLIP		DEFW	PATHBUF+OFFSET	; ProDOS PL: Pointer to path in 6502 addr
+GFIMLIAC	DEFB	0				; ProDOS PL: Access
+GFIMLIT		DEFB	0				; ProDOS PL: File type
+GFIMLIAT	DEFW	0000H			; ProDOS PL: Aux type
+GFIMLIS		DEFB	1				; ProDOS PL: Storage type
+GFIMLIBU	DEFW	0000H			; ProDOS PL: Blocks used
+GFIMLIMD	DEFW	0000H			; ProDOS PL: Modification date
+GFIMLIMT	DEFW	0000H			; ProDOS PL: Modification time
+GFIMLICD	DEFW	0000H			; ProDOS PL: Create date
+GFIMLICT	DEFW	0000H			; ProDOS PL: Create time
 
 ; Parameter list for ProDOS OPEN call
 FOMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code		
@@ -1997,11 +2028,11 @@ DFCBRR		DEFB	0,0,0			; FCB rand record number
 ; Drive parameter block (CP/M 2.2 format)
 ; See Johnson-Laird Pg 33-34
 DPB			DEFW	32				; # 128 byte records per track (for Disk II)
-			DEFB	7				; Block shift (16384 byte allocation blocks)
-			DEFB	127				; Block mask (16384 byte allocation blocks)
-			DEFB	7				; Extent mask
-			DEFW	2047			; # allocation blocks on disk (32MB)
-			DEFW	1023			; # directory entries 
+			DEFB	3				; Block shift (1024 byte allocation blocks)
+			DEFB	7				; Block mask (1024 byte allocation blocks)
+			DEFB	0				; Extent mask (1024 byte alocation blocks)
+			DEFW	1023			; # allocation blocks on disk (1MB)
+			DEFW	255				; # directory entries 
 			DEFB	0				; Directory allocation bitmap byte 1
 			DEFB	0				; Directory allocation bitmap byte 2
 			DEFW	0				; Checksum vector size
