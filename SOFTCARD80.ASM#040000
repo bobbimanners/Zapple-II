@@ -16,14 +16,10 @@
 
 ;
 ; TODO: F_WRITE bug turns out to be bug in ProDOS 2.5.0a7 (SET_MARK)
-;       Or maybe I was trashing memory. Need to retest.
-; TODO: How does DIR / NSWEEP work out file sizes? Need to support this.
 ; TODO: Implement missing system calls:
-;        - F_ATTRIB
+;        - F_ATTRIB (needs to support wildcards, leave FCB at DMAADDR)
 ;        - RS232 (A_READ, A_WRITE)
 ;        - Printer (LWRITE)
-; TODO: F_ATTRIB needs to work with FCB with wildcards and leave the FCB at
-;       DMAADDR
 ; TODO: IOBYTE doesn't do anything
 ; TODO: User number doesn't do anything
 ; TODO: Software R/O disk setting is not respected
@@ -1019,7 +1015,7 @@ F_READ		PUSH	DE				; Copy pointer to FCB ...
 			CP		0				; See if there was some other error
 			JP		NZ,FRERR		; If so, return code 0FFH (h/w error)
 
-			LD		HL,(DMAADDR)	; Read from DMA buffer address
+			LD		HL,(DMAADDR)	; Write data starting at DMA buffer addr
 			LD		BC,OFFSET		; Convert to 6502 address
 			ADD		HL,BC			; ...
 			LD		(FRMLIDB),HL	; Store I/O buffer address in parm list
@@ -1253,8 +1249,8 @@ F_READRAND	PUSH	DE				; Copy pointer to FCB ...
 			LD		(SMMLIN),A		; Store in parameter list for SET_MARK
 			LD		(FRMLIN),A		; Store in parameter list for READ
 
-			LD		L,(IX+21H)		; Load LSB of random record number
-			LD		H,(IX+22H)		; Load MSB of random record number
+			LD		L,(IX+21H)		; Load random record number (LSB)
+			LD		H,(IX+22H)		; Load random record number (MSB)
 			CALL	RRN2LEN			; Leaves the length in bytes in HL
 			LD		(SMMLIP1),HL	; Write 16 bit length in FRMLIP1,FRMLIP2
 			XOR		A				; Set FRMLIP3 to zero
@@ -1268,7 +1264,7 @@ F_READRAND	PUSH	DE				; Copy pointer to FCB ...
 			CP		0				; See if there was some other error
 			JP		NZ,FRRERR		; If so, return code 0FFH (h/w error)
 
-			LD		HL,(DMAADDR)	; Read from DMA buffer address
+			LD		HL,(DMAADDR)	; Write data starting at DMA buffer addr
 			LD		BC,OFFSET		; Convert to 6502 address
 			ADD		HL,BC			; ...
 			LD		(FRMLIDB),HL	; Store I/O buffer address in parm list
@@ -1281,8 +1277,8 @@ F_READRAND	PUSH	DE				; Copy pointer to FCB ...
 			CP		0				; See if there was some other error
 			JP		NZ,FRRERR		; If so, return code 0FFH (h/w error)
 
-			LD		L,(IX+21H)		; Load LSB of random record number
-			LD		H,(IX+22H)		; Load MSB of random record number
+			LD		L,(IX+21H)		; Load random record number (LSB)
+			LD		H,(IX+22H)		; Load random record number (MSB)
 			CALL	RECS2EXRC		; Puts extent in B, recs in A
 			LD		A,(IX+20H),A	; Update sequential record number
 			LD		B,(IX+0CH),B	; Update sequential extent number
@@ -1316,8 +1312,8 @@ F_WRITERAND	PUSH	DE				; Copy pointer to FCB ...
 			LD		HL,GEMLI		; Pass address of 6502 JSR instruction
 			CALL	PRODOS			; Invoke ProDOS MLI - GET_EOF
 		
-			LD		L,(IX+21H)		; Load LSB of random record number
-			LD		H,(IX+22H)		; Load MSB of random record number
+			LD		L,(IX+21H)		; Load random record number (LSB)
+			LD		H,(IX+22H)		; Load random record number (MSB)
 			CALL	RRN2LEN			; Leaves the length in bytes in HL
 			LD		(SMMLIP1),HL	; 16 bit len in SMMLIP1,2 for SET_MARK
 			XOR		A				; Set SMMLIP3 to zero
@@ -1355,8 +1351,8 @@ FWRS1		LD		HL,SMMLI		; Pass address of 6502 JSR instruction
 			CP		0				; See if there was some other error
 			JP		NZ,FWRERR		; If so, return code 0FFH (h/w error)
 
-			LD		L,(IX+21H)		; Load LSB of random record number
-			LD		H,(IX+22H)		; Load MSB of random record number
+			LD		L,(IX+21H)		; Load random record number (LSB)
+			LD		H,(IX+22H)		; Load random record number (MSB)
 			CALL	RECS2EXRC		; Puts extent in B, recs in A
 			LD		A,(IX+20H),A	; Update sequential record number
 			LD		B,(IX+0CH),B	; Update sequential extent number
@@ -1871,6 +1867,34 @@ N2H2		OR		0F0H			;
 			LD		(DE),A			;
 			INC		DE				;
 			RET
+
+; Load and run a .COM file to 0100H
+; DE is the address of the FCB describing the file to run
+RUNCOM		CALL	F_OPEN			;
+			CP		0				;
+			JP		NZ,RCOERR		; Open error
+			LD		HL,(DMAADDR)	;
+			PUSH	HL				; Preserve DMAADDR
+			LD		HL,0100H		; Set DMAADDR to 0100H
+			LD		(DMAADDR),HL	; ...
+RCL1		CALL	F_READ			; Read records until done
+			CP		0				; ...
+			JP		Z,RCL1			; ...
+			POP		HL				; Restore DMAADDR
+			LD		(DMAADDR),HL	; ...
+			CP		1				; Check it was EOF
+			JP		NZ,RCLERR		; Load error
+			JP		PROGSTRT		; 0100H
+			RET
+RCOERR		LD		DE,OEMSG		; 'Open error' message
+			CALL	C_WRITESTR		;
+			RET
+RCLERR		LD		DE,REMSG		; 'Read error' message
+			CALL	C_WRITESTR		;
+			RET
+
+OEMSG		DEFM	'Not found',13,'$'
+REMSG		DEFM	'Read error',13,'$'
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Additional private scratch space for BDOS
