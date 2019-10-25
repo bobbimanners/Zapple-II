@@ -15,6 +15,10 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;
+; TODO: Look further down for CCP TODOs!!!!!!!
+;
+; BDOS TODOs
+; ----------
 ; TODO: F_WRITE bug turns out to be bug in ProDOS 2.5.0a7 (SET_MARK)
 ; TODO: Implement missing system calls:
 ;        - F_ATTRIB (needs to support wildcards, leave FCB at DMAADDR)
@@ -1884,6 +1888,16 @@ N2H2		OR		0F0H			;
 ; - FILENAME.COM - Load and run FILENAME.COM at 0100H
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+; TODO: Only A: drive seems to work properly for now
+; TODO: Upper-case all characters from console!!
+; TODO: Implement the built-in commands using a table
+; TODO: Built-in commands argument handling
+; TODO: Parse * wildcard and generate FCB with ?s
+; TODO: Command tail -> 080F buffer
+; TODO: Build default FCB1 and 2 from args, if present
+; TODO: Improve .COM loading (allow drive to be specified)
+; TODO: Right now programs do not load from drives other than A:
+
 ; Get a line of text from the console & handle it
 CCP			
 CCPL1		LD		A,(CURDRV)		; Get current drive & user number
@@ -1932,17 +1946,36 @@ CCPS1		CP		3				; Check if three chars
 			JP		CCPL1			; Go again			
 
 			; Attempt to load .COM file from disk
-			; TODO: Need to support drive letter prefix. Right now
-			;       it always uses default drive
 CCPS2		LD		HL,FCB1			; Set DMAADDR to point to FCB1
 			LD		(DMAADDR),HL	; ...
 			LD		HL,FILEBUF+1	; Skip over capacity byte
-			LD		A,(CURDRV)		; Get drive and user number
+			LD 		A,(FILEBUF+3)	; See if second char typed is a colon
+			CP 		':'				;
+			JP 		NZ,CCPS3		; If not then skip to default drive
+			LD 		A,(FILEBUF+2)	; Get the drive letter
+			SUB 	'A'-1			; Convert to 1-based drive number
+			LD 		B,A 			; In B for PATH2FCB
+			LD		A,(HL)			; Get the string length
+			SUB		2				; Eat drive letter and colon
+			INC 	HL 				; ...
+			INC 	HL 				; ...
+			LD		(HL),A			; Write the reduced length
+			JP 		CCPS4			;
+CCPS3		LD		A,(CURDRV)		; Get drive and user number
 			AND		0FH				; Mask out user number
+			INC		A				; FCB drive numbers are 1-based
 			LD		B,A				; Always use default drive
+CCPS4
 			CALL	PATH2FCB		; Create FCB at FCB1
+			LD		A,'C'			; Set extension to .COM, in case not typed
+			LD		(FCB1NAM+8),A	;
+			LD		A,'O'			;
+			LD		(FCB1NAM+9),A	;
+			LD		A,'M'			;
+			LD		(FCB1NAM+10),A	;			
 			LD		DE,FCB1			; Point to our new FCB
 
+			; This is so commands don't think there are arguments to parse
 			LD		HL,FILEBUF		; Stuff zero in first char of FILEBUF
 			LD		A,0				; ...
 			LD		(HL),A			; ...
@@ -1987,6 +2020,8 @@ RCOERR		LD		DE,OEMSG		; 'Open error' message
 			CALL	C_WRITESTR		; ...
 			RET						;
 RCLERR		CALL	F_CLOSE			; Close the file
+			LD		HL,0080H		; Reset DMAADDR to 0080H
+			LD		(DMAADDR),HL	; ...
 			LD		DE,REMSG		; 'Read error' message
 			CALL	C_WRITESTR		; ...
 			RET
