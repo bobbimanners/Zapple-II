@@ -1873,45 +1873,92 @@ N2H2		OR		0F0H			;
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Very simple CCP
+;
+; Commands:
+; - A:, B: ...   - Change default drive
+; - DIR          - Show directory
+; - ERA          - Erase file(s)
+; - REN          - Rename file
+; - SAVE         - Save memory to disk
+; - TYPE         - Show text file on console
+; - FILENAME.COM - Load and run FILENAME.COM at 0100H
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ; Get a line of text from the console & handle it
-CCP			LD		DE,PRMSG		; Display the prompt
-			CALL	C_WRITESTR		; ...
-
+CCP			
+CCPL1		LD		A,(CURDRV)		; Get current drive & user number
+			AND		0FH				; Mask out user number
+			ADD		A,'A'			; Convert to letter
+			LD		E,A				; Print it
+			CALL	C_WRITE			; ...
+			LD		E,'>'			; Print '>'
+			CALL	C_WRITE			; ...
+			
 			LD		DE,FILEBUF		; Use FILEBUF as line buffer
 			LD		A,120			; Max line length
 			LD		(DE),A			; Stored in first char of buffer
 			CALL	C_READSTR		; Get a line from the user
 
-			LD		HL,(DMAADDR)	; Preserve DMAADDR
-			PUSH	HL				; ...
-			LD		HL,FCB1			; Set DMAADDR to point to FCB1
+			LD		A,(FILEBUF+1)	; Number of chars entered
+			CP		0 				; If none ...
+			JP		Z,CCPL1			; Loop until user types something!
+
+			; Two char built-in commands A:, B:, C: etc
+			CP		2				; Check if two chars ...
+			JP		NZ,CCPS1		; If not, skip
+			LD		A,(FILEBUF+3)	; See if second char is ':'
+			CP		':'				; ...
+			JP		NZ,CCPS1		; If not, skip
+			LD		A,(FILEBUF+2)	; Get the character before the ':'
+			SUB		'A'				; A is 0, B is 1 etc.
+			LD		E,A				; Set the default drive
+			CALL	DRV_SET			; ...
+			JP		CCPL1			; Go again
+
+			; DIR command
+			; TODO Handle arguments
+CCPS1		CP		3				; Check if three chars
+			JP		NZ,CCPS2		; If not, skip
+			LD		A,(FILEBUF+2)	; Check for 'D','I','R'
+			CP		'D'				;
+			JP		NZ,CCPS2		;
+			LD		A,(FILEBUF+3)	;
+			CP		'I'				;
+			JP		NZ,CCPS2		;
+			LD		A,(FILEBUF+4)	;
+			CP		'R'				;
+			JP		NZ,CCPS2		;
+			CALL	DIRECT			;
+			JP		CCPL1			; Go again			
+
+			; Attempt to load .COM file from disk
+			; TODO: Need to support drive letter prefix. Right now
+			;       it always uses default drive
+CCPS2		LD		HL,FCB1			; Set DMAADDR to point to FCB1
 			LD		(DMAADDR),HL	; ...
 			LD		HL,FILEBUF+1	; Skip over capacity byte
-			LD		B,0				; Hard code drive A: for now
+			LD		A,(CURDRV)		; Get drive and user number
+			AND		0FH				; Mask out user number
+			LD		B,A				; Always use default drive
 			CALL	PATH2FCB		; Create FCB at FCB1
-			POP		HL				; Restore DMAADDR
-			LD		(DMAADDR),HL	;
 			LD		DE,FCB1			; Point to our new FCB
 
 			LD		HL,FILEBUF		; Stuff zero in first char of FILEBUF
 			LD		A,0				; ...
 			LD		(HL),A			; ...
 
+			LD		HL,0080H		; Reset DMAADDR to 0080H
+			LD		(DMAADDR),HL	; ...
 			LD		DE,FCB1			; Use FCB1
-			CALL	RUNCOM			; Try to run it
+			CALL	RUNCOM			; Try to run .COM file
+			
 			JP		CCP				; Go again
-
-PRMSG		DEFM	'A>$'
 
 ; Load and run a .COM file to 0100H
 ; DE is the address of the FCB describing the file to run
 RUNCOM		CALL	F_OPEN			;
 			CP		0				;
 			JP		NZ,RCOERR		; Open error
-			LD		HL,(DMAADDR)	;
-			PUSH	HL				; Preserve DMAADDR
 			LD		HL,0100H		; Set DMAADDR to 0100H
 			LD		(DMAADDR),HL	; ...
 RCL1		CALL	F_READ			; Read records until done
@@ -1925,19 +1972,23 @@ RCL1		CALL	F_READ			; Read records until done
 			JP		Z,RCL1			; If zero, keep looping
 			CP		1				; Check return code from F_READ
 			JP		NZ,RCLERR		; If not EOF (1), then error
-			POP		HL				; Restore DMAADDR
-			LD		(DMAADDR),HL	; ...
+			CALL	F_CLOSE			; Close the file
 			LD		DE,LMSG			; Print 'Loaded'
 			CALL	C_WRITESTR		; ...
-			CALL	PROGSTRT		; 0100H
+			LD		HL,0080H		; Reset DMAADDR to 0080H
+			LD		(DMAADDR),HL	; ...
+			CALL	PROGSTRT		; Run user program at 0100H
+			LD		E,13			; Print carriage return
+			CALL	C_WRITE			; ...
+			LD		HL,0080H		; Reset DMAADDR to 0080H
+			LD		(DMAADDR),HL	; ...
 			RET						;
 RCOERR		LD		DE,OEMSG		; 'Open error' message
-			CALL	C_WRITESTR		;
-			RET
-RCLERR		LD		DE,REMSG		; 'Read error' message
-			CALL	C_WRITESTR		;
-			POP		HL				; Restore DMAADDR
-			LD		(DMAADDR),HL	; ...
+			CALL	C_WRITESTR		; ...
+			RET						;
+RCLERR		CALL	F_CLOSE			; Close the file
+			LD		DE,REMSG		; 'Read error' message
+			CALL	C_WRITESTR		; ...
 			RET
 
 LMSG		DEFM	'Loaded'
@@ -1948,6 +1999,53 @@ OEMSG		DEFM	'Not found'
 
 REMSG		DEFM	'Read error'
 			DEFB	13,'$'
+
+; Show disk directory
+DIRECT		LD		HL,0080H		; Reset DMAADDR to 0080H
+			LD		(DMAADDR),HL	; ...
+
+			; Create FCB2 'x:????????.???'
+			LD		A,(CURDRV)		; Get current drive
+			AND		0FH				; Mask out user number
+			INC		A				; 1-based for FCB
+			LD		(FCB2DRV),A		;
+			LD		A,'?'			; Filename
+			LD		(FCB2NAM),A		;
+			LD		(FCB2NAM+1),A	;
+			LD		(FCB2NAM+2),A	;
+			LD		(FCB2NAM+3),A	;
+			LD		(FCB2NAM+4),A	;
+			LD		(FCB2NAM+5),A	;
+			LD		(FCB2NAM+6),A	;
+			LD		(FCB2NAM+7),A	;
+			LD		(FCB2NAM+8),A	;
+			LD		(FCB2NAM+9),A	;
+			LD		(FCB2NAM+10),A	;
+
+			LD		E,13			; Carriage return
+			CALL	C_WRITE			;
+
+			LD		DE,FCB2			; Default FCB address 2
+			CALL	F_SFIRST		; Find first dir entry
+			CP		0				;
+			RET		NZ				; If not found, we're done
+			CALL	PRDIRENT		; Print entry
+			
+DIRL1		LD		DE,FCB2			; Default FCB address 2
+			CALL	F_SNEXT			; Find next dir entry
+			CP		0				;
+			RET		NZ				; If not found, we're done
+			CALL	PRDIRENT		; Print entry
+			JP		DIRL1			; Loop for all files in dir
+	
+; Print a directory entry in FILEBUF
+PRDIRENT	LD		A,13			; Terminate string
+			LD		(FILEBUF+12),A	; 
+			LD		A,'$'			;
+			LD		(FILEBUF+13),A	; Print to console
+			LD		DE,FILEBUF+1	;
+			CALL	C_WRITESTR		;
+			RET
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Additional private scratch space for BDOS
