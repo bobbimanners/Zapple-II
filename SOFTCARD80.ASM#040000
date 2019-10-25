@@ -1531,26 +1531,26 @@ F2PS6		LD		A,C				; Store length of string
 ; B contains the drive number (1 for A:, 2 for B: etc)
 ; The FCB is written to the buffer pointed to by DMAADDR
 ; Trashes pretty much all registers (except IX, IY)
-PATH2FCB	EX		DE,HL			; Stash HL in DE so we can use HL here
+NAME2FCB	EX		DE,HL			; Stash HL in DE so we can use HL here
 
 			LD		HL,(DMAADDR)	; Set all 32 bytes to FCB to zero
 			LD		C,0				; ...
 			XOR		A				; ...
-P2FL1		LD		(HL),C			; ...
+N2FL1		LD		(HL),C			; ...
 			INC		HL				; ...
 			INC		A				; ...
 			CP		32				; ...
-			JP		NZ,P2FL1		; ...
+			JP		NZ,N2FL1		; ...
 
 			LD		HL,(DMAADDR)	; Set all filename chars in FCB to space
 			INC		HL				; ...
 			LD		C,' '			; ...
 			XOR		A				; ...
-P2FL2		LD		(HL),C			; ...
+N2FL2		LD		(HL),C			; ...
 			INC		HL				; ...
 			INC		A				; ...
 			CP		8+3				; ...
-			JP		NZ,P2FL2		; ...
+			JP		NZ,N2FL2		; ...
 
 			EX		DE,HL			; Get file entry pointer back in HL
 	
@@ -1561,24 +1561,26 @@ P2FL2		LD		(HL),C			; ...
 			LD		A,B				; Move drive number to A
 			LD		(DE),A			; Write drive number
 			LD		B,0				; Use B to count chars written
-P2FL3		INC		HL				; Advance source pointer
+N2FL3		INC		HL				; Advance source pointer
 			INC		DE				; Advance destination pointer
 			LD		A,C				; Get count of chars remaining
 			CP		0				; If none left ...
-			JP		Z,P2FS3			; We are done
+			JP		Z,N2FS3			; We are done
 			LD		A,B				; Get count of chars written
 			CP		8+3				; If 8+3 chars have been written ...
-			JP		Z,P2FS3			; We are done
+			JP		Z,N2FS3			; We are done
 			LD		A,(HL)			; Read character
 			CP		'.'				; See if it is a period
-			JP		Z,P2FS2			; Prepare to copy the extension
+			JP		Z,N2FS2			; Prepare to copy the extension
+			CP		' '				; See if it is a space  ** NEED THIS? **
+			JP		Z,N2FS3			; If so, we are done    ** NEED THIS? **
 			LD		(DE),A			; Write character
 			INC		B				; Increment count of chars written
-P2FS1		DEC		C				; Decrement count of chars remaining
-			JP		P2FL3			; Loop
+N2FS1		DEC		C				; Decrement count of chars remaining
+			JP		N2FL3			; Loop
 
 			; Initialize DE, B to start processing the extension
-P2FS2		LD		DE,(DMAADDR)	; Destination is start of extension
+N2FS2		LD		DE,(DMAADDR)	; Destination is start of extension
 			INC		DE				;
 			INC		DE				;
 			INC		DE				;
@@ -1588,16 +1590,16 @@ P2FS2		LD		DE,(DMAADDR)	; Destination is start of extension
 			INC		DE				;
 			INC		DE				;
 			LD		B,8				; 8 chars have been written
-			JP		P2FS1			; Jump back into the read-write loop
+			JP		N2FS1			; Jump back into the read-write loop
 
 			; Handle file size info
-P2FS3		LD		DE,(DMAADDR)	; Pointer to start of FCB
+N2FS3		LD		DE,(DMAADDR)	; Pointer to start of FCB
 			LD		IX,PATHBUF		; Destination buffer
 			CALL	FCB2PATH		; Populate PATHLEN and PATH from new FCB
 			LD		HL,GFIMLI		; Pass address of 6502 JSR instruction
 			CALL	PRODOS			; Invoke ProDOS MLI
 			CP		0				; See if there was an error
-			JP		NZ,P2FERR		; Handle error
+			JP		NZ,N2FERR		; Handle error
 			LD		HL,(GFIMLIBU)	; Obtain the blocks used field
 			ADD		HL,HL			; Mult x 4 to get 128 byte records
 			ADD		HL,HL			; ...
@@ -1608,7 +1610,7 @@ P2FS3		LD		DE,(DMAADDR)	; Pointer to start of FCB
 			LD		(IX+0CH),B		; Store num extents in EX field of FCB
 			LD		(IX+0FH),A		; Store num recs in RC field of FCB
 			RET	
-P2FERR		LD		DE,(DMAADDR)	; Pointer to start of FCB
+N2FERR		LD		DE,(DMAADDR)	; Pointer to start of FCB
 			PUSH	DE				; Copy into IX
 			POP		IX				; ...
 			LD		A,0				; If error, set num extents to zero
@@ -1665,7 +1667,7 @@ RDBS2		POP		HL				; Reset DMA address as we found it
 ; Match FCBs
 ; Used by CHKDIRENT
 ; DE is the address of the FCB describing the file to look for
-; Compare with FCB at DMAADDR already created by PATH2FCB
+; Compare with FCB at DMAADDR already created by NAME2FCB
 ; Returns A=0 if entry matches, A=FFH if no match
 ; Trashes A,BC,DE,HL
 MATCHFCB	INC		DE				; Skip over drive byte in FCB
@@ -1703,7 +1705,7 @@ CHKDIRENT	LD		B,0				; Hardcode drive A: MATCHFCB ignores it
 			JP		Z,CDES1			; File is deleted - no match
 			PUSH	HL				; Preserve HL
 			PUSH	DE				; Preserve DE
-			CALL	PATH2FCB		; Create FCB in DMA buffer
+			CALL	NAME2FCB		; Create FCB in DMA buffer
 			POP		DE				; Recover DE
 			POP		HL
 			PUSH	HL
@@ -1888,7 +1890,6 @@ N2H2		OR		0F0H			;
 ; - FILENAME.COM - Load and run FILENAME.COM at 0100H
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-; TODO: Upper-case all characters from console!!
 ; TODO: Implement the built-in commands using a table
 ; TODO: Built-in commands argument handling
 ; TODO: Parse * wildcard and generate FCB with ?s
@@ -1955,7 +1956,7 @@ CCPS2		LD		HL,FCB1			; Set DMAADDR to point to FCB1
 			JP 		NZ,CCPS3		; If not then skip to default drive
 			LD 		A,(FILEBUF+2)	; Get the drive letter
 			SUB 	'A'-1			; Convert to 1-based drive number
-			LD 		B,A 			; In B for PATH2FCB
+			LD 		B,A 			; In B for NAME2FCB
 			LD		A,(HL)			; Get the string length
 			SUB		2				; Eat drive letter and colon
 			INC 	HL 				; ...
@@ -1967,22 +1968,21 @@ CCPS3		LD		A,(CURDRV)		; Get drive and user number
 			INC		A				; FCB drive numbers are 1-based
 			LD		B,A				; Always use default drive
 CCPS4
-			CALL	PATH2FCB		; Create FCB at FCB1
+			; TODO: Shouldn't use FCB1 for this!
+			CALL	NAME2FCB		; Create FCB at FCB1
 			LD		A,'C'			; Set extension to .COM, in case not typed
 			LD		(FCB1NAM+8),A	;
 			LD		A,'O'			;
 			LD		(FCB1NAM+9),A	;
 			LD		A,'M'			;
-			LD		(FCB1NAM+10),A	;			
-			LD		DE,FCB1			; Point to our new FCB
+			LD		(FCB1NAM+10),A	;
 
-			; This is so commands don't think there are arguments to parse
-			LD		HL,FILEBUF		; Stuff zero in first char of FILEBUF
-			LD		A,0				; ...
-			LD		(HL),A			; ...
+			CALL	CMDTAIL			; Process the command tail (ie: arguments)
 
 			LD		HL,0080H		; Reset DMAADDR to 0080H
 			LD		(DMAADDR),HL	; ...
+
+			LD		DE,FCB1			; Point to our new FCB
 			LD		DE,FCB1			; Use FCB1
 			CALL	RUNCOM			; Try to run .COM file
 			
@@ -2004,6 +2004,116 @@ UCL1		LD		A,C				; See if any chars are left
 			SUB		'a'-'A'			; Convert to upper case
 UCS1		LD		(HL),A			; Put converted char back
 			JP		UCL1			; Loop
+
+; Handle the command tail
+; Replaces the contents of FILEBUF with command tail as Pascal-style string
+; B is used to keep track of the parser state machine:
+;   0 in whitespace before command
+;   1 in command
+;   2 in whitespace segment following command
+;   3 in first argument
+;   4 in whitespace segment following first argument
+;   5 in second argument
+CMDTAIL		LD		HL,FILEBUF+1	; Skip first byte - buffer capacity
+			PUSH	HL				; HL->IX. Use IX as destination pointer.
+			POP		IX				; ...
+			LD		C,(HL)			; Get the length of source string
+			LD		B,0				; B is the state of the parser
+			LD		D,0				; D is the count of chars output
+CTL1		LD		A,C				; See if any chars are left in input
+			CP		0				; ...
+			JP		Z,CTS2			; If 0, go update the length byte
+			INC		HL				; Advance to next char of source string
+			DEC		C				; Decrement count remaining
+			LD		A,(HL)			; Get char from buffer
+			CP		' '				; See if it a space
+			JP		Z,CTS1			; If space ...
+			CALL	CMDNSPC			; Handle non-space
+			JP		CTL1			; Loop
+CTS1		CALL	CMDSPC			; Handle space
+			JP		CTL1			; Loop
+CTS2		LD		HL,FILEBUF		; First byte is length of string
+			LD		(HL),D			; Write string length
+			RET
+
+; Handle a space character in the command line
+; State 0: Do not emit space to FILEBUF.
+; State 1: Do not emit space to FILEBUF. -> State 2
+; State 2: Do not emit space to FILEBUF.
+; State 3: Emit space to FILEBUF. -> State 4
+; State 4: Do not emit space to FILEBUF.
+; State 5: Emit space to FILEBUF.
+CMDSPC		LD		E,A				; Put character in E
+			LD		A,B				; Get parser state
+			CP		0				; State 0 - eat the space
+			JP		NZ,CSS1			;
+			RET						;
+CSS1		CP		1				; State 1 - eat the space
+			JP		NZ,CSS2			;
+			INC		B				; Transition to state 2
+			RET						;
+CSS2		CP		2				; State 2 - eat the space
+			JP		NZ,CSS3			;
+			RET						;
+CSS3		CP		3				; State 3
+			JP		NZ,CSS4			;
+			LD		(IX+0H),E		; Just emit the space
+			INC		IX				; ...
+			INC		D				; Character count
+			INC		B				; Transition to state 4
+			RET						;
+CSS4		CP		4				; State 4 - eat the space
+			JP		NZ,CSS5			;
+			RET						;
+CSS5		CP		5				; State 5
+			JP		NZ,CSS6			;
+			LD		(IX+0H),E		; Just emit the space
+			INC		IX				; ...
+			INC		D				; Character count
+CSS6		RET
+
+; Handle a non-space character in the command line
+; State 0: Do not emit character to FILEBUF. -> State 1
+; State 1: Do not emit character to FILEBUF.
+; State 2: Emit character to FILEBUF. -> State 3
+; State 3: Emit character to FILEBUF.
+; State 4: Emit character to FILEBUF. -> State 5
+; State 5: Emit character to FILEBUF.
+CMDNSPC		LD		E,A				; Put character in E
+			LD		A,B				; Get parser state
+			CP		0				; State 0 - eat the character
+			JP		NZ,CNS1			;
+			INC		B				; Transition to state 1
+			RET						;
+CNS1		CP		1				; State 1 - eat the character
+			JP		NZ,CNS2			;
+			RET						;
+CNS2		CP		2				; State 2
+			JP		NZ,CNS3			;
+			LD		(IX+0H),E		; Emit the character
+			INC		IX				; ...
+			INC		D				; Character count
+			INC		B				; Transition to state 3
+			RET						;
+CNS3		CP		3				; State 3
+			JP		NZ,CNS4			;
+			LD		(IX+0H),E		; Emit the character
+			INC		IX				; ...
+			INC		D				; Character count
+			RET						;
+CNS4		CP		4				; State 3
+			JP		NZ,CNS5			;
+			LD		(IX+0H),E		; Emit the character
+			INC		IX				; ...
+			INC		D				; Character count
+			INC		B				; Transition to state 5
+			RET						;
+CNS5		CP		5				; State 5
+			JP		NZ,CNS6			;
+			LD		(IX+0H),E		; Emit the character
+			INC		IX				; ...
+			INC		D				; Character count
+CNS6		RET
 
 ; Load and run a .COM file to 0100H
 ; DE is the address of the FCB describing the file to run
