@@ -1572,8 +1572,8 @@ N2FL3		INC		HL				; Advance source pointer
 			LD		A,(HL)			; Read character
 			CP		'.'				; See if it is a period
 			JP		Z,N2FS2			; Prepare to copy the extension
-			CP		' '				; See if it is a space  ** NEED THIS? **
-			JP		Z,N2FS3			; If so, we are done    ** NEED THIS? **
+			CP		' '				; See if it is a space  ** TODO:STILL NEED THIS? **
+			JP		Z,N2FS3			; If so, we are done    ** TODO:STILL NEED THIS? **
 			LD		(DE),A			; Write character
 			INC		B				; Increment count of chars written
 N2FS1		DEC		C				; Decrement count of chars remaining
@@ -1948,44 +1948,12 @@ CCPS1		CP		3				; Check if three chars
 			JP		CCPL1			; Go again			
 
 			; Attempt to load .COM file from disk
-CCPS2		LD		HL,FCB1			; Set DMAADDR to point to FCB1
-			LD		(DMAADDR),HL	; ...
-			LD		HL,FILEBUF+1	; Skip over capacity byte
-			LD 		A,(FILEBUF+3)	; See if second char typed is a colon
-			CP 		':'				;
-			JP 		NZ,CCPS3		; If not then skip to default drive
-			LD 		A,(FILEBUF+2)	; Get the drive letter
-			SUB 	'A'-1			; Convert to 1-based drive number
-			LD 		B,A 			; In B for NAME2FCB
-			LD		A,(HL)			; Get the string length
-			SUB		2				; Eat drive letter and colon
-			INC 	HL 				; ...
-			INC 	HL 				; ...
-			LD		(HL),A			; Write the reduced length
-			JP 		CCPS4			;
-CCPS3		LD		A,(CURDRV)		; Get drive and user number
-			AND		0FH				; Mask out user number
-			INC		A				; FCB drive numbers are 1-based
-			LD		B,A				; Always use default drive
-CCPS4
-			; TODO: Shouldn't use FCB1 for this!
-			CALL	NAME2FCB		; Create FCB at FCB1
-			LD		A,'C'			; Set extension to .COM, in case not typed
-			LD		(FCB1NAM+8),A	;
-			LD		A,'O'			;
-			LD		(FCB1NAM+9),A	;
-			LD		A,'M'			;
-			LD		(FCB1NAM+10),A	;
-
-			CALL	CMDTAIL			; Process the command tail (ie: arguments)
-
+CCPS2		CALL	PARSE			; Parse the command line
 			LD		HL,0080H		; Reset DMAADDR to 0080H
 			LD		(DMAADDR),HL	; ...
-
-			LD		DE,FCB1			; Point to our new FCB
-			LD		DE,FCB1			; Use FCB1
+			LD		DE,PATHBUF2		; Point to the FCB in PATHBUF2
 			CALL	RUNCOM			; Try to run .COM file
-			
+
 			JP		CCP				; Go again
 
 ; Convert input buffer to uppercase
@@ -2005,8 +1973,9 @@ UCL1		LD		A,C				; See if any chars are left
 UCS1		LD		(HL),A			; Put converted char back
 			JP		UCL1			; Loop
 
-; Handle the command tail
+; Parse the command line
 ; Replaces the contents of FILEBUF with command tail as Pascal-style string
+; Creates FCB for loading .COM program
 ; B is used to keep track of the parser state machine:
 ;   0 in whitespace before command
 ;   1 in command
@@ -2014,12 +1983,16 @@ UCS1		LD		(HL),A			; Put converted char back
 ;   3 in first argument
 ;   4 in whitespace segment following first argument
 ;   5 in second argument
-CMDTAIL		LD		HL,FILEBUF+1	; Skip first byte - buffer capacity
-			PUSH	HL				; HL->IX. Use IX as destination pointer.
+PARSE		LD		HL,PATHBUF+1	; Skip first byte - buffer capacity
+			PUSH	HL				; HL->IY. Use IY as dest pointer into PATHBUF
+			POP		IY				; ...
+			LD		HL,FILEBUF+1	; Skip first byte - buffer capacity
+			PUSH	HL				; HL->IX. Use IX as dest pointer into FILEBUF
 			POP		IX				; ...
 			LD		C,(HL)			; Get the length of source string
 			LD		B,0				; B is the state of the parser
-			LD		D,0				; D is the count of chars output
+			LD		D,0				; D is the count of chars for FILEBUF
+			LD		E,0				; E is the count of chars for PATHBUF
 CTL1		LD		A,C				; See if any chars are left in input
 			CP		0				; ...
 			JP		Z,CTS2			; If 0, go update the length byte
@@ -2036,28 +2009,76 @@ CTS2		LD		HL,FILEBUF		; First byte is length of string
 			LD		(HL),D			; Write string length
 			RET
 
+; Examines Pascal string pointed to by HL to see if it begins with a drive
+; letter and a colon.  If so, reduces string length by 2 and advances HL two
+; positions, sets B to the drive number.  If no drive is specified, sets B
+; to the default drive.
+DRVLETTER	INC		HL				; Advance to second char
+			INC		HL				; ...
+			LD 		A,(HL)			; See if second char typed is a colon
+			CP 		':'				;
+			JP 		NZ,DLS1			; If not then skip to default drive
+			DEC		HL				; Back to first char
+			LD 		A,(HL)			; Get the drive letter
+			SUB 	'A'-1			; Convert to 1-based drive number
+			LD 		B,A 			; In B for NAME2FCB
+			DEC		HL				; Back one to the size byte
+			LD		A,(HL)			; Get the string length
+			SUB		2				; Eat drive letter and colon
+			INC		HL				; ...
+			INC		HL				; ...
+			LD		(HL),A			; Write the reduced length
+			RET
+DLS1		DEC		HL				; Put HL back to the beginning
+			DEC		HL				; ...
+			LD		A,(CURDRV)		; Get drive and user number
+			AND		0FH				; Mask out user number
+			INC		A				; FCB drive numbers are 1-based
+			LD		B,A				; Always use default drive
+			RET
+
 ; Handle a space character in the command line
-; State 0: Do not emit space to FILEBUF.
-; State 1: Do not emit space to FILEBUF. -> State 2
-; State 2: Do not emit space to FILEBUF.
-; State 3: Emit space to FILEBUF. -> State 4
-; State 4: Do not emit space to FILEBUF.
-; State 5: Emit space to FILEBUF.
-CMDSPC		LD		E,A				; Put character in E
+; Character is passed in A
+; State 0: Do not emit space to FILEBUF
+; State 1: Do not emit space to FILEBUF
+;          Set length byte for PATHBUF & create FCB.
+;          -> State 2
+; State 2: Do not emit space to FILEBUF
+; State 3: Emit space to FILEBUF -> State 4
+; State 4: Do not emit space to FILEBUF
+; State 5: Emit space to FILEBUF
+CMDSPC		EX		AF,AF'			; Save character for later
 			LD		A,B				; Get parser state
 			CP		0				; State 0 - eat the space
 			JP		NZ,CSS1			;
 			RET						;
 CSS1		CP		1				; State 1 - eat the space
 			JP		NZ,CSS2			;
+			LD		A,E				; Write length byte to PATHBUF
+			LD		(PATHBUF),A		; ...
+			LD		E,0				; Reset length for next time
+			PUSH	HL				; Preserve HL
+			LD		HL,PATHBUF2		; DMAADDR to PATHBUF2 - will put FCB there
+			LD		(DMAADDR),HL	; ...
+			LD		HL,PATHBUF		; NAME2FCB will use filename at PATHBUF
+			CALL	DRVLETTER		; Handle any x: drive letter prefix
+			CALL	NAME2FCB		; Create FCB at PATHBUF2
+			LD		A,'C'			; Set extension to .COM, in case not typed
+			LD		(PATHBUF2+9),A	; ...
+			LD		A,'O'			; ...
+			LD		(PATHBUF2+10),A	; ...
+			LD		A,'M'			; ...
+			LD		(PATHBUF2+11),A	; ...
 			INC		B				; Transition to state 2
+			POP		HL				; Restore HL
 			RET						;
 CSS2		CP		2				; State 2 - eat the space
 			JP		NZ,CSS3			;
 			RET						;
 CSS3		CP		3				; State 3
 			JP		NZ,CSS4			;
-			LD		(IX+0H),E		; Just emit the space
+			EX		AF,AF'			; Get character back
+			LD		(IX+0H),A		; Just emit the space
 			INC		IX				; ...
 			INC		D				; Character count
 			INC		B				; Transition to state 4
@@ -2067,52 +2088,68 @@ CSS4		CP		4				; State 4 - eat the space
 			RET						;
 CSS5		CP		5				; State 5
 			JP		NZ,CSS6			;
-			LD		(IX+0H),E		; Just emit the space
+			EX		AF,AF'			; Get character back
+			LD		(IX+0H),A		; Just emit the space
 			INC		IX				; ...
 			INC		D				; Character count
 CSS6		RET
 
 ; Handle a non-space character in the command line
-; State 0: Do not emit character to FILEBUF. -> State 1
-; State 1: Do not emit character to FILEBUF.
-; State 2: Emit character to FILEBUF. -> State 3
-; State 3: Emit character to FILEBUF.
-; State 4: Emit character to FILEBUF. -> State 5
-; State 5: Emit character to FILEBUF.
-CMDNSPC		LD		E,A				; Put character in E
+; Character is passed in A
+; State 0: Do not emit character to FILEBUF -> State 1
+;          Emit character to PATHBUF
+; State 1: Do not emit character to FILEBUF
+;          Emit character to PATHBUF
+; State 2: Emit character to FILEBUF -> State 3
+; State 3: Emit character to FILEBUF
+; State 4: Emit character to FILEBUF -> State 5
+; State 5: Emit character to FILEBUF
+CMDNSPC		EX		AF,AF'			; Save character for later
 			LD		A,B				; Get parser state
 			CP		0				; State 0 - eat the character
 			JP		NZ,CNS1			;
+			EX		AF,AF'			; Get character back
+			LD		(IY+0H),A		; Emit char to PATHBUF
+			INC		IY				; ...
+			INC		E				; Character count for PATHBUF
 			INC		B				; Transition to state 1
 			RET						;
 CNS1		CP		1				; State 1 - eat the character
 			JP		NZ,CNS2			;
+			EX		AF,AF'			; Get character back
+			LD		(IY+0H),A		; Emit char to PATHBUF
+			INC		IY				; ...
+			INC		E				; Character count for PATHBUF
 			RET						;
 CNS2		CP		2				; State 2
 			JP		NZ,CNS3			;
-			LD		(IX+0H),E		; Emit the character
+			EX		AF,AF'			; Get character back
+			LD		(IX+0H),A		; Emit char to FILEBUF
 			INC		IX				; ...
-			INC		D				; Character count
+			INC		D				; Character count for FILEBUF
 			INC		B				; Transition to state 3
 			RET						;
 CNS3		CP		3				; State 3
 			JP		NZ,CNS4			;
-			LD		(IX+0H),E		; Emit the character
+			EX		AF,AF'			; Get character back
+			LD		(IX+0H),A		; Emit char to FILEBUF
 			INC		IX				; ...
-			INC		D				; Character count
+			INC		D				; Character count for FILEBUF
 			RET						;
 CNS4		CP		4				; State 3
 			JP		NZ,CNS5			;
-			LD		(IX+0H),E		; Emit the character
+			EX		AF,AF'			; Get character back
+			LD		(IX+0H),A		; Emit char to FILEBUF
 			INC		IX				; ...
-			INC		D				; Character count
+			INC		D				; Character count for FILEBUF
 			INC		B				; Transition to state 5
 			RET						;
 CNS5		CP		5				; State 5
 			JP		NZ,CNS6			;
-			LD		(IX+0H),E		; Emit the character
+			EX		AF,AF'			; Get character back
+			LD		(IX+0H),A		; Emit char to FILEBUF
 			INC		IX				; ...
-			INC		D				; Character count
+			INC		D				; Character count for FILEBUF
 CNS6		RET
 
 ; Load and run a .COM file to 0100H
