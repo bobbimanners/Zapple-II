@@ -1978,6 +1978,7 @@ UCS1		LD		(HL),A			; Put converted char back
 ;   3 in first argument
 ;   4 in whitespace segment following first argument
 ;   5 in second argument
+;   6 in whitespace segment following second arg (or later)
 PARSE		LD		HL,PATHBUF+1	; Skip first byte - buffer capacity
 			PUSH	HL				; HL->IY. Use IY as dest pointer into PATHBUF
 			POP		IY				; ...
@@ -2041,7 +2042,8 @@ DLS1		DEC		HL				; Put HL back to the beginning
 ; State 2: Do not emit space to FILEBUF
 ; State 3: Emit space to FILEBUF -> State 4
 ; State 4: Do not emit space to FILEBUF
-; State 5: Emit space to FILEBUF
+; State 5: Emit space to FILEBUF -> State 6
+; State 6: Emit space to FILEBUF
 CMDSPC		EX		AF,AF'			; Save character for later
 			LD		A,B				; Get parser state
 			CP		0				; State 0 - eat the space
@@ -2087,48 +2089,87 @@ CSS5		CP		5				; State 5
 			LD		(IX+0H),A		; Just emit the space
 			INC		IX				; ...
 			INC		D				; Character count
-CSS6		RET
+			INC		B				; Transition to state 6
+			RET
+CSS6		CP		6				; State 6
+			JP		NZ,CSS7			;
+			EX		AF,AF'			; Get character back
+			LD		(IX+0H),A		; Just emit the space
+			INC		IX				; ...
+			INC		D				; Character count
+CSS7		RET
 
 ; Handle a non-space character in the command line
 ; Character is passed in A
-; For all states, emit character to PATHBUF.
-; State 0: Do not emit character to FILEBUF -> State 1
+; State 0: Do not emit character to FILEBUF
+;          Emit character to PATHBUF
+;          -> State 1
 ; State 1: Do not emit character to FILEBUF
+;          Emit character to PATHBUF
 ; State 2: Emit character to FILEBUF -> State 3
+;          Emit character to PATHBUF
 ; State 3: Emit character to FILEBUF
+;          Emit character to PATHBUF
 ; State 4: Emit character to FILEBUF -> State 5
+;          Emit character to PATHBUF
 ; State 5: Emit character to FILEBUF
-CMDNSPC		LD		(IY+0H),A		; Emit char to PATHBUF
-			INC		IY				; ...
-			INC		E				; Character count for PATHBUF
-			EX		AF,AF'			; Save character for later
+;          Emit character to PATHBUF
+; State 6: Emit character to FILEBUF
+;          Do not emit character to PATHBUF
+CMDNSPC		EX		AF,AF'			; Save character for later
 			LD		A,B				; Get parser state
 			CP		0				; State 0 - eat the character
 			JP		NZ,CNS1			;
+			EX		AF,AF'			; Get character back
+			CALL	EMTPATHBUF		; Emit char to PATHBUF
 			INC		B				; Transition to state 1
 			RET						;
 CNS1		CP		1				; State 1 - eat the character
 			JP		NZ,CNS2			;
+			EX		AF,AF'			; Get character back
+			CALL	EMTPATHBUF		; Emit char to PATHBUF
 			RET						;
 CNS2		CP		2				; State 2
 			JP		NZ,CNS3			;
+			EX		AF,AF'			; Get character back
+			CALL	EMTPATHBUF		; Emit char to PATHBUF
+			CALL	EMTFILBUF		; Emit char to FILEBUF
 			INC		B				; Transition to state 3
-			JP		CNS7			; Emit char to FILBUF
+			RET						;
 CNS3		CP		3				; State 3
 			JP		NZ,CNS4			;
-			JP		CNS7			; Emit char to FILBUF
+			EX		AF,AF'			; Get character back
+			CALL	EMTPATHBUF		; Emit char to PATHBUF
+			CALL	EMTFILBUF		; Emit char to FILEBUF
 CNS4		CP		4				; State 3
 			JP		NZ,CNS5			;
+			EX		AF,AF'			; Get character back
+			CALL	EMTPATHBUF		; Emit char to PATHBUF
+			CALL	EMTFILBUF		; Emit char to FILEBUF
 			INC		B				; Transition to state 5
-			JP		CNS7			; Emit char to FILBUF
+			RET						;
 CNS5		CP		5				; State 5
 			JP		NZ,CNS6			;
-			JP		CNS7			; Emit char to FILBUF
-CNS6		RET
-CNS7		EX		AF,AF'			; Get character back
-			LD		(IX+0H),A		; Emit char to FILEBUF
+			EX		AF,AF'			; Get character back
+			CALL	EMTPATHBUF		; Emit char to PATHBUF
+			CALL	EMTFILBUF		; Emit char to FILEBUF
+			RET						;
+CNS6		CP		6				; State 6
+			JP		NZ,CNS7			;
+			EX		AF,AF'			; Get character back
+			CALL	EMTFILBUF		; Emit char to FILEBUF
+CNS7		RET
+
+; Write character at A to IX (which points into FILEBUF)
+EMTFILBUF	LD		(IX+0H),A		; Emit char to FILEBUF
 			INC		IX				; ...
 			INC		D				; Character count for FILEBUF
+			RET
+
+; Write character at A to IX (which points into PATHBUF)
+EMTPATHBUF	LD		(IY+0H),A		; Emit char to PATHBUF
+			INC		IY				; ...
+			INC		E				; Character count for FILEBUF
 			RET
 
 ; Load and run a .COM file to 0100H
