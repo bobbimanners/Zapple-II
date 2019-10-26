@@ -1572,8 +1572,6 @@ N2FL3		INC		HL				; Advance source pointer
 			LD		A,(HL)			; Read character
 			CP		'.'				; See if it is a period
 			JP		Z,N2FS2			; Prepare to copy the extension
-			CP		' '				; See if it is a space  ** TODO:STILL NEED THIS? **
-			JP		Z,N2FS3			; If so, we are done    ** TODO:STILL NEED THIS? **
 			LD		(DE),A			; Write character
 			INC		B				; Increment count of chars written
 N2FS1		DEC		C				; Decrement count of chars remaining
@@ -1893,7 +1891,6 @@ N2H2		OR		0F0H			;
 ; TODO: Implement the built-in commands using a table
 ; TODO: Built-in commands argument handling
 ; TODO: Parse * wildcard and generate FCB with ?s
-; TODO: Command tail -> 080F buffer
 ; TODO: Build default FCB1 and 2 from args, if present
 
 ; Get a line of text from the console & handle it
@@ -1949,8 +1946,6 @@ CCPS1		CP		3				; Check if three chars
 
 			; Attempt to load .COM file from disk
 CCPS2		CALL	PARSE			; Parse the command line
-			LD		HL,0080H		; Reset DMAADDR to 0080H
-			LD		(DMAADDR),HL	; ...
 			LD		DE,PATHBUF2		; Point to the FCB in PATHBUF2
 			CALL	RUNCOM			; Try to run .COM file
 
@@ -2154,18 +2149,18 @@ CNS6		RET
 
 ; Load and run a .COM file to 0100H
 ; DE is the address of the FCB describing the file to run
-RUNCOM		CALL	F_OPEN			;
+RUNCOM		LD		HL,0080H		; Set DMAADDR to 0080H
+			LD		(DMAADDR),HL	; ...
+			CALL	F_OPEN			;
 			CP		0				;
 			JP		NZ,RCOERR		; Open error
 			LD		HL,0100H		; Set DMAADDR to 0100H
 			LD		(DMAADDR),HL	; ...
 RCL1		CALL	F_READ			; Read records until done
-			PUSH	AF				; Preserve A
 			LD		HL,(DMAADDR)	; Advance DMAADDR for each record
 			LD		BC,80H			; ...
 			ADD		HL,BC			; ...
 			LD		(DMAADDR),HL	; ...
-			POP		AF				; Restore A
 			CP		0				; Check return code from F_READ
 			JP		Z,RCL1			; If zero, keep looping
 			CP		1				; Check return code from F_READ
