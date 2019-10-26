@@ -2001,7 +2001,9 @@ CTL1		LD		A,C				; See if any chars are left in input
 			JP		CTL1			; Loop
 CTS1		CALL	CMDSPC			; Handle space
 			JP		CTL1			; Loop
-CTS2		LD		HL,FILEBUF		; First byte is length of string
+CTS2		LD		A,' '			; Fake an additional space on the end ...
+			CALL	CMDSPC			; ... so parser can get itself in correct state
+			LD		HL,FILEBUF		; First byte is length of string
 			LD		(HL),D			; Write string length
 			RET
 
@@ -2037,12 +2039,16 @@ DLS1		DEC		HL				; Put HL back to the beginning
 ; Character is passed in A
 ; State 0: Do not emit space to FILEBUF
 ; State 1: Do not emit space to FILEBUF
-;          Set length byte for PATHBUF & create FCB.
+;          Set length byte for PATHBUF & create FCB in PATHBUF2
 ;          -> State 2
 ; State 2: Do not emit space to FILEBUF
-; State 3: Emit space to FILEBUF -> State 4
+; State 3: Emit space to FILEBUF
+;          Set length byte for PATHBUF & create FCB in FCB1  TODO
+;          -> State 4
 ; State 4: Do not emit space to FILEBUF
-; State 5: Emit space to FILEBUF -> State 6
+; State 5: Emit space to FILEBUF
+;          Set length byte for PATHBUF & create FCB in FCB1  TODO
+;          -> State 6
 ; State 6: Emit space to FILEBUF
 CMDSPC		EX		AF,AF'			; Save character for later
 			LD		A,B				; Get parser state
@@ -2054,6 +2060,7 @@ CSS1		CP		1				; State 1 - eat the space
 			LD		A,E				; Write length byte to PATHBUF
 			LD		(PATHBUF),A		; ...
 			LD		E,0				; Reset length for next time
+			; TODO RESET IY
 			PUSH	HL				; Preserve HL
 			LD		HL,PATHBUF2		; DMAADDR to PATHBUF2 - will put FCB there
 			LD		(DMAADDR),HL	; ...
@@ -2161,12 +2168,14 @@ CNS6		CP		6				; State 6
 CNS7		RET
 
 ; Write character at A to IX (which points into FILEBUF)
+; Helper for CMDNSPC
 EMTFILBUF	LD		(IX+0H),A		; Emit char to FILEBUF
 			INC		IX				; ...
 			INC		D				; Character count for FILEBUF
 			RET
 
 ; Write character at A to IX (which points into PATHBUF)
+; Helper for CMDNSPC
 EMTPATHBUF	LD		(IY+0H),A		; Emit char to PATHBUF
 			INC		IY				; ...
 			INC		E				; Character count for FILEBUF
