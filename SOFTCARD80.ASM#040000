@@ -541,7 +541,8 @@ B_DRV_RESET		EQU		25H			; Selectively reset disk drives
 
 			ORG		BDOSADDR
 
-BDOSINIT	LD		SP,STCKTOP		; Initialize SP
+BDOSINIT	DI						; Make sure interrupts are off
+			LD		SP,STCKTOP		; Initialize SP
 			XOR		A				; A=0
 			LD		(IOBYTE),A		; Initialize IOBYTE
 			LD		(CURDRV),A		; Drive A:, User 0
@@ -807,7 +808,8 @@ F_OPEN		PUSH	DE				; Preserve pointer to FCB
 			CALL	F_SFIRST		; Find first matching directory entry
 			POP		DE				; Restore pointer to FCB
 
-; Alternative entrypoint used for opening ProDOS directory file only
+; Alternative entrypoint used for opening ProDOS directory files
+; and used by the CCP to load .COM files.  No directory lookup.
 _F_OPEN		LD		IX,PATHBUF		; Destination buffer
 			CALL	FCB2PATH		; Populate PATHLEN and PATH
 
@@ -1888,6 +1890,7 @@ N2H2		OR		0F0H			;
 ; - FILENAME.COM - Load and run FILENAME.COM at 0100H
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+; TODO: BUG-- F_OPEN is trashing FILEBUF with it's damn DIRENT!
 ; TODO: Implement the built-in commands using a table
 ; TODO: Built-in commands argument handling
 ; TODO: Parse * wildcard and generate FCB with ?s
@@ -2082,9 +2085,7 @@ CSS2		CP		2				; State 2 - eat the space
 CSS3		CP		3				; State 3
 			JP		NZ,CSS4			;
 			EX		AF,AF'			; Get character back
-			LD		(IX+0H),A		; Just emit the space
-			INC		IX				; ...
-			INC		D				; Character count
+			CALL	EMTFILBUF		; Emit char to FILEBUF
 			INC		B				; Transition to state 4
 			RET						;
 CSS4		CP		4				; State 4 - eat the space
@@ -2093,17 +2094,13 @@ CSS4		CP		4				; State 4 - eat the space
 CSS5		CP		5				; State 5
 			JP		NZ,CSS6			;
 			EX		AF,AF'			; Get character back
-			LD		(IX+0H),A		; Just emit the space
-			INC		IX				; ...
-			INC		D				; Character count
+			CALL	EMTFILBUF		; Emit char to FILEBUF
 			INC		B				; Transition to state 6
 			RET
 CSS6		CP		6				; State 6
 			JP		NZ,CSS7			;
 			EX		AF,AF'			; Get character back
-			LD		(IX+0H),A		; Just emit the space
-			INC		IX				; ...
-			INC		D				; Character count
+			CALL	EMTFILBUF		; Emit char to FILEBUF
 CSS7		RET
 
 ; Handle a non-space character in the command line
@@ -2168,7 +2165,7 @@ CNS6		CP		6				; State 6
 CNS7		RET
 
 ; Write character at A to IX (which points into FILEBUF)
-; Helper for CMDNSPC
+; Helper for CMDSPC/CMDNSPC
 EMTFILBUF	LD		(IX+0H),A		; Emit char to FILEBUF
 			INC		IX				; ...
 			INC		D				; Character count for FILEBUF
@@ -2183,9 +2180,9 @@ EMTPATHBUF	LD		(IY+0H),A		; Emit char to PATHBUF
 
 ; Load and run a .COM file to 0100H
 ; DE is the address of the FCB describing the file to run
-RUNCOM		LD		HL,0080H		; Set DMAADDR to 0080H
+RUNCOM		LD		HL,PATHBUF2		; Set DMAADDR to PATHBUF2 (not FILEBUF!)
 			LD		(DMAADDR),HL	; ...
-			CALL	F_OPEN			;
+			CALL	_F_OPEN			;
 			CP		0				;
 			JP		NZ,RCOERR		; Open error
 			LD		HL,0100H		; Set DMAADDR to 0100H
