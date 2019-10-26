@@ -2091,61 +2091,45 @@ CSS6		RET
 
 ; Handle a non-space character in the command line
 ; Character is passed in A
+; For all states, emit character to PATHBUF.
 ; State 0: Do not emit character to FILEBUF -> State 1
-;          Emit character to PATHBUF
 ; State 1: Do not emit character to FILEBUF
-;          Emit character to PATHBUF
 ; State 2: Emit character to FILEBUF -> State 3
 ; State 3: Emit character to FILEBUF
 ; State 4: Emit character to FILEBUF -> State 5
 ; State 5: Emit character to FILEBUF
-CMDNSPC		EX		AF,AF'			; Save character for later
+CMDNSPC		LD		(IY+0H),A		; Emit char to PATHBUF
+			INC		IY				; ...
+			INC		E				; Character count for PATHBUF
+			EX		AF,AF'			; Save character for later
 			LD		A,B				; Get parser state
 			CP		0				; State 0 - eat the character
 			JP		NZ,CNS1			;
-			EX		AF,AF'			; Get character back
-			LD		(IY+0H),A		; Emit char to PATHBUF
-			INC		IY				; ...
-			INC		E				; Character count for PATHBUF
 			INC		B				; Transition to state 1
 			RET						;
 CNS1		CP		1				; State 1 - eat the character
 			JP		NZ,CNS2			;
-			EX		AF,AF'			; Get character back
-			LD		(IY+0H),A		; Emit char to PATHBUF
-			INC		IY				; ...
-			INC		E				; Character count for PATHBUF
 			RET						;
 CNS2		CP		2				; State 2
 			JP		NZ,CNS3			;
-			EX		AF,AF'			; Get character back
-			LD		(IX+0H),A		; Emit char to FILEBUF
-			INC		IX				; ...
-			INC		D				; Character count for FILEBUF
 			INC		B				; Transition to state 3
-			RET						;
+			JP		CNS7			; Emit char to FILBUF
 CNS3		CP		3				; State 3
 			JP		NZ,CNS4			;
-			EX		AF,AF'			; Get character back
-			LD		(IX+0H),A		; Emit char to FILEBUF
-			INC		IX				; ...
-			INC		D				; Character count for FILEBUF
-			RET						;
+			JP		CNS7			; Emit char to FILBUF
 CNS4		CP		4				; State 3
 			JP		NZ,CNS5			;
-			EX		AF,AF'			; Get character back
-			LD		(IX+0H),A		; Emit char to FILEBUF
-			INC		IX				; ...
-			INC		D				; Character count for FILEBUF
 			INC		B				; Transition to state 5
-			RET						;
+			JP		CNS7			; Emit char to FILBUF
 CNS5		CP		5				; State 5
 			JP		NZ,CNS6			;
-			EX		AF,AF'			; Get character back
+			JP		CNS7			; Emit char to FILBUF
+CNS6		RET
+CNS7		EX		AF,AF'			; Get character back
 			LD		(IX+0H),A		; Emit char to FILEBUF
 			INC		IX				; ...
 			INC		D				; Character count for FILEBUF
-CNS6		RET
+			RET
 
 ; Load and run a .COM file to 0100H
 ; DE is the address of the FCB describing the file to run
