@@ -20,8 +20,6 @@
 ; BDOS TODOs
 ; ----------
 ; TODO: Get STAT to work
-; TODO: Get PIP to work - PIP creates a temp file with extension $$$,
-;       which ProDOS can not handle
 ; TODO: F_WRITE bug turns out to be bug in ProDOS 2.5.0a7 (SET_MARK)
 ; TODO: Maybe I should eliminate use of "EX AF,AF'" in BDOS since CP/M apps may
 ;       expect exclusive use of alternate register set.
@@ -556,7 +554,7 @@ BDOSINIT	DI						; Make sure interrupts are off
 			LD		(FRN2),A		; ...
 			LD		(FRN3),A		; ...
 			LD		(FRN4),A		; ...
-			LD		HL,0080H		; Initialize DMAADDR to 0080H
+			LD		HL,FILEBUF		; Initialize DMAADDR to 0080H
 			LD		(DMAADDR),HL	; ...
 			LD		HL,0000H		; Initialize LOGVEC & ROVEC to 0000H
 			LD		(LOGVEC),HL		; ...
@@ -642,13 +640,11 @@ C_READ		LD		HL,RDKEY		; We are going to call RDKEY
 			LD		(SOFTCARD),A	; Do it!
 			LD		A,(AREG)		; Grab the return value
 			PUSH	AF				; Preserve A (and F)
-			
 			LD		HL,COUT			; Echo the character using COUT
 			LD		(ADDR),HL		; ...
 			LD		A,1				; CMD=1 means call 6502 sub
 			LD		(CMD),A			; ...
 			LD		(SOFTCARD),A	; Do it!
-
 			POP		AF				; Restore A (and F)
 			AND		7FH				; Mask high bit
 			LD		L,A				; Copy A to L
@@ -1948,6 +1944,8 @@ N2H2		OR		0F0H			;
 ; TODO: Parse * wildcard and generate FCB with ?s
 ; TODO: Implement REN, SAVE commands
 ; TODO: Implement support for ^C in C_READ
+; TODO: Fix DIR command to use C_WRITE not C_WRITESTR ($s!!).
+; TODO: Why is DIR command giving partial results?
 
 ; Get a line of text from the console & handle it
 CCP			
@@ -2380,19 +2378,19 @@ RCL1		CALL	F_READ			; Read records until done
 			CALL	F_CLOSE			; Close the file
 			LD		DE,LMSG			; Print 'Loaded'
 			CALL	C_WRITESTR		; ...
-			LD		HL,0080H		; Reset DMAADDR to 0080H
+			LD		HL,FILEBUF		; Reset DMAADDR to 0080H
 			LD		(DMAADDR),HL	; ...
 			CALL	PROGSTRT		; Run user program at 0100H
 			LD		E,13			; Print carriage return
 			CALL	C_WRITE			; ...
-			LD		HL,0080H		; Reset DMAADDR to 0080H
+			LD		HL,FILEBUF		; Reset DMAADDR to 0080H
 			LD		(DMAADDR),HL	; ...
 			RET						;
 RCOERR		LD		DE,NFMSG		; 'Not found' message
 			CALL	C_WRITESTR		; ...
 			RET						;
 RCLERR		CALL	F_CLOSE			; Close the file
-			LD		HL,0080H		; Reset DMAADDR to 0080H
+			LD		HL,FILEBUF		; Reset DMAADDR to 0080H
 			LD		(DMAADDR),HL	; ...
 			LD		DE,REMSG		; 'Read error' message
 			CALL	C_WRITESTR		; ...
@@ -2409,7 +2407,7 @@ REMSG		DEFM	'Read error'
 
 ; Show disk directory
 ; Use FCB1 for directory search
-DIRECT		LD		HL,0080H		; Reset DMAADDR to 0080H
+DIRECT		LD		HL,FILEBUF		; Reset DMAADDR to 0080H
 			LD		(DMAADDR),HL	; ...
 
 			LD		E,13			; Carriage return
@@ -2429,19 +2427,36 @@ DIRL1		LD		DE,FCB1			; Default FCB address 2
 			JP		DIRL1			; Loop for all files in dir
 	
 ; Print a directory entry in FILEBUF
-PRDIRENT	LD		A,13			; Terminate string
-			LD		(FILEBUF+12),A	; 
-			LD		A,'$'			;
-			LD		(FILEBUF+13),A	; Print to console
-			LD		DE,FILEBUF+1	;
-			CALL	C_WRITESTR		;
-			RET
+PRDIRENT	PUSH	HL				;
+			LD		HL,FILEBUF		;
+			LD		C,0				;
+PRDL1		LD		E,(HL)			;
+			PUSH	HL				;
+			CALL	C_WRITE			;
+			POP		HL				;
+			INC		HL				;
+			INC		C				;
+			LD		A,9				; 8+1 because we already incremented
+			CP		C				;
+			JP		Z,PRDS2			; Jump to routine to print the '.'
+PRDS1		LD		A,12			; 8+3+1 because we already incremented
+			CP		C				;
+			JP		NZ,PRDL1		;
+			LD		E,13			;
+			CALL	C_WRITE			;
+			POP		HL				;
+			RET						;
+PRDS2		LD		E,'.'			;
+			PUSH	HL				;
+			CALL	C_WRITE			;
+			POP		HL				;
+			JP		PRDS1			;
 
 ; Erase file(s)
 ; Pattern for erase is in FCB1
 ; TODO: Should prompt Y/N if wildcards used
 ; TODO: Not working with wildcards for some reason!!
-ERASE		LD		HL,0080H		; Reset DMAADDR to 0080H
+ERASE		LD		HL,FILEBUF		; Reset DMAADDR to 0080H
 			LD		(DMAADDR),HL	; ...
 
 			LD		DE,FCB1			; Pass address of FCB1
