@@ -19,6 +19,8 @@
 ;
 ; BDOS TODOs
 ; ----------
+; TODO: Get STAT to work
+; TODO: Get PIP to work
 ; TODO: F_WRITE bug turns out to be bug in ProDOS 2.5.0a7 (SET_MARK)
 ; TODO: Maybe I should eliminate use of "EX AF,AF'" in BDOS since CP/M apps may
 ;       expect exclusive use of alternate register set.
@@ -1595,7 +1597,7 @@ N2FS2		LD		DE,(DMAADDR)	; Destination is start of extension
 			JP		N2FS1			; Jump back into the read-write loop
 
 			; Handle file size info
-; TODO This is commented out because it causes problems when called from parse
+; TODO This is commented out because it causes problems when called from PARSE
 ;      We need a mode switch to turn this part of the function on and off
 N2FS3	;	LD		DE,(DMAADDR)	; Pointer to start of FCB
 		;	LD		IX,PATHBUF		; Destination buffer
@@ -1898,7 +1900,6 @@ N2H2		OR		0F0H			;
 ; TODO: Implement the built-in commands using a table
 ; TODO: Built-in commands argument handling
 ; TODO: Parse * wildcard and generate FCB with ?s
-; TODO: Build default FCB1 and 2 from args, if present
 
 ; Get a line of text from the console & handle it
 CCP			
@@ -1937,24 +1938,26 @@ CCPL1		LD		A,(CURDRV)		; Get current drive & user number
 
 			; DIR command
 			; TODO Handle arguments
-CCPS1		CP		3				; Check if three chars
-			JP		NZ,CCPS2		; If not, skip
-			LD		A,(FILEBUF+2)	; Check for 'D','I','R'
-			CP		'D'				;
-			JP		NZ,CCPS2		;
-			LD		A,(FILEBUF+3)	;
-			CP		'I'				;
-			JP		NZ,CCPS2		;
-			LD		A,(FILEBUF+4)	;
-			CP		'R'				;
-			JP		NZ,CCPS2		;
-			CALL	DIRECT			;
-			JP		CCPL1			; Go again			
+CCPS1
+;			CP		3				; Check if three chars
+;			JP		NZ,CCPS2		; If not, skip
+;			LD		A,(FILEBUF+2)	; Check for 'D','I','R'
+;			CP		'D'				;
+;			JP		NZ,CCPS2		;
+;			LD		A,(FILEBUF+3)	;
+;			CP		'I'				;
+;			JP		NZ,CCPS2		;
+;			LD		A,(FILEBUF+4)	;
+;			CP		'R'				;
+;			JP		NZ,CCPS2		;
+;			CALL	DIRECT			;
+;			JP		CCPL1			; Go again			
 
 			; Attempt to load .COM file from disk
 CCPS2		CALL	PARSE			; Parse the command line
-			; TODO Put in check for built-in commands here
-			LD		DE,PATHBUF2		; Point to the FCB in PATHBUF2
+			CALL	BUILTIN			; Check for built-in commands
+			CP		0				; If zero, was a built-in command
+			JP		Z,CCP			; Go again
 			CALL	RUNCOM			; Try to run .COM file
 
 			JP		CCP				; Go again
@@ -2225,9 +2228,79 @@ EMTPATHBUF	LD		(IY+0H),A		; Emit char to PATHBUF
 			INC		E				; Character count for FILEBUF
 			RET
 
+; Table of commands.  Each command has length byte prefix.
+DIRCMD		DEFB	4
+			DEFM	'DIR '
+ERACMD		DEFB	4
+			DEFM	'ERA '
+RENCMD		DEFB	4
+			DEFM	'REN '
+TYPCMD		DEFB	5
+			DEFM	'TYPE '
+SAVCMD		DEFB	5
+			DEFM	'SAVE '
+
+; Compares string at HL with string at DE
+; HL points to length byte preceeding string to search for
+; Returns 0 in A for match, 0FFH for no match
+COMPSTR		LD		C,(HL)			; Get length byte
+			INC		HL				; Advance to first character of pattern
+CSTL1		LD		A,C				; See if count is zero
+			CP		0				; ...
+			JP		Z,CSTS1			; If so, we have a match
+			LD		B,(HL)			; Get character of search pattern
+			LD		A,(DE)			; Get byte from input string
+			CP		B				; Compare them
+			JP		NZ,CSTS2		; If different, no match
+			INC		HL				; Advance pointers
+			INC		DE				; ...
+			DEC		C				; Decrement count
+			JP		CSTL1			; Loop
+CSTS1		LD		A,0				; Return 0 for match
+			RET						;
+CSTS2		LD		A,0FFH			; Return 0FFH for no match
+			RET
+
+; See if command entered is a built-in command (DIR, ERA, REN, TYPE, SAVE)
+; Returns 0 in A if it was a built-in, non zero otherwise
+; The FCB describing the command to run is in PATHBUF2
+BUILTIN		LD		DE,PATHBUF2+1	; Skip over drive byte in FCB
+			LD		HL,DIRCMD		; See if 'DIR'
+			CALL	COMPSTR			; ...
+			CP		0				; ...
+			JP		Z,DIRECT		; If so, call function for DIR
+
+			LD		DE,PATHBUF2+1	; Skip over drive byte in FCB
+			LD		HL,ERACMD		; See if 'ERA'
+			CALL	COMPSTR			; ...
+			CP		0				; ...
+			JP		Z,ERASE			; If so, call function for ERA
+
+			LD		DE,PATHBUF2+1	; Skip over drive byte in FCB
+			LD		HL,RENCMD		; See if 'REN'
+			CALL	COMPSTR			; ...
+			CP		0				; ...
+			JP		Z,RENAME		; If so, call function for REN
+
+			LD		DE,PATHBUF2+1	; Skip over drive byte in FCB
+			LD		HL,TYPCMD		; See if 'TYPE'
+			CALL	COMPSTR			; ...
+			CP		0				; ...
+			JP		Z,TYPEFILE		; If so, call function for TYPE
+
+			LD		DE,PATHBUF2+1	; Skip over drive byte in FCB
+			LD		HL,SAVCMD		; See if 'SAVE'
+			CALL	COMPSTR			; ...
+			CP		0				; ...
+			JP		Z,SAVEFILE		; If so, call function for SAVE
+
+			LD		A,0FFH			; Not a builtin
+			RET
+
 ; Load and run a .COM file to 0100H
-; DE is the address of the FCB describing the file to run
-RUNCOM		LD		HL,PATHBUF2		; Set DMAADDR to PATHBUF2 (not FILEBUF!)
+; The FCB describing the file to run is in PATHBUF2
+RUNCOM		LD		DE,PATHBUF2		; Point to the FCB in PATHBUF2
+			LD		HL,PATHBUF2		; Set DMAADDR to PATHBUF2 (not FILEBUF!)
 			LD		(DMAADDR),HL	; ...
 			CALL	_F_OPEN			;
 			CP		0				;
@@ -2318,6 +2391,18 @@ PRDIRENT	LD		A,13			; Terminate string
 			LD		(FILEBUF+13),A	; Print to console
 			LD		DE,FILEBUF+1	;
 			CALL	C_WRITESTR		;
+			RET
+
+ERASE
+			RET
+
+RENAME
+			RET
+
+TYPEFILE
+			RET
+
+SAVEFILE
 			RET
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
