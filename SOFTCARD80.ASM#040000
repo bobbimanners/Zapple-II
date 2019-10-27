@@ -20,7 +20,8 @@
 ; BDOS TODOs
 ; ----------
 ; TODO: Get STAT to work
-; TODO: Get PIP to work
+; TODO: Get PIP to work - PIP creates a temp file with extension $$$,
+;       which ProDOS can not handle
 ; TODO: F_WRITE bug turns out to be bug in ProDOS 2.5.0a7 (SET_MARK)
 ; TODO: Maybe I should eliminate use of "EX AF,AF'" in BDOS since CP/M apps may
 ;       expect exclusive use of alternate register set.
@@ -561,7 +562,11 @@ BDOSINIT	DI						; Make sure interrupts are off
 			LD		(LOGVEC),HL		; ...
 			LD		(ROVEC),HL		; ...
 			JP		PROGSTRT		; Run user program
-BDOSIMP		LD		A,C				; Prepare to check C is in range
+BDOSIMP
+
+;;;			CALL	PRHEX			; Print sys call number
+
+			LD		A,C				; Prepare to check C is in range
 			CP		41				; Max syscall# for CP/M 2.2 is 40
 			JP		NC,UNIMP		; If >41 then call UNIMP
 			LD		HL,BDOSVEC		; Start of vector table
@@ -1460,6 +1465,7 @@ PRODOS		LD		BC,OFFSET		; Add offset to convert Z80->6502 address
 
 ; Populate the PATH buffer (and PATHLEN) by copying from FCB
 ; If the FCB contains A:TEST____.TXT then the PATH buffer will be A/TEST.TXT
+; Any '$' character in extension is converted to '8' so ProDOS can handle it
 ; DE contains a pointer to the FCB
 ; IX contains pointer to the path buffer into which to write
 FCB2PATH	PUSH	IX				; Copy IX->IY
@@ -1484,7 +1490,7 @@ F2PS1		ADD		A,'A'-1			; Convert to drive letter
 
 			LD		A,(HL)			; First character of filename
 			CP		' '				; Is it space? ie: no file specified
-			JP		Z,F2PS6			; Don't handle filename or extension
+			JP		Z,F2PS7			; Don't handle filename or extension
 
 F2PL1		; Handle the filename - up to 8 characters
 			LD		A,(HL)			; Obtain filename character
@@ -1519,11 +1525,14 @@ F2PS4		LD		A,'.'			; Separator is a period
 			; Handle the extension - up to 3 characters
 F2PL3		LD		A,(HL)			; Obtain extension character
 			CP		' '				; See if it is a space (? or NULL maybe?)
-			JP		Z,F2PS6			; If so we are done with extension
-			EX		AF,AF'			; We need to re-use A here
+			JP		Z,F2PS7			; If so we are done with extension
+			CP		'$'				; See if it is a dollar ($$$ extension)
+			JP		NZ,F2PS5		; If not skip the substitution
+			LD		A,'8'			; Replace '$' with '8'
+F2PS5		EX		AF,AF'			; We need to re-use A here
 			LD		A,B				; Get character count
 			CP		3				; Extension can be up to 3 chars
-			JP		Z,F2PS5			; If so we are done with filename
+			JP		Z,F2PS6			; If so we are done with filename
 			EX		AF,AF'			; Swap back to original A reg
 			LD		(IX+0),A		; Copy to PATH buffer
 			INC		C				; Count the chars (overall)
@@ -1532,15 +1541,16 @@ F2PL3		LD		A,(HL)			; Obtain extension character
 			INC		IX				; Next byte of PATH buffer
 			JP		F2PL3			; Loop till done
 
-F2PS5		EX		AF,AF'			; Swap back to original A reg
+F2PS6		EX		AF,AF'			; Swap back to original A reg
 
-F2PS6		LD		A,C				; Store length of string
+F2PS7		LD		A,C				; Store length of string
 			LD		(IY+0),A		; We kept size byte in IY at start
 			RET						;
 
 ; This operation is almost the inverse of FCB2PATH.  It takes a pointer to the
 ; beginning of the ProDOS dirent and converts it to FCB format (8.3 with
 ; spaces for any unused characters.)
+; Any '8' character in extension is converted back to '$' (see FCB2PATH)
 ; HL points to the file entry in the ProDOS directory
 ; B contains the drive number (1 for A:, 2 for B: etc)
 ; The FCB is written to the buffer pointed to by DMAADDR
@@ -1586,7 +1596,15 @@ N2FL3		INC		HL				; Advance source pointer
 			LD		A,(HL)			; Read character
 			CP		'.'				; See if it is a period
 			JP		Z,N2FS2			; Prepare to copy the extension
-			LD		(DE),A			; Write character
+			
+			CP		'8'				; See if character in name is '8'
+			JP		NZ,N2FS0		; If not, then no substitution
+			LD		A,B				; See how many chars have been written
+			CP		8				; >=8? If so we are in the extension
+			JP		C,N2FS0			; If not, then no substitution
+			LD		A,'$'			; Otherwise substitude '8'->'$'
+
+N2FS0		LD		(DE),A			; Write character
 			INC		B				; Increment count of chars written
 N2FS1		DEC		C				; Decrement count of chars remaining
 			JP		N2FL3			; Loop
@@ -1689,11 +1707,9 @@ MATCHFCB	INC		DE				; Skip over drive byte in FCB
 			INC		HL				; Skip over drive byte in FCB
 			LD		C,0				; Initialize character counter
 MFL1		LD		A,(DE)			; Load byte of search pattern
-
 			CP		'?'				; Is it '?' wildcard?
 			JP		Z,MFS1			; If so, automatic char match
 			LD		B,(HL)			; Load byte of match candidate
-
 			CP		B				; See if the characters match
 			JP		NZ,MFS2			; If not, then no match
 MFS1		INC		DE				; Advance source pointer
@@ -1890,6 +1906,27 @@ N2H2		OR		0F0H			;
 			INC		DE				;
 			RET
 
+; Print value of C in HEX
+; Used for DEBUG only
+;PRHEX		PUSH	AF
+;			PUSH	BC
+;			PUSH	DE
+;			PUSH	HL
+;			LD		E,'['
+;			CALL	C_WRITE
+;			LD		L,C				; Copy to HL for NUM2HEX
+;			LD		H,0				; ...
+;			LD		DE,HEXBUF		; Generate hex string to HEXBUF
+;			CALL	NUM2HEX			; ...
+;			LD		DE,HEXBUF+2		; Write hex value to console
+;			CALL	C_WRITESTR		;
+;			LD		E,']'
+;			CALL	C_WRITE
+;			POP		HL
+;			POP		DE
+;			POP		BC
+;			POP		AF
+;			RET
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Very simple CCP
