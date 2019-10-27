@@ -1896,10 +1896,11 @@ N2H2		OR		0F0H			;
 ; - FILENAME.COM - Load and run FILENAME.COM at 0100H
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-; TODO: Implement support for ^C in C_READ
-; TODO: Implement the built-in commands using a table
-; TODO: Built-in commands argument handling
+; TODO: Make unadorned drives expand to x:????????.??? or something so
+;       DIR A: works.  Or just special case it in DIRECT ...
 ; TODO: Parse * wildcard and generate FCB with ?s
+; TODO: Implement TYPE, REN, ERA, SAVE commands
+; TODO: Implement support for ^C in C_READ
 
 ; Get a line of text from the console & handle it
 CCP			
@@ -1936,25 +1937,25 @@ CCPL1		LD		A,(CURDRV)		; Get current drive & user number
 			CALL	DRV_SET			; ...
 			JP		CCPL1			; Go again
 
-			; DIR command
-			; TODO Handle arguments
-CCPS1
-;			CP		3				; Check if three chars
-;			JP		NZ,CCPS2		; If not, skip
-;			LD		A,(FILEBUF+2)	; Check for 'D','I','R'
-;			CP		'D'				;
-;			JP		NZ,CCPS2		;
-;			LD		A,(FILEBUF+3)	;
-;			CP		'I'				;
-;			JP		NZ,CCPS2		;
-;			LD		A,(FILEBUF+4)	;
-;			CP		'R'				;
-;			JP		NZ,CCPS2		;
-;			CALL	DIRECT			;
-;			JP		CCPL1			; Go again			
+CCPS1		; Create FCB1 'x:????????.???'
+			LD		A,(CURDRV)		; Get current drive
+			AND		0FH				; Mask out user number
+			INC		A				; 1-based for FCB
+			LD		(FCB1DRV),A		;
+			LD		A,'?'			; Filename
+			LD		(FCB1NAM),A		;
+			LD		(FCB1NAM+1),A	;
+			LD		(FCB1NAM+2),A	;
+			LD		(FCB1NAM+3),A	;
+			LD		(FCB1NAM+4),A	;
+			LD		(FCB1NAM+5),A	;
+			LD		(FCB1NAM+6),A	;
+			LD		(FCB1NAM+7),A	;
+			LD		(FCB1NAM+8),A	;
+			LD		(FCB1NAM+9),A	;
+			LD		(FCB1NAM+10),A	;
 
-			; Attempt to load .COM file from disk
-CCPS2		CALL	PARSE			; Parse the command line
+			CALL	PARSE			; Parse the command line
 			CALL	BUILTIN			; Check for built-in commands
 			CP		0				; If zero, was a built-in command
 			JP		Z,CCP			; Go again
@@ -2347,37 +2348,20 @@ REMSG		DEFM	'Read error'
 			DEFB	13,'$'
 
 ; Show disk directory
+; Use FCB1 for directory search
 DIRECT		LD		HL,0080H		; Reset DMAADDR to 0080H
 			LD		(DMAADDR),HL	; ...
-
-			; Create FCB2 'x:????????.???'
-			LD		A,(CURDRV)		; Get current drive
-			AND		0FH				; Mask out user number
-			INC		A				; 1-based for FCB
-			LD		(FCB2DRV),A		;
-			LD		A,'?'			; Filename
-			LD		(FCB2NAM),A		;
-			LD		(FCB2NAM+1),A	;
-			LD		(FCB2NAM+2),A	;
-			LD		(FCB2NAM+3),A	;
-			LD		(FCB2NAM+4),A	;
-			LD		(FCB2NAM+5),A	;
-			LD		(FCB2NAM+6),A	;
-			LD		(FCB2NAM+7),A	;
-			LD		(FCB2NAM+8),A	;
-			LD		(FCB2NAM+9),A	;
-			LD		(FCB2NAM+10),A	;
 
 			LD		E,13			; Carriage return
 			CALL	C_WRITE			;
 
-			LD		DE,FCB2			; Default FCB address 2
+			LD		DE,FCB1			; Default FCB address 2
 			CALL	F_SFIRST		; Find first dir entry
 			CP		0				;
 			RET		NZ				; If not found, we're done
 			CALL	PRDIRENT		; Print entry
 			
-DIRL1		LD		DE,FCB2			; Default FCB address 2
+DIRL1		LD		DE,FCB1			; Default FCB address 2
 			CALL	F_SNEXT			; Find next dir entry
 			CP		0				;
 			RET		NZ				; If not found, we're done
