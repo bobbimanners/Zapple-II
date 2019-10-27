@@ -806,8 +806,6 @@ DSRET		LD		L,A				; Return code in L too
 ; Returns error codes in A and L:
 ; Returns 0 for success.  The FCB for the file opened is left at DMAADDR (slot 0)
 ; Returns 0FFH if file not found
-; TODO: F_OPEN should use the record count field of the FCB and (if non zero) seek
-; to appropriate point in the file
 F_OPEN		PUSH	DE				; Preserve pointer to FCB
 			CALL	F_SFIRST		; Find first matching directory entry
 			POP		DE				; Restore pointer to FCB
@@ -988,6 +986,7 @@ FSNS2		LD		A,0FFH			; No match
 ; Delete file
 ; DE is the address of the FCB describing the file to delete
 ; Returns error codes in A and L:
+; TODO: This only deletes the first file ... need to do F_SNEXT too
 F_DELETE	CALL	F_SFIRST		; Search for file, create FCB
 			CP		0FFH			; If not found ...
 			JP		Z,FDERR			; ... Return with error
@@ -1896,19 +1895,21 @@ N2H2		OR		0F0H			;
 ; Very simple CCP
 ;
 ; Commands:
-; - A:, B: ...   - Change default drive
-; - DIR          - Show directory
-; - ERA          - Erase file(s)
-; - REN          - Rename file
-; - SAVE         - Save memory to disk
-; - TYPE         - Show text file on console
+; - d            - Change default drive (A:, B: etc.)
+; - DIR          - Show directory (DIR, DIR A:, DIR FOO.TXT, DIR F???????.???)
+; - ERA          - Erase file(s) (ERA FOO.TXT, ERA F???????.???)
+; - REN          - Rename file (REN BAR.TXT=FOO.TXT)
+; - SAVE         - Save memory to disk (SAVE 7 FOO.COM)
+; - TYPE         - Show text file on console (TYPE TEST.TXT)
 ; - FILENAME.COM - Load and run FILENAME.COM at 0100H
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+; TODO: Sanity check / validate number of command args for builtins
 ; TODO: Make unadorned drives expand to x:????????.??? or something so
 ;       DIR A: works.  Or just special case it in DIRECT ...
+;       Need to handle this differently for eg: ERA A: vs DIR A: !!
 ; TODO: Parse * wildcard and generate FCB with ?s
-; TODO: Implement TYPE, REN, ERA, SAVE commands
+; TODO: Implement REN, SAVE commands
 ; TODO: Implement support for ^C in C_READ
 
 ; Get a line of text from the console & handle it
@@ -2278,33 +2279,46 @@ BUILTIN		LD		DE,PATHBUF2+1	; Skip over drive byte in FCB
 			LD		HL,DIRCMD		; See if 'DIR'
 			CALL	COMPSTR			; ...
 			CP		0				; ...
-			JP		Z,DIRECT		; If so, call function for DIR
+			JP		NZ,BIS1			; If not, skip
+			CALL	DIRECT			; Perform DIR
+			JP		BIS6			; Done
 
-			LD		DE,PATHBUF2+1	; Skip over drive byte in FCB
+BIS1		LD		DE,PATHBUF2+1	; Skip over drive byte in FCB
 			LD		HL,ERACMD		; See if 'ERA'
 			CALL	COMPSTR			; ...
 			CP		0				; ...
-			JP		Z,ERASE			; If so, call function for ERA
+			JP		NZ,BIS2			; If not, skip
+			CALL	ERASE			; Perform ERA
+			JP		BIS6			; Done
 
-			LD		DE,PATHBUF2+1	; Skip over drive byte in FCB
+BIS2		LD		DE,PATHBUF2+1	; Skip over drive byte in FCB
 			LD		HL,RENCMD		; See if 'REN'
 			CALL	COMPSTR			; ...
 			CP		0				; ...
-			JP		Z,RENAME		; If so, call function for REN
+			JP		NZ,BIS3			; If not, skip
+			CALL	Z,RENAME		; If so, call function for REN
+			JP		BIS6			; Done
 
-			LD		DE,PATHBUF2+1	; Skip over drive byte in FCB
+BIS3			LD		DE,PATHBUF2+1	; Skip over drive byte in FCB
 			LD		HL,TYPCMD		; See if 'TYPE'
 			CALL	COMPSTR			; ...
 			CP		0				; ...
-			JP		Z,TYPEFILE		; If so, call function for TYPE
+			JP		NZ,BIS4			; If not, skip
+			CALL	Z,TYPEFILE		; If so, call function for TYPE
+			JP		BIS6			; Done
 
-			LD		DE,PATHBUF2+1	; Skip over drive byte in FCB
+BIS4		LD		DE,PATHBUF2+1	; Skip over drive byte in FCB
 			LD		HL,SAVCMD		; See if 'SAVE'
 			CALL	COMPSTR			; ...
 			CP		0				; ...
-			JP		Z,SAVEFILE		; If so, call function for SAVE
+			JP		NZ,BIS5			; If not, skip
+			CALL	Z,SAVEFILE		; If so, call function for SAVE
+			JP		BIS6			; Done
+			
+BIS5		LD		A,0FFH			; Not a builtin
+			RET
 
-			LD		A,0FFH			; Not a builtin
+BIS6		XOR		A				; Is a builtin
 			RET
 
 ; Load and run a .COM file to 0100H
@@ -2337,7 +2351,7 @@ RCL1		CALL	F_READ			; Read records until done
 			LD		HL,0080H		; Reset DMAADDR to 0080H
 			LD		(DMAADDR),HL	; ...
 			RET						;
-RCOERR		LD		DE,OEMSG		; 'Open error' message
+RCOERR		LD		DE,NFMSG		; 'Not found' message
 			CALL	C_WRITESTR		; ...
 			RET						;
 RCLERR		CALL	F_CLOSE			; Close the file
@@ -2350,7 +2364,7 @@ RCLERR		CALL	F_CLOSE			; Close the file
 LMSG		DEFM	'Loaded'
 			DEFB	13,'$'
 
-OEMSG		DEFM	'Not found'
+NFMSG		DEFM	'Not found'
 			DEFB	13,'$'
 
 REMSG		DEFM	'Read error'
@@ -2386,9 +2400,26 @@ PRDIRENT	LD		A,13			; Terminate string
 			CALL	C_WRITESTR		;
 			RET
 
-ERASE
+; Erase file(s)
+; Pattern for erase is in FCB1
+; TODO: Should prompt Y/N if wildcards used
+; TODO: Not working with wildcards for some reason!!
+ERASE		LD		HL,0080H		; Reset DMAADDR to 0080H
+			LD		(DMAADDR),HL	; ...
+
+			LD		DE,FCB1			; Pass address of FCB1
+			CALL	F_DELETE		; Do the delete operation
+			CP		0				; Check return code
+			JP		NZ,ERER			; If non zero print error
 			RET
 
+ERER		LD		DE,NFMSG		; 'Not found' message
+			CALL	C_WRITESTR		; ...
+			RET						;
+
+; Rename a file
+; Here we need to build our own 'special' FCB using the dest=src command line
+; TODO: Write this
 RENAME
 			RET
 
@@ -2410,16 +2441,15 @@ TFS1		CP		1				; Check return code from F_READ
 			JP		NZ,TFLERR		; If not EOF (1), then error
 			CALL	TYPEBLK			; Display last block on screen
 			CALL	F_CLOSE			; Close the file
-			XOR		A				; Return zero (was a builtin)
+			LD		E,13			; Carriage return
+			CALL	C_WRITE			;
 			RET						;
-TFOERR		LD		DE,OEMSG		; 'Open error' message
+TFOERR		LD		DE,NFMSG		; 'Not found' message
 			CALL	C_WRITESTR		; ...
-			XOR		A				; Return zero (was a builtin)
 			RET						;
 TFLERR		CALL	F_CLOSE			; Close the file
 			LD		DE,REMSG		; 'Read error' message
 			CALL	C_WRITESTR		; ...
-			XOR		A				; Return zero (was a builtin)
 			RET
 
 ; Helper function for TYPEFILE
@@ -2446,6 +2476,8 @@ TBS1		POP		HL				; Restore HL, DE
 			RET
 
 ; Save memory to disk file
+; Use the FCB already constructed in FCB2
+; TODO Write this
 SAVEFILE
 			RET
 
