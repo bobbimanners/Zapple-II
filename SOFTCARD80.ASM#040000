@@ -20,6 +20,8 @@
 ; BDOS TODOs
 ; ----------
 ; TODO: F_WRITE bug turns out to be bug in ProDOS 2.5.0a7 (SET_MARK)
+; TODO: Maybe I should eliminate use of "EX AF,AF'" in BDOS since CP/M apps may
+;       expect exclusive use of alternate register set.
 ; TODO: Implement missing system calls:
 ;        - F_ATTRIB (needs to support wildcards, leave FCB at DMAADDR)
 ;        - RS232 (A_READ, A_WRITE)
@@ -1535,13 +1537,13 @@ F2PS6		LD		A,C				; Store length of string
 ; Trashes pretty much all registers (except IX, IY)
 NAME2FCB	EX		DE,HL			; Stash HL in DE so we can use HL here
 
-			LD		HL,(DMAADDR)	; Set all 32 bytes to FCB to zero
+			LD		HL,(DMAADDR)	; Set all 16 bytes to FCB to zero
 			LD		C,0				; ...
 			XOR		A				; ...
 N2FL1		LD		(HL),C			; ...
 			INC		HL				; ...
 			INC		A				; ...
-			CP		32				; ...
+			CP		16				; ...
 			JP		NZ,N2FL1		; ...
 
 			LD		HL,(DMAADDR)	; Set all filename chars in FCB to space
@@ -1593,22 +1595,24 @@ N2FS2		LD		DE,(DMAADDR)	; Destination is start of extension
 			JP		N2FS1			; Jump back into the read-write loop
 
 			; Handle file size info
-N2FS3		LD		DE,(DMAADDR)	; Pointer to start of FCB
-			LD		IX,PATHBUF		; Destination buffer
-			CALL	FCB2PATH		; Populate PATHLEN and PATH from new FCB
-			LD		HL,GFIMLI		; Pass address of 6502 JSR instruction
-			CALL	PRODOS			; Invoke ProDOS MLI
-			CP		0				; See if there was an error
-			JP		NZ,N2FERR		; Handle error
-			LD		HL,(GFIMLIBU)	; Obtain the blocks used field
-			ADD		HL,HL			; Mult x 4 to get 128 byte records
-			ADD		HL,HL			; ...
-			CALL	RECS2EXRC		; Puts extent in B, recs in A
-			LD		DE,(DMAADDR)	; Pointer to start of FCB
-			PUSH	DE				; Copy into IX
-			POP		IX				; ...
-			LD		(IX+0CH),B		; Store num extents in EX field of FCB
-			LD		(IX+0FH),A		; Store num recs in RC field of FCB
+; TODO This is commented out because it causes problems when called from parse
+;      We need a mode switch to turn this part of the function on and off
+N2FS3	;	LD		DE,(DMAADDR)	; Pointer to start of FCB
+		;	LD		IX,PATHBUF		; Destination buffer
+		;	CALL	FCB2PATH		; Populate PATHLEN and PATH from new FCB
+		;	LD		HL,GFIMLI		; Pass address of 6502 JSR instruction
+		;	CALL	PRODOS			; Invoke ProDOS MLI
+		;	CP		0				; See if there was an error
+		;	JP		NZ,N2FERR		; Handle error
+		;	LD		HL,(GFIMLIBU)	; Obtain the blocks used field
+		;	ADD		HL,HL			; Mult x 4 to get 128 byte records
+		;	ADD		HL,HL			; ...
+		;	CALL	RECS2EXRC		; Puts extent in B, recs in A
+		;	LD		DE,(DMAADDR)	; Pointer to start of FCB
+		;	PUSH	DE				; Copy into IX
+		;	POP		IX				; ...
+		;	LD		(IX+0CH),B		; Store num extents in EX field of FCB
+		;	LD		(IX+0FH),A		; Store num recs in RC field of FCB
 			RET	
 N2FERR		LD		DE,(DMAADDR)	; Pointer to start of FCB
 			PUSH	DE				; Copy into IX
@@ -1890,7 +1894,7 @@ N2H2		OR		0F0H			;
 ; - FILENAME.COM - Load and run FILENAME.COM at 0100H
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-; TODO: BUG-- F_OPEN is trashing FILEBUF with it's damn DIRENT!
+; TODO: Implement support for ^C in C_READ
 ; TODO: Implement the built-in commands using a table
 ; TODO: Built-in commands argument handling
 ; TODO: Parse * wildcard and generate FCB with ?s
@@ -1949,6 +1953,7 @@ CCPS1		CP		3				; Check if three chars
 
 			; Attempt to load .COM file from disk
 CCPS2		CALL	PARSE			; Parse the command line
+			; TODO Put in check for built-in commands here
 			LD		DE,PATHBUF2		; Point to the FCB in PATHBUF2
 			CALL	RUNCOM			; Try to run .COM file
 
@@ -1982,16 +1987,13 @@ UCS1		LD		(HL),A			; Put converted char back
 ;   4 in whitespace segment following first argument
 ;   5 in second argument
 ;   6 in whitespace segment following second arg (or later)
-PARSE		LD		HL,PATHBUF+1	; Skip first byte - buffer capacity
-			PUSH	HL				; HL->IY. Use IY as dest pointer into PATHBUF
-			POP		IY				; ...
+PARSE		CALL	RSTPATHBUF		; Set IY and E for writing PATHBUF
 			LD		HL,FILEBUF+1	; Skip first byte - buffer capacity
 			PUSH	HL				; HL->IX. Use IX as dest pointer into FILEBUF
 			POP		IX				; ...
-			LD		C,(HL)			; Get the length of source string
-			LD		B,0				; B is the state of the parser
 			LD		D,0				; D is the count of chars for FILEBUF
-			LD		E,0				; E is the count of chars for PATHBUF
+			LD		B,0				; B is the state of the parser
+			LD		C,(HL)			; Get the length of source string
 CTL1		LD		A,C				; See if any chars are left in input
 			CP		0				; ...
 			JP		Z,CTS2			; If 0, go update the length byte
@@ -2008,6 +2010,18 @@ CTS2		LD		A,' '			; Fake an additional space on the end ...
 			CALL	CMDSPC			; ... so parser can get itself in correct state
 			LD		HL,FILEBUF		; First byte is length of string
 			LD		(HL),D			; Write string length
+			RET
+
+; Helper function to reset the PATHBUF buffer pointer & character count
+; PATHBUF is used to store the filename for creating an FCB
+; Sets IY to point to first character to be written to PATHBUF
+; Resets count of chars written E
+RSTPATHBUF	PUSH	HL				; Preserve HL
+			LD		HL,PATHBUF+1	; Use HL to initialize IY
+			PUSH	HL				; HL->IY. Use IY as dest ptr into PATHBUF
+			POP		IY				; ...
+			POP		HL				; Restore original HL
+			LD		E,0				; Reset count of chars in PATHBUF
 			RET
 
 ; Examines Pascal string pointed to by HL to see if it begins with a drive
@@ -2041,16 +2055,16 @@ DLS1		DEC		HL				; Put HL back to the beginning
 ; Handle a space character in the command line
 ; Character is passed in A
 ; State 0: Do not emit space to FILEBUF
-; State 1: Do not emit space to FILEBUF
+; State 1: Do space to FILEBUF
 ;          Set length byte for PATHBUF & create FCB in PATHBUF2
 ;          -> State 2
 ; State 2: Do not emit space to FILEBUF
 ; State 3: Emit space to FILEBUF
-;          Set length byte for PATHBUF & create FCB in FCB1  TODO
+;          Set length byte for PATHBUF & create FCB in FCB1
 ;          -> State 4
 ; State 4: Do not emit space to FILEBUF
 ; State 5: Emit space to FILEBUF
-;          Set length byte for PATHBUF & create FCB in FCB1  TODO
+;          Set length byte for PATHBUF & create FCB in FCB2
 ;          -> State 6
 ; State 6: Emit space to FILEBUF
 CMDSPC		EX		AF,AF'			; Save character for later
@@ -2060,11 +2074,14 @@ CMDSPC		EX		AF,AF'			; Save character for later
 			RET						;
 CSS1		CP		1				; State 1 - eat the space
 			JP		NZ,CSS2			;
+			EX		AF,AF'			; Get character back
+			CALL	EMTFILBUF		; Emit char to FILEBUF
 			LD		A,E				; Write length byte to PATHBUF
 			LD		(PATHBUF),A		; ...
-			LD		E,0				; Reset length for next time
-			; TODO RESET IY
-			PUSH	HL				; Preserve HL
+			CALL	RSTPATHBUF		; Reset IY & E for next use
+			PUSH	HL				; Preserve HL, BC, DE
+			PUSH	BC				; ...
+			PUSH	DE				; ...
 			LD		HL,PATHBUF2		; DMAADDR to PATHBUF2 - will put FCB there
 			LD		(DMAADDR),HL	; ...
 			LD		HL,PATHBUF		; NAME2FCB will use filename at PATHBUF
@@ -2076,8 +2093,10 @@ CSS1		CP		1				; State 1 - eat the space
 			LD		(PATHBUF2+10),A	; ...
 			LD		A,'M'			; ...
 			LD		(PATHBUF2+11),A	; ...
+			POP		DE				; Restore DE, BC, HL
+			POP		BC				; ...
+			POP		HL				; ...
 			INC		B				; Transition to state 2
-			POP		HL				; Restore HL
 			RET						;
 CSS2		CP		2				; State 2 - eat the space
 			JP		NZ,CSS3			;
@@ -2086,6 +2105,20 @@ CSS3		CP		3				; State 3
 			JP		NZ,CSS4			;
 			EX		AF,AF'			; Get character back
 			CALL	EMTFILBUF		; Emit char to FILEBUF
+			LD		A,E				; Write length byte to PATHBUF
+			LD		(PATHBUF),A		; ...
+			CALL	RSTPATHBUF		; Reset IY & E for next use
+			PUSH	HL				; Preserve HL, BC, DE
+			PUSH	BC				; ...
+			PUSH	DE				; ...
+			LD		HL,FCB1			; DMAADDR to FCB1 - will put FCB there
+			LD		(DMAADDR),HL	; ...
+			LD		HL,PATHBUF		; NAME2FCB will use filename at PATHBUF
+			CALL	DRVLETTER		; Handle any x: drive letter prefix
+			CALL	NAME2FCB		; Create FCB at FCB1
+			POP		DE				; Restore DE, BC, HL
+			POP		BC				; ...
+			POP		HL				; ...
 			INC		B				; Transition to state 4
 			RET						;
 CSS4		CP		4				; State 4 - eat the space
@@ -2095,8 +2128,22 @@ CSS5		CP		5				; State 5
 			JP		NZ,CSS6			;
 			EX		AF,AF'			; Get character back
 			CALL	EMTFILBUF		; Emit char to FILEBUF
+			LD		A,E				; Write length byte to PATHBUF
+			LD		(PATHBUF),A		; ...
+			CALL	RSTPATHBUF		; Reset IY & E for next use
+			PUSH	HL				; Preserve HL, BC, DE
+			PUSH	BC				; ...
+			PUSH	DE				; ...
+			LD		HL,FCB2			; DMAADDR to FCB2 - will put FCB there
+			LD		(DMAADDR),HL	; ...
+			LD		HL,PATHBUF		; NAME2FCB will use filename at PATHBUF
+			CALL	DRVLETTER		; Handle any x: drive letter prefix
+			CALL	NAME2FCB		; Create FCB at FCB2
+			POP		DE				; Restore DE, BC, HL
+			POP		BC				; ...
+			POP		HL				; ...
 			INC		B				; Transition to state 6
-			RET
+			RET						;
 CSS6		CP		6				; State 6
 			JP		NZ,CSS7			;
 			EX		AF,AF'			; Get character back
