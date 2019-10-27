@@ -36,7 +36,7 @@
 ; Other Random TODO comments in the code
 ; 
 
-BDOSADDR	EQU		08800H			; 
+BDOSADDR	EQU		08600H			; 
 STCKTOP		EQU		097FFH			; Top of Z80 stack (below IOBUFs)
 
 SOFTCARD	EQU		0E400H			; Softcard in slot 4 ($C400)
@@ -850,6 +850,7 @@ _F_OPEN		LD		IX,PATHBUF		; Destination buffer
 			LD		HL,(GEMLIE2)	; Load 16 bit length
 			CALL	LEN2RECS		; Leaves number of records in A
 
+			; TODO If >16K bytes should set num records to 128 I think
 			; Store records used
 			LD		(IY+0FH),A		; Set records used field
 
@@ -1049,7 +1050,11 @@ F_READ		PUSH	DE				; Copy pointer to FCB ...
 			LD		(IX+20H),A		; ...
 			INC		(IX+0CH)		; Increment the extent
 
-FRS1		XOR		A				; Zero for success
+FRS1		LD		A,(FRMLITC)		; Get number of bytes read (LSB)
+			CP		128				; See if it was 128 as expected
+			JP		NZ,FREOF		; If not, return EOF
+
+			XOR		A				; Zero for success
 			LD		L,A				; Return code in L also
 			RET						; Done
 FREOF		LD		A,1				; EOF return code
@@ -1294,6 +1299,10 @@ F_READRAND	PUSH	DE				; Copy pointer to FCB ...
 			CALL	RECS2EXRC		; Puts extent in B, recs in A
 			LD		A,(IX+20H),A	; Update sequential record number
 			LD		B,(IX+0CH),B	; Update sequential extent number
+
+			LD		A,(FRMLITC)		; Get number of bytes read (LSB)
+			CP		128				; See if it was 128 as expected
+			JP		NZ,FRREOF		; If not, return EOF
 
 			XOR		A				; Zero for success
 			LD		L,A				; Return code in L also
@@ -2383,9 +2392,60 @@ ERASE
 RENAME
 			RET
 
-TYPEFILE
+; Show a test file on the console
+; File to open is in FCB1
+TYPEFILE	LD		DE,FCB1			; Point to FCB1
+			LD		HL,FILEBUF		; Set DMAADDR to FILEBUF
+			LD		(DMAADDR),HL	; ...
+			CALL	F_OPEN			; Open the file with wildcard search
+			CP		0				;
+			JP		NZ,TFOERR		; Open error
+TFL1		LD		DE,FCB1			; Point to FCB1
+			CALL	F_READ			; Read records until done
+			CP		0				; Check return code from F_READ
+			JP		NZ,TFS1			; If non-zero jump out of loop
+			CALL	TYPEBLK			; Display block on screen
+			JP		TFL1			; Loop
+TFS1		CP		1				; Check return code from F_READ
+			JP		NZ,TFLERR		; If not EOF (1), then error
+			CALL	TYPEBLK			; Display last block on screen
+			CALL	F_CLOSE			; Close the file
+			XOR		A				; Return zero (was a builtin)
+			RET						;
+TFOERR		LD		DE,OEMSG		; 'Open error' message
+			CALL	C_WRITESTR		; ...
+			XOR		A				; Return zero (was a builtin)
+			RET						;
+TFLERR		CALL	F_CLOSE			; Close the file
+			LD		DE,REMSG		; 'Read error' message
+			CALL	C_WRITESTR		; ...
+			XOR		A				; Return zero (was a builtin)
 			RET
 
+; Helper function for TYPEFILE
+TYPEBLK		PUSH	DE				; Preserve DE, DL
+			PUSH	HL				; ...
+			LD		HL,FILEBUF		; Print block in FILEBUF
+			LD		C,0				; Initialize character count
+TBL1		LD		A,(HL)			; Get character
+			CP		26				; See if it is ^Z character
+			JP		Z,TBS1			; If so, we are done
+			LD		E,A				; Write to console
+			PUSH	HL				;
+			PUSH	DE				;
+			CALL	C_WRITE			; ...
+			POP		DE				;
+			POP		HL				;
+			INC		HL				; Advance pointer
+			INC		C				; Increment character count
+			LD		A,C				; See if we have printed whole block
+			CP		80H				; ...
+			JP		NZ,TBL1			; If not, loop
+TBS1		POP		HL				; Restore HL, DE
+			POP		DE				; ...
+			RET
+
+; Save memory to disk file
 SAVEFILE
 			RET
 
