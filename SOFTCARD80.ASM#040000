@@ -19,7 +19,10 @@
 ;
 ; BDOS TODOs
 ; ----------
-; TODO: Get STAT to work
+; TODO: NAME2FCB needs to generate size information in some cases but not others.
+;       Right now this functionality is just commented out.
+; TODO: F_DELETE is deleting only the first matching file. Should be all matching files.
+; TODO: Get STAT.COM to work
 ; TODO: F_WRITE bug turns out to be bug in ProDOS 2.5.0a7 (SET_MARK)
 ; TODO: Maybe I should eliminate use of "EX AF,AF'" in BDOS since CP/M apps may
 ;       expect exclusive use of alternate register set.
@@ -550,6 +553,10 @@ BDOSINIT	DI						; Make sure interrupts are off
 			LD		(IOBYTE),A		; Initialize IOBYTE
 			LD		(CURDRV),A		; Drive A:, User 0
 			LD		(FILEBUF),A		; Zero chars in command tail
+			XOR		A				; A=0 means close all files
+			LD		(FCMLIN),A		; Store in parameter list
+			LD		HL,FCMLI		; Pass address of 6502 JSR instruction
+			CALL	PRODOS			; Invoke ProDOS MLI
 			LD		(FRN1),A		; Initialize FRNs to zero
 			LD		(FRN2),A		; ...
 			LD		(FRN3),A		; ...
@@ -559,7 +566,7 @@ BDOSINIT	DI						; Make sure interrupts are off
 			LD		HL,0000H		; Initialize LOGVEC & ROVEC to 0000H
 			LD		(LOGVEC),HL		; ...
 			LD		(ROVEC),HL		; ...
-			JP		PROGSTRT		; Run user program
+			JP		CCP				; Start the CCP
 BDOSIMP
 
 ;;;			CALL	PRHEX			; Print sys call number
@@ -639,6 +646,8 @@ C_READ		LD		HL,RDKEY		; We are going to call RDKEY
 			LD		(CMD),A			; ...
 			LD		(SOFTCARD),A	; Do it!
 			LD		A,(AREG)		; Grab the return value
+			CP		83H				; See if it is Ctrl-C
+			JP		Z,BDOSINIT		; If Ctrl-C quit user program, go to CCP
 			PUSH	AF				; Preserve A (and F)
 			LD		HL,COUT			; Echo the character using COUT
 			LD		(ADDR),HL		; ...
@@ -962,7 +971,8 @@ FSFS2		LD		A,0FFH			; No match
 F_SNEXT		LD		(TEMPWORD),DE	; Store pointer to search FCB
 			LD		HL,(CDBPTR)		; Pointer into current block
 			LD		A,(CDBCOUNT)	; File count for current block
-FSNL1		CALL	CHKDIRBLK		; Search directory block
+FSNL1		LD		DE,(TEMPWORD)	; Get ptr to search FCB back
+			CALL	CHKDIRBLK		; Search directory block
 			CP		0				; See if it was a match
 			JP		Z,FSNS1			; If so, return
 
@@ -1592,16 +1602,17 @@ N2FL3		INC		HL				; Advance source pointer
 			LD		A,(HL)			; Read character
 			CP		'.'				; See if it is a period
 			JP		Z,N2FS2			; Prepare to copy the extension
+			LD		(DE),A			; Write character
 			
 			CP		'8'				; See if character in name is '8'
 			JP		NZ,N2FS0		; If not, then no substitution
 			LD		A,B				; See how many chars have been written
 			CP		8				; >=8? If so we are in the extension
 			JP		C,N2FS0			; If not, then no substitution
-			LD		A,'$'			; Otherwise substitude '8'->'$'
+			LD		A,'$'			; Otherwise substitute '8'->'$'
+			LD		(DE),A			; Re-write the substituted character
 
-N2FS0		LD		(DE),A			; Write character
-			INC		B				; Increment count of chars written
+N2FS0		INC		B				; Increment count of chars written
 N2FS1		DEC		C				; Decrement count of chars remaining
 			JP		N2FL3			; Loop
 
@@ -1943,9 +1954,6 @@ N2H2		OR		0F0H			;
 ;       Need to handle this differently for eg: ERA A: vs DIR A: !!
 ; TODO: Parse * wildcard and generate FCB with ?s
 ; TODO: Implement REN, SAVE commands
-; TODO: Implement support for ^C in C_READ
-; TODO: Fix DIR command to use C_WRITE not C_WRITESTR ($s!!).
-; TODO: Why is DIR command giving partial results?
 
 ; Get a line of text from the console & handle it
 CCP			
