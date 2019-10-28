@@ -1954,6 +1954,7 @@ N2H2		OR		0F0H			;
 ;       Need to handle this differently for eg: ERA A: vs DIR A: !!
 ; TODO: Parse * wildcard and generate FCB with ?s
 ; TODO: Implement REN, SAVE commands
+; TODO: Bug in TYPEFILE - shows garbage for zero length file
 
 ; Get a line of text from the console & handle it
 CCP			
@@ -2342,7 +2343,7 @@ BIS2		LD		DE,PATHBUF2+1	; Skip over drive byte in FCB
 			CALL	Z,RENAME		; If so, call function for REN
 			JP		BIS6			; Done
 
-BIS3			LD		DE,PATHBUF2+1	; Skip over drive byte in FCB
+BIS3		LD		DE,PATHBUF2+1	; Skip over drive byte in FCB
 			LD		HL,TYPCMD		; See if 'TYPE'
 			CALL	COMPSTR			; ...
 			CP		0				; ...
@@ -2491,7 +2492,10 @@ TYPEFILE	LD		DE,FCB1			; Point to FCB1
 			CALL	F_OPEN			; Open the file with wildcard search
 			CP		0				;
 			JP		NZ,TFOERR		; Open error
-TFL1		LD		DE,FCB1			; Point to FCB1
+TFL1		LD		HL,FILEBUF		; Write ^Z to buffer in case 0 bytes read
+			LD		A,26			; ...
+			LD		(HL),A			; ...
+			LD		DE,FCB1			; Point to FCB1
 			CALL	F_READ			; Read records until done
 			CP		0				; Check return code from F_READ
 			JP		NZ,TFS1			; If non-zero jump out of loop
