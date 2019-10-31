@@ -23,9 +23,7 @@
 ; TODO: Needs proper boot / warm boot entry points
 ; TODO: NAME2FCB needs to generate size information in some cases but not
 ;       others. Right now this functionality is just commented out.
-; TODO: PIP wildcards only get first file, so there must be a problem with
-;       F_SFIRST/F_SNEXT still
-; TODO: Get STAT.COM to work
+; TODO: Get STAT.COM to work.  Think it is picky about arg handling.
 ; TODO: F_WRITE bug turns out to be bug in ProDOS 2.5.0a7 (SET_MARK)
 ; TODO: Maybe I should eliminate use of "EX AF,AF'" in BDOS since CP/M apps
 ;       may expect exclusive use of alternate register set.
@@ -967,12 +965,11 @@ FSFS2		LD		A,0FFH			; No match
 			RET
 
 ; Search for next match of filename in directory
-; DE is the address of the FCB describing the file to look for
+; The address of the FCB describing the file to look for is in TEMPWORD
 ; Returns error codes in A and L: 0 for success, 0FFH for not found
 ; The matching FCB is always in slot 0, so success return code always 0
 ; TODO: Should handle '?' in extent field also
-F_SNEXT		LD		(TEMPWORD),DE	; Store pointer to search FCB
-			LD		HL,(CDBPTR)		; Pointer into current block
+F_SNEXT		LD		HL,(CDBPTR)		; Pointer into current block
 			LD		A,(CDBCOUNT)	; File count for current block
 FSNL1		LD		DE,(TEMPWORD)	; Get ptr to search FCB back
 			CALL	CHKDIRBLK		; Search directory block
@@ -1962,7 +1959,7 @@ PRHEX		PUSH	AF
 ; Very simple CCP
 ;
 ; Commands:
-; - d            - Change default drive (A:, B: etc.)
+; - d:           - Change default drive (A:, B: etc.)
 ; - DIR          - Show directory (DIR, DIR A:, DIR FOO.TXT, DIR F???????.???)
 ; - ERA          - Erase file(s) (ERA FOO.TXT, ERA F???????.???)
 ; - REN          - Rename file (REN BAR.TXT=FOO.TXT)
@@ -1972,12 +1969,13 @@ PRHEX		PUSH	AF
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ; TODO: Sanity check / validate number of command args for builtins
-; TODO: Not handling case where there are no args propertly. If PIP is started
+; TODO: Not handling case where there are no args properly. If PIP is started
 ;       without arguments then it should go to interactive mode.  Zeroing FILEBUF
 ;       does the trick!
 ; TODO: Make unadorned drives expand to x:????????.??? or something so
 ;       DIR A: works.  Or just special case it in DIRECT ...
 ;       Need to handle this differently for eg: ERA A: vs DIR A: !!
+; TODO: For some reason ERA B:????????.??? doesn't work
 ; TODO: Parse * wildcard and generate FCB with ?s
 ; TODO: Implement REN, SAVE commands
 
