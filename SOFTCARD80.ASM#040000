@@ -19,13 +19,16 @@
 ;
 ; BDOS TODOs
 ; ----------
-; TODO: NAME2FCB needs to generate size information in some cases but not others.
-;       Right now this functionality is just commented out.
-; TODO: F_DELETE is deleting only the first matching file. Should be all matching files.
+; TODO: Need to implement the BIOS entry points and jump table (see MG's Ruby)
+; TODO: Needs proper boot / warm boot entry points
+; TODO: NAME2FCB needs to generate size information in some cases but not
+;       others. Right now this functionality is just commented out.
+; TODO: PIP wildcards only get first file, so there must be a problem with
+;       F_SFIRST/F_SNEXT still
 ; TODO: Get STAT.COM to work
 ; TODO: F_WRITE bug turns out to be bug in ProDOS 2.5.0a7 (SET_MARK)
-; TODO: Maybe I should eliminate use of "EX AF,AF'" in BDOS since CP/M apps may
-;       expect exclusive use of alternate register set.
+; TODO: Maybe I should eliminate use of "EX AF,AF'" in BDOS since CP/M apps
+;       may expect exclusive use of alternate register set.
 ; TODO: Implement missing system calls:
 ;        - F_ATTRIB (needs to support wildcards, leave FCB at DMAADDR)
 ;        - RS232 (A_READ, A_WRITE)
@@ -556,7 +559,7 @@ BDOSINIT	DI						; Make sure interrupts are off
 			XOR		A				; A=0 means close all files
 			LD		(FCMLIN),A		; Store in parameter list
 			LD		HL,FCMLI		; Pass address of 6502 JSR instruction
-			CALL	PRODOS			; Invoke ProDOS MLI
+			CALL	PRODOS			; Invoke ProDOS MLI to close all files
 			LD		(FRN1),A		; Initialize FRNs to zero
 			LD		(FRN2),A		; ...
 			LD		(FRN3),A		; ...
@@ -567,9 +570,9 @@ BDOSINIT	DI						; Make sure interrupts are off
 			LD		(LOGVEC),HL		; ...
 			LD		(ROVEC),HL		; ...
 			JP		CCP				; Start the CCP
-BDOSIMP
 
-;;;			CALL	PRHEX			; Print sys call number
+BDOSIMP
+;;			CALL	PRHEX			; Print sys call number
 
 			LD		A,C				; Prepare to check C is in range
 			CP		41				; Max syscall# for CP/M 2.2 is 40
@@ -997,19 +1000,39 @@ FSNS2		LD		A,0FFH			; No match
 ; Delete file
 ; DE is the address of the FCB describing the file to delete
 ; Returns error codes in A and L:
-; TODO: This only deletes the first file ... need to do F_SNEXT too
-F_DELETE	CALL	F_SFIRST		; Search for file, create FCB
+F_DELETE	PUSH	DE				; Preserve FCB
+			CALL	F_SFIRST		; Search for file, create FCB
 			CP		0FFH			; If not found ...
-			JP		Z,FDERR			; ... Return with error
+			JP		Z,FDS2			; ... Return with error
+			LD		DE,FILEBUF		; FCB created by F_SFIRST is in FILEBUF
 			LD		IX,PATHBUF		; Destination buffer
 			CALL	FCB2PATH		; Populate PATHLEN and PATH
 			LD		HL,FDMLI		; Pass address of 6502 JSR instruction
 			CALL	PRODOS			; Invoke ProDOS MLI
 			CP		0				; See if there was an error
-			JP		NZ,FDERR		; Handle error
-			LD		L,A				; ... and L too
+			JP		NZ,FDS2			; Handle error
+		
+FDL1		POP		DE				; Get the FCB back
+			PUSH	DE				; And stash it for next time
+			CALL	F_SNEXT			; Search for file, create FCB
+			CP		0FFH			; If not found ...
+			JP		Z,FDS1			; ... We are done
+			LD		IX,PATHBUF		; Destination buffer
+			LD		DE,FILEBUF		; FCB created by F_NEXT is in FILEBUF
+			CALL	FCB2PATH		; Populate PATHLEN and PATH
+			LD		HL,FDMLI		; Pass address of 6502 JSR instruction
+			CALL	PRODOS			; Invoke ProDOS MLI
+			CP		0				; See if there was an error
+			JP		NZ,FDS2			; Handle error
+			JP		FDL1			; Loop for all matching files
+	
+FDS1		POP		DE				; Restore stack
+			XOR		A				; Return success
+			LD		L,A				; Return code in L also
 			RET
-FDERR		LD		A,0FFH			; 0FFH for error
+
+FDS2		POP		DE				; Restore stack
+			LD		A,0FFH			; 0FFH for error
 			LD		L,A				; Return code in L also
 			RET
 
@@ -1915,25 +1938,25 @@ N2H2		OR		0F0H			;
 
 ; Print value of C in HEX
 ; Used for DEBUG only
-;PRHEX		PUSH	AF
-;			PUSH	BC
-;			PUSH	DE
-;			PUSH	HL
-;			LD		E,'['
-;			CALL	C_WRITE
-;			LD		L,C				; Copy to HL for NUM2HEX
-;			LD		H,0				; ...
-;			LD		DE,HEXBUF		; Generate hex string to HEXBUF
-;			CALL	NUM2HEX			; ...
-;			LD		DE,HEXBUF+2		; Write hex value to console
-;			CALL	C_WRITESTR		;
-;			LD		E,']'
-;			CALL	C_WRITE
-;			POP		HL
-;			POP		DE
-;			POP		BC
-;			POP		AF
-;			RET
+PRHEX		PUSH	AF
+			PUSH	BC
+			PUSH	DE
+			PUSH	HL
+			LD		E,'['
+			CALL	C_WRITE
+			LD		L,C				; Copy to HL for NUM2HEX
+			LD		H,0				; ...
+			LD		DE,HEXBUF		; Generate hex string to HEXBUF
+			CALL	NUM2HEX			; ...
+			LD		DE,HEXBUF+2		; Write hex value to console
+			CALL	C_WRITESTR		;
+			LD		E,']'
+			CALL	C_WRITE
+			POP		HL
+			POP		DE
+			POP		BC
+			POP		AF
+			RET
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Very simple CCP
@@ -1949,12 +1972,14 @@ N2H2		OR		0F0H			;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ; TODO: Sanity check / validate number of command args for builtins
+; TODO: Not handling case where there are no args propertly. If PIP is started
+;       without arguments then it should go to interactive mode.  Zeroing FILEBUF
+;       does the trick!
 ; TODO: Make unadorned drives expand to x:????????.??? or something so
 ;       DIR A: works.  Or just special case it in DIRECT ...
 ;       Need to handle this differently for eg: ERA A: vs DIR A: !!
 ; TODO: Parse * wildcard and generate FCB with ?s
 ; TODO: Implement REN, SAVE commands
-; TODO: Bug in TYPEFILE - shows garbage for zero length file
 
 ; Get a line of text from the console & handle it
 CCP			
@@ -2422,13 +2447,13 @@ DIRECT		LD		HL,FILEBUF		; Reset DMAADDR to 0080H
 			LD		E,13			; Carriage return
 			CALL	C_WRITE			;
 
-			LD		DE,FCB1			; Default FCB address 2
+			LD		DE,FCB1			; Default FCB address 1
 			CALL	F_SFIRST		; Find first dir entry
 			CP		0				;
 			RET		NZ				; If not found, we're done
 			CALL	PRDIRENT		; Print entry
 			
-DIRL1		LD		DE,FCB1			; Default FCB address 2
+DIRL1		LD		DE,FCB1			; Default FCB address 1
 			CALL	F_SNEXT			; Find next dir entry
 			CP		0				;
 			RET		NZ				; If not found, we're done
