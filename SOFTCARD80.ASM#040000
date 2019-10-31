@@ -742,7 +742,8 @@ C_WRITESTR	LD		A,(DE)			; Fetch character from string
 ; DE points to the string buffer. First byte of the buffer is the capacity
 ; of the buffer. This function writes the number of bytes written in second
 ; byte.  Entry finishes on CR or when the buffer is filled up.
-; TODO: Line editing is supposed to be supported here
+; Supports ^H, DEL for deleting a character
+; Supports ^Z for deleting entire line (since ^X doesn't work with RDKEY
 C_READSTR	LD		H,D				; HL will be the working pointer
 			LD		L,E				; ...
 			INC		HL				; Advance to first character ...
@@ -754,10 +755,16 @@ C_READSTR	LD		H,D				; HL will be the working pointer
 CRSL1		PUSH	HL				; Preserve HL
 			CALL	C_READ			; Read a character into A
 			POP		HL				; Restore HL
-			CP		13				; Carriage return?
+			CP		13				; Carriage return ^M pressed?
 			RET		Z				; If so, we are done
-			CP		10				; Line feed?
+			CP		10				; Line feed ^J pressed?
 			RET		Z				; If so, we are done
+			CP		8				; Backspace ^H pressed?
+			JP		Z,CRSS2			; Handle backspace
+			CP		7FH				; Delete key pressed?
+			JP		Z,CRSS1			; Handle delete
+			CP		26				; ^X pressed?
+			JP		Z,CRSS3			; Handle ^X
 			LD		B,A				; Stash character in B
 			LD		A,(IX+0)		; Buffer capacity -> A
 			SUB		(IX+1)			; Subtract characters read
@@ -767,7 +774,31 @@ CRSL1		PUSH	HL				; Preserve HL
 			INC		HL				; Advance to next character
 			INC		(IX+1)			; Increment character count
 			JP		CRSL1			; Loop
-			RET
+			RET						;
+CRSS1		LD		E,8				; Print two backspaces (^H)
+			CALL	C_WRITE			; ...
+			CALL	C_WRITE			; ...
+			LD		E,' '			; Print two spaces to erase chars
+			CALL	C_WRITE			; ...
+			CALL	C_WRITE			; ...
+			LD		E,8				; Print two backspaces (^H)
+			CALL	C_WRITE			; ...
+			CALL	C_WRITE			; ...
+CRSS2		LD		E,' '			; Print space to erase character
+			CALL	C_WRITE			; ...
+			LD		E,8				; Print backspace (^H)
+			CALL	C_WRITE			; ...
+			LD		A,(IX+1)		; Get character count
+			CP		0				; See if it is zero
+			JP		Z,CRSL1			; If so, back to top of loop
+			DEC		HL				; Delete previously-entered character
+			DEC		(IX+1)			; Decrement character count
+			JP		CRSL1			; Back to top of loop
+CRSS3		LD		A,0				; Set character count to zero to ...
+			LD		(IX+1),A		; ... cancel the entire entry
+			LD		E,13			; Print a carriage return
+			CALL 	C_WRITE			; ...
+			RET						; Done
 
 ; Returns 0 in A and L if no chars waiting, non zero otherwise
 C_STAT		LD		A,3				; CMD=3 means peek at keyboard
