@@ -1628,6 +1628,7 @@ CFL2		LD		(HL),C			; ...
 ; beginning of the ProDOS dirent and converts it to FCB format (8.3 with
 ; spaces for any unused characters.)
 ; Any '8' character in extension is converted back to '$' (see FCB2PATH)
+; Handles '*' wildcard character
 ; HL points to the file entry in the ProDOS directory
 ; B contains the drive number (1 for A:, 2 for B: etc)
 ; The FCB is written to the buffer pointed to by DMAADDR
@@ -1643,17 +1644,19 @@ NAME2FCB	EX		DE,HL			; Stash HL in DE for call to CLRFCB
 			LD		A,B				; Move drive number to A
 			LD		(DE),A			; Write drive number
 			LD		B,0				; Use B to count chars written
-N2FL3		INC		HL				; Advance source pointer
+N2FL1		INC		HL				; Advance source pointer
 			INC		DE				; Advance destination pointer
 			LD		A,C				; Get count of chars remaining
 			CP		0				; If none left ...
-			JP		Z,N2FS3			; We are done
+			JP		Z,N2FS6			; We are done
 			LD		A,B				; Get count of chars written
 			CP		8+3				; If 8+3 chars have been written ...
-			JP		Z,N2FS3			; We are done
+			JP		Z,N2FS6			; We are done
 			LD		A,(HL)			; Read character
 			CP		'.'				; See if it is a period
 			JP		Z,N2FS2			; Prepare to copy the extension
+			CP		'*'				; See if it is an asterix
+			JP		Z,N2FS3			; Handle asterix wildcard
 			LD		(DE),A			; Write character
 			
 			CP		'8'				; See if character in name is '8'
@@ -1666,7 +1669,7 @@ N2FL3		INC		HL				; Advance source pointer
 
 N2FS0		INC		B				; Increment count of chars written
 N2FS1		DEC		C				; Decrement count of chars remaining
-			JP		N2FL3			; Loop
+			JP		N2FL1			; Loop
 
 			; Initialize DE, B to start processing the extension
 N2FS2		LD		DE,(DMAADDR)	; Destination is start of extension
@@ -1681,10 +1684,46 @@ N2FS2		LD		DE,(DMAADDR)	; Destination is start of extension
 			LD		B,8				; 8 chars have been written
 			JP		N2FS1			; Jump back into the read-write loop
 
+			; Handle asterix wildcard character
+N2FS3		LD		A,B				; See how many chars have been written
+			CP		8				; >=8? If so we are in the extension
+			JP		C,N2FS4			; If in main filename (not extension)
+
+			; Asterix in extension
+N2FL2		LD		A,'?'			; We will write '?' to rest of extension
+			LD		(DE),A			; Write character
+			INC		DE				; Increment write pointer
+			INC		B				; Increment character count
+			LD		A,B				; See if we are done
+			CP		8+3				; Filename+extension
+			JP		Z,N2FS6			; We are done
+			JP		N2FL2			; Loop
+
+N2FS4		; Asterix in main filename
+N2FL3		LD		A,'?'			; We will write '?' to rest of filename
+			LD		(DE),A			; Write character
+			INC		DE				; Increment write pointer
+			INC		B				; Increment character count
+			LD		A,B				; See if we are done
+			CP		8				; Filename+extension
+			JP		Z,N2FS5			; We are done - eat chars up until '.'
+			JP		N2FL3			; Loop
+
+N2FS5		; Eat rest of chars up until '.'
+N2FL4		LD		A,(HL)			; Get character
+			CP		'.'				; See if it is a period
+			JP		Z,N2FS2			; If so, go process the extension
+			INC		HL				; Increment source pointer
+			DEC		C				; Decrement count of chars remaining
+			LD		A,C				; Get count of chars remaining
+			CP		0				; If none left ...
+			JP		Z,N2FS6			; We are done
+			JP		N2FL4			; Loop
+
 			; Handle file size info
 ; TODO This is commented out because it causes problems when called from PARSE
 ;      We need a mode switch to turn this part of the function on and off
-N2FS3	;	LD		DE,(DMAADDR)	; Pointer to start of FCB
+N2FS6	;	LD		DE,(DMAADDR)	; Pointer to start of FCB
 		;	LD		IX,PATHBUF		; Destination buffer
 		;	CALL	FCB2PATH		; Populate PATHLEN and PATH from new FCB
 		;	LD		HL,GFIMLI		; Pass address of 6502 JSR instruction
@@ -1701,6 +1740,7 @@ N2FS3	;	LD		DE,(DMAADDR)	; Pointer to start of FCB
 		;	LD		(IX+0CH),B		; Store num extents in EX field of FCB
 		;	LD		(IX+0FH),A		; Store num recs in RC field of FCB
 			RET	
+
 N2FERR		LD		DE,(DMAADDR)	; Pointer to start of FCB
 			PUSH	DE				; Copy into IX
 			POP		IX				; ...
@@ -2000,7 +2040,6 @@ PRHEX		PUSH	AF
 ; - FILENAME.COM - Load and run FILENAME.COM at 0100H
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-; TODO: Parse * wildcard and generate FCB with ?s
 ; TODO: For some reason ERA B:????????.??? doesn't work
 ; TODO: Implement REN, SAVE commands
 ; TODO: Sanity check / validate number of command args for builtins
