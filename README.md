@@ -4,6 +4,7 @@ Z80 Softcard (or clone)
 
 - Z80 cross assemblers running under ProDOS on the Apple II
 - CP/M BDOS emulation to allow CP/M programs to run under ProDOS
+- Simple CP/M Command Console Processor (CCP)
 - Sample program: Processor Technology's SOL-20 BASIC/5
 
 Aztec C v3.2 can be found [on this website](http://aztecmuseum.ca).
@@ -153,19 +154,29 @@ BDOS implementation at the top of memory.  This has been patched by adding a
 `DEC HL` instuction at line 47 (shout-out to Qkumba for finding what the
 issue was!)
 
-The EXEC file `RUNBASIC5` can be used to start BASIC/5.
+BASIC/5 can now be started from the CCP prompt: `B:BASIC5`
 
-## DDT 8080 Debugger (from CP/M 2.2)
+## Other CP/M 2.2 Programs that work (to some degree)
 
-We have enough BDOS calls to get this to work now!
+- `DDT` debugger
+- `ZSID` v1.4 debugger
+- `DUMP` hex dump utility
+- `PIP` (can copy files using `PIP DEST.COM=SOURCE.COM`)
+- `STAT` (at least `STAT DSK` and `STAT filename` seem to work)
+- `NSWEEP` file manager 
 
-The EXEC file `RUNDDT` can be used to start DDT.
+Probably lots of other small, simple programs should also work.
 
-## ZSID v1.4 Z80 Debugger (from CP/M 2.2)
+## Programs known not to work yet
 
-We have enough BDOS calls to get this to work now!
+Most of these are two big for my current TPA (around 32K).  I need to
+rearrange things to make a bigger TPA, and this will probably involve
+using auxiliary RAM.
 
-The EXEC file `RUNZSID` can be used to start ZSID.
+- `MBASIC` - I think it tries to patch the BIOS.
+- Wordstar - My eventual goal is to get this to work.
+- Turbo Pascal - My eventual goal is to get this to work.
+
 
 # How to Build the Code
 
@@ -236,31 +247,39 @@ The code assumes a Z80 Softcard (or clone) in slot 4.  This can be changed
 by modifying the `SOFTCARD` address in `SOFTCARD65.S` and `SOFTCARD80.ASM`
 if your card is in a different slot.
 
-I provided a couple of ProDOS EXEC files to load all the pieces and run the
-code:
+To run the code, use `zapple2.po`, which is a ready made 800K disk image.
+You need to boot ProDOS from some other device, because this image is not
+bootable (I should fix that!)
 
-`RUNBASIC5` performs the following operations:
+Run `SOFTCARD65` to start everything.  This will relocate itself to high
+memory and then load the Z80 code `SOFTCARD80`.  The system will then
+start the CCP and show the familiar `A>` prompt.
 
-```
-BLOAD /ZAPPLE2/SOFTCARD80.BIN,A$FFD,Ttxt
-BLOAD /ZAPPLE2/BASIC5.BIN,A$1100,T$00
-BRUN /ZAPPLE2/SOFTCARD65
-```
+There are three CP/M 'drives' (actually ProDOS subdirectories) on the diskette
+image: A, B and C.
 
-A little explanation is in order:
+The following commands are implemented:
 
-- The first line loads the Z80 code which provides the CP/M BDOS interface.
-  It is loaded at address $0FFD because there is a three byte prefix on the
-  BIN file (created by Z80asm).  The actual start address is $1000 in 6502
-  address space, which is 0000H for the Z80.
-- The second line loads the BASIC5 image at $1100 (0100H for the Z80).
-- Finally we just run the 6502 code in `SOFTCARD65` to bootstrap the process.
-  This loads at $0900.  The start address is encoded in the binary, so we
-  don't need to specify it on loading/running the code.
+- `DIR`
+- `TYPE`
+- Changing drives using `A:`, `B:`, etc.
+- Launching a `.COM` file (just type the name and any arguments)
 
-The other EXEC file `RUNTESTSTUB` is the same, but omits the second step.
-Instead of running BASIC, it runs some internal test code that is part of
-`SOFTCARD80.BIN`.
+Wildcards using `*` are not yet supported.
 
+`REN`, `USER` and `SAVE` built-in commands are not supported yet either.
 
+## Some things to try
+
+- `DIR` - show files on current drive
+- `DIR A:` - show files on another drive
+- `DIR ABC?????.TXT` - show matching files using `?` wildcards
+- `TYPE TEST.TXT` - view a text file
+- `A:PIP B:MY.TXT=A:TEST.TXT` copy `TEST.TXT` from A: to B:, renaming it as `MY.TXT`
+- `STAT DRV` - show info on the virtual drive
+- `DDT MYPROG.COM` - debug `MYPROG.COM` using DDT (8800 debugger)
+- `ZSID MYPROG.COM` - debug `MYPROG.COM` using ZSID (Z80 debugger)
+- `DUMP MYPROG.COM` - hex dump of file
+- `NSWEEP` - simple interactive file manager
+- `BASIC5` - Processor Technology SOL-20 BASIC/5
 
