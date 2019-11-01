@@ -19,11 +19,13 @@
 ;
 ; BDOS TODOs
 ; ----------
+; TODO: F_READ API handles EOF incorrectly it seems.  Researching this.
 ; TODO: Need to implement the BIOS entry points and jump table (see MG's Ruby)
 ; TODO: Needs proper boot / warm boot entry points
 ; TODO: NAME2FCB needs to generate size information in some cases but not
 ;       others. Right now this functionality is just commented out.
 ; TODO: Get STAT.COM to work.  Think it is picky about arg handling.
+; TODO: Debug various failures in PIP.
 ; TODO: F_WRITE bug turns out to be bug in ProDOS 2.5.0a7 (SET_MARK)
 ; TODO: Maybe I should eliminate use of "EX AF,AF'" in BDOS since CP/M apps
 ;       may expect exclusive use of alternate register set.
@@ -1083,7 +1085,7 @@ F_READ		PUSH	DE				; Copy pointer to FCB ...
 			LD		HL,SMMLI		; Pass address of 6502 JSR instruction
 			CALL	PRODOS			; Invoke ProDOS MLI - SET_MARK
 			CP		4DH				; See if position was out of range
-			JP		Z,FRBFCB		; If so, return invalid FCB code (9)
+			JP		Z,FREOF			; If so, return EOF (1)
 			CP		43H				; See if it was a bad file ref number
 			JP		Z,FRBFCB		; If so, return invalid FCB code (9)
 			CP		0				; See if there was some other error
@@ -1111,11 +1113,7 @@ F_READ		PUSH	DE				; Copy pointer to FCB ...
 			LD		(IX+20H),A		; ...
 			INC		(IX+0CH)		; Increment the extent
 
-FRS1		LD		A,(FRMLITC)		; Get number of bytes read (LSB)
-			CP		128				; See if it was 128 as expected
-			JP		NZ,FREOF		; If not, return EOF
-
-			XOR		A				; Zero for success
+FRS1		XOR		A				; Zero for success
 			LD		L,A				; Return code in L also
 			RET						; Done
 FREOF		LD		A,1				; EOF return code
@@ -1336,7 +1334,7 @@ F_READRAND	PUSH	DE				; Copy pointer to FCB ...
 			LD		HL,SMMLI		; Pass address of 6502 JSR instruction
 			CALL	PRODOS			; Invoke ProDOS MLI - SET_MARK
 			CP		4DH				; See if position was out of range
-			JP		Z,FRRBFCB		; If so, return invalid FCB code (9)
+			JP		Z,FRRRUD		; If so, return reading unwritten data (1)
 			CP		43H				; See if it was a bad file ref number
 			JP		Z,FRRBFCB		; If so, return invalid FCB code (9)
 			CP		0				; See if there was some other error
@@ -1349,7 +1347,7 @@ F_READRAND	PUSH	DE				; Copy pointer to FCB ...
 			LD		HL,FRMLI		; Pass address of 6502 JSR instruction
 			CALL	PRODOS			; Invoke ProDOS MLI - READ
 			CP		4CH				; See if it was EOF
-			JP		Z,FRREOF		; If so, return EOF code (1)
+			JP		Z,FRRRUD		; If so, return EOF code (1)
 			CP		43H				; See if it was a bad file ref number
 			JP		Z,FRBFCB		; If so, return invalid FCB code (9)
 			CP		0				; See if there was some other error
@@ -1361,14 +1359,10 @@ F_READRAND	PUSH	DE				; Copy pointer to FCB ...
 			LD		A,(IX+20H),A	; Update sequential record number
 			LD		B,(IX+0CH),B	; Update sequential extent number
 
-			LD		A,(FRMLITC)		; Get number of bytes read (LSB)
-			CP		128				; See if it was 128 as expected
-			JP		NZ,FRREOF		; If not, return EOF
-
 			XOR		A				; Zero for success
 			LD		L,A				; Return code in L also
 			RET						; Done
-FRREOF		LD		A,1				; EOF return code
+FRRRUD		LD		A,1				; Reading unwritten data return code
 			LD		L,A				; Return code in L also
 			RET						; Done (EOF)
 FRRBFCB		LD		A,9				; Invalid FCB return code
@@ -2120,9 +2114,13 @@ CTS1		CALL	CMDSPC			; Handle space
 			JP		CTL1			; Loop
 CTS2		LD		A,' '			; Fake an additional space on the end ...
 			CALL	CMDSPC			; ... so parser can get itself in correct state
-			LD		HL,FILEBUF		; First byte is length of string
+			LD		A,D				; Get string length of command tail
+			CP		1				; If length is 1, is just a space
+			JP		NZ,CTS3			; If not length 1, store length, otherwise ...
+			LD		D,0				; ... Set length to zero
+CTS3		LD		HL,FILEBUF		; First byte is length of string
 			LD		(HL),D			; Write string length
-			RET
+			RET						;
 
 ; Helper function to reset the PATHBUF buffer pointer & character count
 ; PATHBUF is used to store the filename for creating an FCB
@@ -2518,7 +2516,6 @@ PRDS2		LD		E,'.'			;
 ; Erase file(s)
 ; Pattern for erase is in FCB1
 ; TODO: Should prompt Y/N if wildcards used
-; TODO: Not working with wildcards for some reason!!
 ERASE		LD		HL,FILEBUF		; Reset DMAADDR to 0080H
 			LD		(DMAADDR),HL	; ...
 
