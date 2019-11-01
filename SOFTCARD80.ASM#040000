@@ -20,13 +20,13 @@
 ; BDOS TODOs
 ; ----------
 ; TODO: PIP has issues with multi file copy, and I think it is because it only
-;       closes the destination files, but not the source files.
-; TODO: Get STAT.COM to work.  Think it is picky about arg handling.
+;		closes the destination files, but not the source files.  Maybe the
+;		solution is to close files after each read/write.  The FCB keeps track
+;		of the position in any case and we always seek, so this should work.
 ; TODO: Need to implement the BIOS entry points and jump table (see MG's Ruby)
 ; TODO: Needs proper boot / warm boot entry points
 ; TODO: NAME2FCB needs to generate size information in some cases but not
 ;       others. Right now this functionality is just commented out.
-; TODO: Debug various failures in PIP.
 ; TODO: F_WRITE bug turns out to be bug in ProDOS 2.5.0a7 (SET_MARK)
 ; TODO: Maybe I should eliminate use of "EX AF,AF'" in BDOS since CP/M apps
 ;       may expect exclusive use of alternate register set.
@@ -1602,6 +1602,28 @@ F2PS7		LD		A,C				; Store length of string
 			LD		(IY+0),A		; We kept size byte in IY at start
 			RET						;
 
+; Clear FCB pointed to by DMAADDR
+CLRFCB		LD		HL,(DMAADDR)	; Set all 16 bytes to FCB to zero
+			LD		C,0				; ...
+			XOR		A				; ...
+CFL1		LD		(HL),C			; ...
+			INC		HL				; ...
+			INC		A				; ...
+			CP		16				; ...
+			JP		NZ,CFL1			; ...
+
+			LD		HL,(DMAADDR)	; Set all filename chars in FCB to space
+			INC		HL				; ...
+			LD		C,' '			; ...
+			XOR		A				; ...
+CFL2		LD		(HL),C			; ...
+			INC		HL				; ...
+			INC		A				; ...
+			CP		8+3				; ...
+			JP		NZ,CFL2			; ...
+
+			RET
+
 ; This operation is almost the inverse of FCB2PATH.  It takes a pointer to the
 ; beginning of the ProDOS dirent and converts it to FCB format (8.3 with
 ; spaces for any unused characters.)
@@ -1610,27 +1632,8 @@ F2PS7		LD		A,C				; Store length of string
 ; B contains the drive number (1 for A:, 2 for B: etc)
 ; The FCB is written to the buffer pointed to by DMAADDR
 ; Trashes pretty much all registers (except IX, IY)
-NAME2FCB	EX		DE,HL			; Stash HL in DE so we can use HL here
-
-			LD		HL,(DMAADDR)	; Set all 16 bytes to FCB to zero
-			LD		C,0				; ...
-			XOR		A				; ...
-N2FL1		LD		(HL),C			; ...
-			INC		HL				; ...
-			INC		A				; ...
-			CP		16				; ...
-			JP		NZ,N2FL1		; ...
-
-			LD		HL,(DMAADDR)	; Set all filename chars in FCB to space
-			INC		HL				; ...
-			LD		C,' '			; ...
-			XOR		A				; ...
-N2FL2		LD		(HL),C			; ...
-			INC		HL				; ...
-			INC		A				; ...
-			CP		8+3				; ...
-			JP		NZ,N2FL2		; ...
-
+NAME2FCB	EX		DE,HL			; Stash HL in DE for call to CLRFCB
+			CALL	CLRFCB			; Clear FCB at DMAADDR
 			EX		DE,HL			; Get file entry pointer back in HL
 	
 			LD		A,(HL)			; Obtain first char of ProDOS dirent
@@ -1997,16 +2000,10 @@ PRHEX		PUSH	AF
 ; - FILENAME.COM - Load and run FILENAME.COM at 0100H
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-; TODO: Sanity check / validate number of command args for builtins
-; TODO: Not handling case where there are no args properly. If PIP is started
-;       without arguments then it should go to interactive mode.  Zeroing FILEBUF
-;       does the trick!
-; TODO: Make unadorned drives expand to x:????????.??? or something so
-;       DIR A: works.  Or just special case it in DIRECT ...
-;       Need to handle this differently for eg: ERA A: vs DIR A: !!
-; TODO: For some reason ERA B:????????.??? doesn't work
 ; TODO: Parse * wildcard and generate FCB with ?s
+; TODO: For some reason ERA B:????????.??? doesn't work
 ; TODO: Implement REN, SAVE commands
+; TODO: Sanity check / validate number of command args for builtins
 
 ; Get a line of text from the console & handle it
 CCP			
@@ -2043,23 +2040,13 @@ CCPL1		LD		A,(CURDRV)		; Get current drive & user number
 			CALL	DRV_SET			; ...
 			JP		CCPL1			; Go again
 
-CCPS1		; Create FCB1 'x:????????.???'
-			LD		A,(CURDRV)		; Get current drive
-			AND		0FH				; Mask out user number
-			INC		A				; 1-based for FCB
-			LD		(FCB1DRV),A		;
-			LD		A,'?'			; Filename
-			LD		(FCB1NAM),A		;
-			LD		(FCB1NAM+1),A	;
-			LD		(FCB1NAM+2),A	;
-			LD		(FCB1NAM+3),A	;
-			LD		(FCB1NAM+4),A	;
-			LD		(FCB1NAM+5),A	;
-			LD		(FCB1NAM+6),A	;
-			LD		(FCB1NAM+7),A	;
-			LD		(FCB1NAM+8),A	;
-			LD		(FCB1NAM+9),A	;
-			LD		(FCB1NAM+10),A	;
+CCPS1		LD		HL,FCB1			; Clear FCB1
+			LD		(DMAADDR),HL	;
+			CALL	CLRFCB			;
+
+			LD		HL,FCB2			; Clear FCB2
+			LD		(DMAADDR),HL	;
+			CALL	CLRFCB			;
 
 			CALL	PARSE			; Parse the command line
 			CALL	BUILTIN			; Check for built-in commands
@@ -2472,7 +2459,11 @@ REMSG		DEFM	'Read error'
 
 ; Show disk directory
 ; Use FCB1 for directory search
-DIRECT		LD		HL,FILEBUF		; Reset DMAADDR to 0080H
+DIRECT		LD		A,(FCB1NAM)		; Get first char of filename
+			CP		' '				; See if it is space
+			CALL	Z,DIRFCB		; Set up FCB to search all files
+
+			LD		HL,FILEBUF		; Reset DMAADDR to 0080H
 			LD		(DMAADDR),HL	; ...
 
 			LD		E,13			; Carriage return
@@ -2490,7 +2481,42 @@ DIRL1		LD		DE,FCB1			; Default FCB address 1
 			RET		NZ				; If not found, we're done
 			CALL	PRDIRENT		; Print entry
 			JP		DIRL1			; Loop for all files in dir
-	
+
+; Set up FCB1 to search all files
+; If length of command tail is zero, or length of command tail is 3
+; and 3rd char is ':' then set up FCB for searching
+DIRFCB		LD		HL,FILEBUF		; Take a look at command tail
+			PUSH	HL				; HL->IX
+			POP		IX				; ...
+			LD		A,(HL)			; Get length of command tail
+			CP		0				; If zero ...
+			JP		Z,DFS1			; ... Then default drive
+			CP		4				; If 4 chars (w/ leading/trailing spc)
+			JP		NZ,DFS1			; If not, then default drive
+			LD		A,(IX+3)		; Should be ':'
+			CP		':'				; See if it is
+			JP		NZ,DFS1			; If not, then default drive
+			LD		A,(IX+2)		; Load drive letter from command tail
+			SUB		'A'-1			; Make into 1-based drive number
+			JP		DFS2			; Go make the FCB
+DFS1		LD		A,(CURDRV)		; Get current drive
+			AND		0FH				; Mask out user number
+			INC		A				; 1-based for FCB
+DFS2		LD		(FCB1DRV),A		; Store drive letter
+			LD		A,'?'			; Filename
+			LD		(FCB1NAM),A		;
+			LD		(FCB1NAM+1),A	;
+			LD		(FCB1NAM+2),A	;
+			LD		(FCB1NAM+3),A	;
+			LD		(FCB1NAM+4),A	;
+			LD		(FCB1NAM+5),A	;
+			LD		(FCB1NAM+6),A	;
+			LD		(FCB1NAM+7),A	;
+			LD		(FCB1NAM+8),A	;
+			LD		(FCB1NAM+9),A	;
+			LD		(FCB1NAM+10),A	;
+			RET
+
 ; Print a directory entry in FILEBUF
 PRDIRENT	PUSH	HL				;
 			LD		HL,FILEBUF		;
