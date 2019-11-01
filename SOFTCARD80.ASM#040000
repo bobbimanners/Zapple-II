@@ -19,15 +19,14 @@
 ;
 ; BDOS TODOs
 ; ----------
+; TODO: Size information from NAME2FCB seems to be a bit fishy!
 ; TODO: PIP has issues with multi file copy, and I think it is because it only
 ;		closes the destination files, but not the source files.  Maybe the
 ;		solution is to close files after each read/write.  The FCB keeps track
 ;		of the position in any case and we always seek, so this should work.
 ; TODO: Need to implement the BIOS entry points and jump table (see MG's Ruby)
 ; TODO: Needs proper boot / warm boot entry points
-; TODO: NAME2FCB needs to generate size information in some cases but not
-;       others. Right now this functionality is just commented out.
-; TODO: F_WRITE bug turns out to be bug in ProDOS 2.5.0a7 (SET_MARK)
+; TODO: [ F_WRITE bug turns out to be bug in ProDOS 2.5.0a7 (SET_MARK) ??? ]
 ; TODO: Maybe I should eliminate use of "EX AF,AF'" in BDOS since CP/M apps
 ;       may expect exclusive use of alternate register set.
 ; TODO: Implement missing system calls:
@@ -1631,9 +1630,11 @@ CFL2		LD		(HL),C			; ...
 ; Handles '*' wildcard character
 ; HL points to the file entry in the ProDOS directory
 ; B contains the drive number (1 for A:, 2 for B: etc)
+; C controls whether file size is populated in FCB (C=0 disables file size)
 ; The FCB is written to the buffer pointed to by DMAADDR
 ; Trashes pretty much all registers (except IX, IY)
-NAME2FCB	EX		DE,HL			; Stash HL in DE for call to CLRFCB
+NAME2FCB	PUSH	BC				; We will need C later
+			EX		DE,HL			; Stash HL in DE for call to CLRFCB
 			CALL	CLRFCB			; Clear FCB at DMAADDR
 			EX		DE,HL			; Get file entry pointer back in HL
 	
@@ -1723,22 +1724,26 @@ N2FL4		LD		A,(HL)			; Get character
 			; Handle file size info
 ; TODO This is commented out because it causes problems when called from PARSE
 ;      We need a mode switch to turn this part of the function on and off
-N2FS6	;	LD		DE,(DMAADDR)	; Pointer to start of FCB
-		;	LD		IX,PATHBUF		; Destination buffer
-		;	CALL	FCB2PATH		; Populate PATHLEN and PATH from new FCB
-		;	LD		HL,GFIMLI		; Pass address of 6502 JSR instruction
-		;	CALL	PRODOS			; Invoke ProDOS MLI
-		;	CP		0				; See if there was an error
-		;	JP		NZ,N2FERR		; Handle error
-		;	LD		HL,(GFIMLIBU)	; Obtain the blocks used field
-		;	ADD		HL,HL			; Mult x 4 to get 128 byte records
-		;	ADD		HL,HL			; ...
-		;	CALL	RECS2EXRC		; Puts extent in B, recs in A
-		;	LD		DE,(DMAADDR)	; Pointer to start of FCB
-		;	PUSH	DE				; Copy into IX
-		;	POP		IX				; ...
-		;	LD		(IX+0CH),B		; Store num extents in EX field of FCB
-		;	LD		(IX+0FH),A		; Store num recs in RC field of FCB
+N2FS6		POP		BC				; Get C back
+			LD		A,C				; Check value of C
+			CP		0				; See if zero (meaning do not check size)
+			RET		Z				; Nothing else to do
+			LD		DE,(DMAADDR)	; Pointer to start of FCB
+			LD		IX,PATHBUF		; Destination buffer
+			CALL	FCB2PATH		; Populate PATHLEN and PATH from new FCB
+			LD		HL,GFIMLI		; Pass address of 6502 JSR instruction
+			CALL	PRODOS			; Invoke ProDOS MLI
+			CP		0				; See if there was an error
+			JP		NZ,N2FERR		; Handle error
+			LD		HL,(GFIMLIBU)	; Obtain the blocks used field
+			ADD		HL,HL			; Mult x 4 to get 128 byte records
+			ADD		HL,HL			; ...
+			CALL	RECS2EXRC		; Puts extent in B, recs in A
+			LD		DE,(DMAADDR)	; Pointer to start of FCB
+			PUSH	DE				; Copy into IX
+			POP		IX				; ...
+			LD		(IX+0CH),B		; Store num extents in EX field of FCB
+			LD		(IX+0FH),A		; Store num recs in RC field of FCB
 			RET	
 
 N2FERR		LD		DE,(DMAADDR)	; Pointer to start of FCB
@@ -1834,6 +1839,7 @@ CHKDIRENT	LD		B,0				; Hardcode drive A: MATCHFCB ignores it
 			JP		Z,CDES1			; File is deleted - no match
 			PUSH	HL				; Preserve HL
 			PUSH	DE				; Preserve DE
+			LD		C,1				; Do check file sizes and put in FCB
 			CALL	NAME2FCB		; Create FCB in DMA buffer
 			POP		DE				; Recover DE
 			POP		HL
@@ -2032,8 +2038,8 @@ PRHEX		PUSH	AF
 ;
 ; Commands:
 ; - d:           - Change default drive (A:, B: etc.)
-; - DIR          - Show directory (DIR, DIR A:, DIR FOO.TXT, DIR F???????.???)
-; - ERA          - Erase file(s) (ERA FOO.TXT, ERA F???????.???)
+; - DIR          - Show directory (DIR, DIR A:, DIR FOO.TXT, DIR *.COM)
+; - ERA          - Erase file(s) (ERA FOO.TXT, ERA F*.TXT)
 ; - REN          - Rename file (REN BAR.TXT=FOO.TXT)
 ; - SAVE         - Save memory to disk (SAVE 7 FOO.COM)
 ; - TYPE         - Show text file on console (TYPE TEST.TXT)
@@ -2042,7 +2048,7 @@ PRHEX		PUSH	AF
 
 ; TODO: For some reason ERA B:????????.??? doesn't work
 ; TODO: Implement REN, SAVE commands
-; TODO: Sanity check / validate number of command args for builtins
+; TODO: Sanity check / validate number of command args for builtins ???
 
 ; Get a line of text from the console & handle it
 CCP			
@@ -2226,6 +2232,7 @@ CSS1		CP		1				; State 1 - eat the space
 			LD		(DMAADDR),HL	; ...
 			LD		HL,PATHBUF		; NAME2FCB will use filename at PATHBUF
 			CALL	DRVLETTER		; Handle any x: drive letter prefix
+			LD		C,0				; Do not check file sizes
 			CALL	NAME2FCB		; Create FCB at PATHBUF2
 			LD		A,'C'			; Set extension to .COM, in case not typed
 			LD		(PATHBUF2+9),A	; ...
@@ -2255,6 +2262,7 @@ CSS3		CP		3				; State 3
 			LD		(DMAADDR),HL	; ...
 			LD		HL,PATHBUF		; NAME2FCB will use filename at PATHBUF
 			CALL	DRVLETTER		; Handle any x: drive letter prefix
+			LD		C,0				; Do not check file sizes
 			CALL	NAME2FCB		; Create FCB at FCB1
 			POP		DE				; Restore DE, BC, HL
 			POP		BC				; ...
@@ -2278,6 +2286,7 @@ CSS5		CP		5				; State 5
 			LD		(DMAADDR),HL	; ...
 			LD		HL,PATHBUF		; NAME2FCB will use filename at PATHBUF
 			CALL	DRVLETTER		; Handle any x: drive letter prefix
+			LD		C,0				; Do not check file sizes
 			CALL	NAME2FCB		; Create FCB at FCB2
 			POP		DE				; Restore DE, BC, HL
 			POP		BC				; ...
