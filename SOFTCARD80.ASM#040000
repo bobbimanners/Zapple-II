@@ -19,12 +19,13 @@
 ;
 ; BDOS TODOs
 ; ----------
-; TODO: F_READ API handles EOF incorrectly it seems.  Researching this.
+; TODO: PIP has issues with multi file copy, and I think it is because it only
+;       closes the destination files, but not the source files.
+; TODO: Get STAT.COM to work.  Think it is picky about arg handling.
 ; TODO: Need to implement the BIOS entry points and jump table (see MG's Ruby)
 ; TODO: Needs proper boot / warm boot entry points
 ; TODO: NAME2FCB needs to generate size information in some cases but not
 ;       others. Right now this functionality is just commented out.
-; TODO: Get STAT.COM to work.  Think it is picky about arg handling.
 ; TODO: Debug various failures in PIP.
 ; TODO: F_WRITE bug turns out to be bug in ProDOS 2.5.0a7 (SET_MARK)
 ; TODO: Maybe I should eliminate use of "EX AF,AF'" in BDOS since CP/M apps
@@ -36,7 +37,6 @@
 ; TODO: IOBYTE doesn't do anything
 ; TODO: User number doesn't do anything
 ; TODO: Software R/O disk setting is not respected
-; TODO: C_READSTR - Line editing functions
 ; TODO: C_WRITE - handle tabs
 ; Other Random TODO comments in the code
 ; 
@@ -777,7 +777,8 @@ CRSL1		PUSH	HL				; Preserve HL
 			INC		(IX+1)			; Increment character count
 			JP		CRSL1			; Loop
 			RET						;
-CRSS1		LD		E,8				; Print two backspaces (^H)
+CRSS1		PUSH	HL
+			LD		E,8				; Print two backspaces (^H)
 			CALL	C_WRITE			; ...
 			CALL	C_WRITE			; ...
 			LD		E,' '			; Print two spaces to erase chars
@@ -786,12 +787,15 @@ CRSS1		LD		E,8				; Print two backspaces (^H)
 			LD		E,8				; Print two backspaces (^H)
 			CALL	C_WRITE			; ...
 			CALL	C_WRITE			; ...
-CRSS2		LD		E,' '			; Print space to erase character
+			POP		HL
+CRSS2		PUSH	HL
+			LD		E,' '			; Print space to erase character
 			CALL	C_WRITE			; ...
 			LD		E,8				; Print backspace (^H)
 			CALL	C_WRITE			; ...
 			LD		A,(IX+1)		; Get character count
 			CP		0				; See if it is zero
+			POP		HL
 			JP		Z,CRSL1			; If so, back to top of loop
 			DEC		HL				; Delete previously-entered character
 			DEC		(IX+1)			; Decrement character count
