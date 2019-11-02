@@ -19,7 +19,10 @@
 ;
 ; BDOS TODOs
 ; ----------
-; TODO: Size information from NAME2FCB seems to be a bit fishy!
+; TODO: Size information from NAME2FCB seems to be a bit fishy! I think the
+;       issue here is that STAT needs to see all the extents, whereas NSWEEP
+;       uses the highest extent number it sees, and doesn't really care about
+;       the others.
 ; TODO: PIP has issues with multi file copy, and I think it is because it only
 ;		closes the destination files, but not the source files.  Maybe the
 ;		solution is to close files after each read/write.  The FCB keeps track
@@ -995,7 +998,11 @@ FSFL1		CALL	RDDIRBLK		; Read first 512 byte block
 			JP		Z,FSFS1			; If so, return
 			JP		FSFL1			; Loop
 
-FSFS1		XOR		A				; Match
+FSFS1		LD		DE,(TEMPWORD)	; Get ptr to search FCB back
+			LD		A,(DE)			; Obtain drive number
+			LD		HL,(DMAADDR)	; Pointer to FCB we are returning
+			LD		(HL),A			; Copy drive number to FCB
+			XOR		A				; Match
 			RET						;
 FSFS2		LD		A,0FFH			; No match
 			RET
@@ -1025,7 +1032,11 @@ FSNL1		LD		DE,(TEMPWORD)	; Get ptr to search FCB back
 
 			JP		FSNL1			; Loop
 
-FSNS1		XOR		A				; Match
+FSNS1		LD		DE,(TEMPWORD)	; Get ptr to search FCB back
+			LD		A,(DE)			; Obtain drive number
+			LD		HL,(DMAADDR)	; Pointer to FCB we are returning
+			LD		(HL),A			; Copy drive number to FCB
+			XOR		A				; Match
 			RET						;
 FSNS2		LD		A,0FFH			; No match
 			RET
@@ -1722,8 +1733,6 @@ N2FL4		LD		A,(HL)			; Get character
 			JP		N2FL4			; Loop
 
 			; Handle file size info
-; TODO This is commented out because it causes problems when called from PARSE
-;      We need a mode switch to turn this part of the function on and off
 N2FS6		POP		BC				; Get C back
 			LD		A,C				; Check value of C
 			CP		0				; See if zero (meaning do not check size)
@@ -2046,7 +2055,6 @@ PRHEX		PUSH	AF
 ; - FILENAME.COM - Load and run FILENAME.COM at 0100H
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-; TODO: For some reason ERA B:????????.??? doesn't work
 ; TODO: Implement REN, SAVE commands
 ; TODO: Sanity check / validate number of command args for builtins ???
 
@@ -2476,8 +2484,6 @@ RCL1		CALL	F_READ			; Read records until done
 			CP		1				; Check return code from F_READ
 			JP		NZ,RCLERR		; If not EOF (1), then error
 			CALL	F_CLOSE			; Close the file
-			LD		DE,LMSG			; Print 'Loaded'
-			CALL	C_WRITESTR		; ...
 			LD		HL,FILEBUF		; Reset DMAADDR to 0080H
 			LD		(DMAADDR),HL	; ...
 			CALL	PROGSTRT		; Run user program at 0100H
