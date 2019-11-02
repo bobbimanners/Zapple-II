@@ -263,6 +263,7 @@ The following commands are implemented:
 - `DIR`
 - `TYPE`
 - `ERA`
+- `REN`
 - Changing drives using `A:`, `B:`, etc.
 - Launching a `.COM` file (just type the name and any arguments)
 
@@ -278,6 +279,7 @@ Wildcards using `*` are not yet supported.
 - `TYPE TEST.TXT` - view a text file
 - `A:PIP B:MY.TXT=A:TEST.TXT` copy `TEST.TXT` from A: to B:, renaming it as `MY.TXT`
 - `ERA MY.TXT` erase file `MY.TXT`
+- `REN B:NEWNAME.TXT=OLDNAME.TXT`
 - `STAT DRV` - show info on the virtual drive
 - `DDT MYPROG.COM` - debug `MYPROG.COM` using DDT (8800 debugger)
 - `ZSID MYPROG.COM` - debug `MYPROG.COM` using ZSID (Z80 debugger)

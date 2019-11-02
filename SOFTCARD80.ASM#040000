@@ -43,7 +43,7 @@
 ; Other Random TODO comments in the code
 ; 
 
-BDOSADDR	EQU		08600H			; 
+BDOSADDR	EQU		08400H			; 
 STCKTOP		EQU		097FFH			; Top of Z80 stack (below IOBUFs)
 
 SOFTCARD	EQU		0E400H			; Softcard in slot 4 ($C400)
@@ -2055,7 +2055,7 @@ PRHEX		PUSH	AF
 ; - FILENAME.COM - Load and run FILENAME.COM at 0100H
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-; TODO: Implement REN, SAVE commands
+; TODO: Implement SAVE command
 ; TODO: Sanity check / validate number of command args for builtins ???
 
 ; Get a line of text from the console & handle it
@@ -2511,6 +2511,12 @@ NFMSG		DEFM	'Not found'
 REMSG		DEFM	'Read error'
 			DEFB	13,'$'
 
+BFMSG		DEFM	'Bad format'
+			DEFB	13,'$'
+
+RNEMSG		DEFM	'Rename error'
+			DEFB	13,'$'
+
 ; Show disk directory
 ; Use FCB1 for directory search
 DIRECT		LD		A,(FCB1NAM)		; Get first char of filename
@@ -2614,9 +2620,73 @@ ERER		LD		DE,NFMSG		; 'Not found' message
 			RET						;
 
 ; Rename a file
-; Here we need to build our own 'special' FCB using the dest=src command line
-; TODO: Write this
-RENAME
+; Here we need to build our own 'special' FCB using the x:dest=src command line
+; Maniplate the command tail to replace the leading space with char count of
+; first string and the = with char count of second string.  Then use NAME2FCB
+; twice to build the 'special' FCB used by F_RENAME.
+RENAME		LD		HL,FILEBUF		; Command tail is in filebuf
+			LD		C,(HL)			; Read length of string
+			INC		C				; Makes length compare easier
+			LD		B,0				; Use B to count chars
+RENL1		INC		HL				; Advance to next char
+			INC		B				; Increase char count
+			LD		A,B				; Copy to A for compare
+			CP		C				; Compare with string length
+			JP		Z,RENS4			; If at end then bad format
+			LD		A,(HL)			; Fetch char
+			CP		'='				; See if it is equals sign
+			JP		Z,RENS1			; Handle '=' sign
+			JP		RENL1			; Loop
+RENS1		LD		A,B				; Get char count
+			SUB		2				; For initial space and '='
+			LD		DE,FILEBUF		; Will write through ptr DE
+			INC		DE				; Advance to initial space
+			LD		(DE),A			; Store length of first string
+			LD		(TEMPWORD),HL	; Store address of '=' sign
+RENL2		INC		HL				; Advance to next char
+			INC		B				; Increase char count
+			LD		A,B				; Copy to A for compare
+			CP		C				; Compare with string length
+			JP		Z,RENS3			; If at end then jump out
+			JP		RENL2			; Loop
+RENS3		LD		A,B				; Get overall char count into A
+			SUB		4				; Compensate for extra chars
+			LD		HL,FILEBUF		; Get char count of first string
+			INC		HL				; ...
+			SUB		(HL)			; Subtract from char count
+			LD		HL,(TEMPWORD)	; Address of '=' sign
+			LD		(HL),A			; Store length of second string
+
+			LD		HL,FCB2			; Set DMAADDR for destination
+			LD		(DMAADDR),HL	; ...
+			LD		HL,FILEBUF		; Set HL to dest file string
+			INC		HL				; ...
+			CALL	DRVLETTER		; Handle any x: drive letter prefix
+			LD		C,0				; NAME2FCB should not do size lookup
+			CALL	NAME2FCB		; Make FCB for source file
+
+			LD		HL,FCB1			; Set DMAADDR for source
+			LD		(DMAADDR),HL	; ...
+			LD		HL,(TEMPWORD)	; Set HL to source file string
+			LD		C,0				; NAME2FCB should not do size lookup
+			CALL	NAME2FCB		; Make FCB for source file
+			LD		A,(FCB2)		; Get drive number of destination
+			LD		(FCB1),A		; Store it for source too
+
+			LD		DE,FCB1			; Pass address of FCB to F_RENAME
+			LD		HL,FILEBUF		; Set DMAADDR to point to FILEBUF
+			LD		(DMAADDR),HL	; ...
+			CALL	F_RENAME		; Perform the rename
+
+			CP		0				; See if it was successful
+			JP		NZ,RENS5		; If not, display message
+			RET						;
+
+RENS4		LD		DE,BFMSG		; 'Bad format' message
+			CALL	C_WRITESTR		; ...
+			RET
+RENS5		LD		DE,RNEMSG		; 'Rename error' message
+			CALL	C_WRITESTR		; ...
 			RET
 
 ; Show a test file on the console
