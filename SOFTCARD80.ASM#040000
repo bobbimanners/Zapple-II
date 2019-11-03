@@ -19,6 +19,7 @@
 ;
 ; BDOS TODOs
 ; ----------
+; TODO: STAT B:*.* leaves current drive set to B!  Probably other progs too.
 ; TODO: Size information from NAME2FCB seems to be a bit fishy! I think the
 ;       issue here is that STAT needs to see all the extents, whereas NSWEEP
 ;       uses the highest extent number it sees, and doesn't really care about
@@ -972,7 +973,6 @@ ENTPERBLK	EQU		0DH				; Number of file entries per block
 ; DE is the address of the FCB describing the file to look for
 ; Returns error codes in A and L: 0 for success, 0FFH for not found
 ; The matching FCB is always in slot 0, so success return code always 0
-; TODO: Should handle '?' in extent field also
 F_SFIRST 	LD		(TEMPWORD),DE	; Store pointer to search FCB
 			LD		A,(DE)			; Obtain drive number
 			LD		(DFCBDRV),A		; Copy to directory FCB
@@ -981,7 +981,9 @@ F_SFIRST 	LD		(TEMPWORD),DE	; Store pointer to search FCB
 			LD		DE,DFCB			; Use this FCB to open the directory
 			CALL	_F_OPEN			; Open the directory (avoiding recursion!)
 
-FSFL1		CALL	RDDIRBLK		; Read first 512 byte block
+FSFL1		LD		A,0FFH			; Init CDBEXT to 0FFH (see CHKDIRBLK)
+			LD		(CDBEXT),A		; ...
+			CALL	RDDIRBLK		; Read first 512 byte block
 			CP		0				; See if it was an error
 			JP		NZ,FSFS2		; If error, assume EOF & just return
 
@@ -1011,7 +1013,6 @@ FSFS2		LD		A,0FFH			; No match
 ; The address of the FCB describing the file to look for is in TEMPWORD
 ; Returns error codes in A and L: 0 for success, 0FFH for not found
 ; The matching FCB is always in slot 0, so success return code always 0
-; TODO: Should handle '?' in extent field also
 F_SNEXT		LD		HL,(CDBPTR)		; Pointer into current block
 			LD		A,(CDBCOUNT)	; File count for current block
 FSNL1		LD		DE,(TEMPWORD)	; Get ptr to search FCB back
@@ -1019,6 +1020,8 @@ FSNL1		LD		DE,(TEMPWORD)	; Get ptr to search FCB back
 			CP		0				; See if it was a match
 			JP		Z,FSNS1			; If so, return
 
+			LD		A,0FFH			; Init CDBEXT to 0FFH (see CHKDIRBLK)
+			LD		(CDBEXT),A		; ...
 			CALL	RDDIRBLK		; Read next 512 byte block
 			CP		0				; See if it was an error
 			JP		NZ,FSNS2		; If error, assume EOF & just return
@@ -1851,12 +1854,12 @@ CHKDIRENT	LD		B,0				; Hardcode drive A: MATCHFCB ignores it
 			LD		C,1				; Do check file sizes and put in FCB
 			CALL	NAME2FCB		; Create FCB in DMA buffer
 			POP		DE				; Recover DE
-			POP		HL
-			PUSH	HL
-			PUSH	DE
+			POP		HL				; Recover HL
+			PUSH	HL				; Preserve HL
+			PUSH	DE				; Preserve DE
 			CALL	MATCHFCB		; Compare search FCB w/ FCB in DMA buffer
-			POP		DE
-			POP		HL				; Restore HL
+			POP		DE				; Recover DE
+			POP		HL				; Recover HL
 			CP		0				; Does it match?
 			JP		Z,CDES2			; If so, return
 CDES1		LD		A,0FFH			; No match
@@ -1867,33 +1870,73 @@ CDES2		XOR		A				; Match
 ; Search a 512 byte block of a ProDOS directory for a matching file entry
 ; Used by F_SFIRST and F_SNEXT
 ; DE is the address of the FCB describing the file to look for
+; If the extent field of this FCB is '?' then all extents are returned
 ; CDBPTR points to the next ProDOS file entry to parse
 ; CDBCOUNT is set to the number of file entries already parsed in this block
 ; Returns A=0 if entry matches, A=FFH if no match
 CHKDIRBLK	LD		A,(CDBCOUNT)	; File entry counter
 			LD		HL,(CDBPTR)		; Pointer to next file entry
-CDBL1		CALL	CHKDIRENT		; Match the file entry at HL
-			EX		AF,AF'			; Stash return code for now
+CDBL1		CALL	CHKDIRENT		; Match the file entry at HL, build FCB
+			PUSH	AF				; Stash return code for now
+			PUSH	DE				; Copy pointer to search FCB ...
+			POP		IX				; ... into IX
+			LD		A,(IX+0CH)		; Get extent field of search FCB
+			CP		'?'				; Is it '?'
+			JP		NZ,CDBS1		; If not, we can advance to next entry
+
+			LD		A,(CDBEXT)		; Load CDBEXT
+			CP		0FFH			; If it is 0FFH, means this is first ...
+			JP		Z,CDBS0			; ... time we have looked at this dirent
+			JP		CDBS01			; Not the first extent for this dirent
+
+			; First extent for directory entry (highest numbered extent)
+			; This extent may contain 1-128 records
+CDBS0		LD		HL,(DMAADDR)	; Address of FCB created by CHKDIRENT
+			PUSH	HL				; Copy address of FCB ...
+			POP		IY				; ... into IY
+			LD		A,(IY+0CH)		; Get num extents for this entry minus one
+			LD		(CDBEXT),A		; Store it for next time
+			LD		(IY+0CH),A		; Store it in the FCB returned to caller
+			CP		0				; If CDBEXT will be zero next time
+			JP		Z,CDBS1			; ... we can advance to next entry
+			JP		CDBS2			; Return FCB for this extent (it match)
+
+			; Not the first extent for directory entry
+			; Always has 128 records
+CDBS01		LD		B,080H			; 128 records
+			LD		(IY+0FH),B		; Store in num recs field
+			DEC		A				; Decrement extent counter
+			LD		(CDBEXT),A		; Store it for next time
+			LD		(IY+0CH),A		; Store it in the FCB returned to caller
+			CP		0				; If CDBEXT will be zero next time
+			JP		Z,CDBS1			; ... we can advance to next entry
+			JP		CDBS2			; Return FCB for this extent (it match)
+
+CDBS1		LD		HL,(CDBPTR)		; Pointer to file entry
 			LD		BC,FILEENTSZ	; Advance to next file entry
 			ADD		HL,BC			; ...
 			LD		(CDBPTR),HL		; Store the pointer
 			LD		A,(CDBCOUNT)	; File entry counter
 			INC		A				; Increment count of file entries
 			LD		(CDBCOUNT),A	; Store the counter
-			EX		AF,AF'			; Get return code back in A
+			LD		A,0FFH			; Initialize CDBEXT to 0FFH ...
+			LD		(CDBEXT),A		; ... to start processing next dirent
+
+CDBS2		POP		AF				; Get return code back in A
 			CP		0				; Was it a match?
-			JP		Z,CDBS1			; If so, we are done
+			JP		Z,CDBS3			; If so, we are done
 			LD		A,(CDBCOUNT)	; Get the counter back
 			CP		ENTPERBLK		; Done all of them in this block?
 			JP		NZ,CDBL1		; If not, loop
 			LD		A,0FFH			; No match
 			RET						;
-CDBS1		XOR		A				; Match
+CDBS3		XOR		A				; Match
 			RET
 
 ; The following variables are used to preserve state between calls
 CDBPTR		DEFW	0000H			; Stores pointer to next file entry
 CDBCOUNT	DEFB	0				; Stores file entry counter
+CDBEXT		DEFB	0				; Stores extent number
 
 ; Find IOBUF address for a file reference number
 ; Scan through FRN1, FRN2, FRN3, FRN4 to find the file reference number in A
