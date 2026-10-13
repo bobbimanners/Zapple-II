@@ -1124,7 +1124,7 @@ F_READ		PUSH	DE				; Copy pointer to FCB ...
 
 			LD		A,(IX+20H)		; Get sequential rec num from FCB
 			INC		(IX+20H)		; Increment sequential record number
-			CP		129				; Is it 129? 128 is the max
+			CP		127				; Accumulator before increment
 			JP		NZ,FRS1			; If not, then nothing else to do
 			XOR		A				; Set sequential rec num to zero
 			LD		(IX+20H),A		; ...
@@ -1194,7 +1194,7 @@ F_WRITE		PUSH	DE				; Copy pointer to FCB ...
 
 			LD		A,(IX+20H)		; Get sequential rec num from FCB
 			INC		(IX+20H)		; Increment sequential record number
-			CP		129				; Is it 129? 128 is the max
+			CP		127				; Accumulator before increment
 			JP		NZ,FWS1			; If not, then nothing else to do
 			XOR		A				; Set sequential rec num to zero
 			LD		(IX+20H),A		; ...
@@ -1373,8 +1373,8 @@ F_READRAND	PUSH	DE				; Copy pointer to FCB ...
 			LD		L,(IX+21H)		; Load random record number (LSB)
 			LD		H,(IX+22H)		; Load random record number (MSB)
 			CALL	RECS2EXRC		; Puts extent in B, recs in A
-			LD		A,(IX+20H),A	; Update sequential record number
-			LD		B,(IX+0CH),B	; Update sequential extent number
+			LD		(IX+20H),A		; Update sequential record number
+			LD		(IX+0CH),B		; Update sequential extent number
 
 			XOR		A				; Zero for success
 			LD		L,A				; Return code in L also
@@ -1447,8 +1447,8 @@ FWRS1		LD		HL,SMMLI		; Pass address of 6502 JSR instruction
 			LD		L,(IX+21H)		; Load random record number (LSB)
 			LD		H,(IX+22H)		; Load random record number (MSB)
 			CALL	RECS2EXRC		; Puts extent in B, recs in A
-			LD		A,(IX+20H),A	; Update sequential record number
-			LD		B,(IX+0CH),B	; Update sequential extent number
+			LD		(IX+20H),A		; Update sequential record number
+			LD		(IX+0CH),B		; Update sequential extent number
 
 			XOR		A				; Zero for success
 			LD		L,A				; Return code in L also
