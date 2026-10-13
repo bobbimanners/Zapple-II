@@ -62,7 +62,7 @@ ADDRH		EQU		0F0ECH			; 6502 $EC (MSB)
 
 ; Addresses of 6502 routines, in 6502 address space
 COUT		EQU		0FDEDH			; Print char in A
-RDKEY		EQU		0FD0CH			; Read key, return in A
+RDKEY		EQU		0FD18H			; Read key, return in A (bypass curs handling)
 BELL		EQU		0FBE4H			; Sound the bell
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
