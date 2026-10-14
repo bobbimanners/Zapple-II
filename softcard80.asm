@@ -4,7 +4,7 @@
 ; Requires the companion SOFTCARD65 6502 code
 ; Assemble using Udo Munk's Z80asm.
 ; Tabstops every 4 chars.
-; Bobbi 2019
+; Bobbi 2019, 2026
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; References:
 ; 1) BDOS System Calls
@@ -2942,10 +2942,10 @@ DFCBRR		DEFB	0,0,0			; FCB rand record number
 ; Drive parameter block (CP/M 2.2 format)
 ; See Johnson-Laird Pg 33-34
 DPB			DEFW	32				; # 128 byte records per track (for Disk II)
-			DEFB	3				; Block shift (1024 byte allocation blocks)
-			DEFB	7				; Block mask (1024 byte allocation blocks)
-			DEFB	0				; Extent mask (1024 byte alocation blocks)
-			DEFW	1023			; # allocation blocks on disk (1MB)
+			DEFB	4				; Block shift (2KB allocation blocks)
+			DEFB	15				; Block mask (2KB allocation blocks)
+			DEFB	0				; Extent mask (2KB byte alocation blocks)
+			DEFW	511				; # allocation blocks on disk (1MB)
 			DEFW	255				; # directory entries 
 			DEFB	0				; Directory allocation bitmap byte 1
 			DEFB	0				; Directory allocation bitmap byte 2
