@@ -203,6 +203,14 @@ BIOSCTTY	JP		BIOSCONOUT		; CONOUT  +0CH
 ; 17 BIOS JP vectors = 51 bytes, so this is $8100 + $33 = $8133.
 BDOSENTRY	JP		BDOSIMP
 
+; Fixed exit/resume point at $8136, immediately after the $8133 BDOS JP.
+; The Z80 is *suspended*, not reset, when CMD=0 switches to the 6502.
+; On a later ProDOS launch the new image resumes at the instruction after
+; LD (SOFTCARD),A. Jump via the freshly reloaded cold vector at $0000.
+; Keep this stub at $8136 in future releases (BIOS ABI + 3-byte BDOS JP).
+BYERESUME	LD		(SOFTCARD),A	; CCPBYE already set CMD=0 and A=0
+			JP		0000H			; Execute only after ProDOS relaunch
+
 ; CP/M BIOS console: unlike the cooked BDOS C_READ, CONIN does not
 ; echo or treat Ctrl-C specially. CONOUT takes its byte in C, and
 ; must not suppress LF at the Z80 layer (C_WRITE deliberately does).
@@ -788,6 +796,8 @@ F_SFIRST 	LD		(TEMPWORD),DE	; Store pointer to search FCB
 			CALL	F_CLOSE			; Close the directory, if open
 			LD		DE,DFCB			; Use this FCB to open the directory
 			CALL	_F_OPEN			; Open the directory (avoiding recursion!)
+			OR		A			; _F_OPEN returns status in A, not flags
+			JR		NZ,FSFS2		; OPEN failed: return no match, no stale DFCB read
 
 FSFL1		LD		A,0FFH			; Init CDBEXT to 0FFH (see CHKDIRBLK)
 			LD		(CDBEXT),A		; ...
@@ -808,8 +818,7 @@ FSFS1		LD		DE,(TEMPWORD)	; Get ptr to search FCB back
 			LD		(HL),A			; Copy drive number to FCB
 			XOR		A				; Match
 			RET						;
-FSFS2		LD		A,0FFH			; No match
-			RET
+FSFS2		JR		FSNS2			; Shared EOF cleanup (also OPEN failure)
 
 ; Search for next match of filename in directory
 ; The address of the FCB describing the file to look for is in TEMPWORD
@@ -838,8 +847,7 @@ FSNS1		LD		DE,(TEMPWORD)	; Get ptr to search FCB back
 			LD		(HL),A			; Copy drive number to FCB
 			XOR		A				; Match
 			RET						;
-FSNS2		LD		A,0FFH			; No match
-			RET
+FSNS2		JP		SEARCH_EOF		; Release directory FRN on end-of-search
 
 ; Delete file
 ; DE is the address of the FCB describing the file to delete
@@ -2886,8 +2894,7 @@ CCPBYE     LD      DE,BYEASK
            RET     NZ
            XOR     A
            LD      (CMD),A
-           LD      (SOFTCARD),A
-           JP      BDOSWARM
+           JP      BYERESUME      ; Stable SoftCard handoff; next start is cold
 BYEASK     DEFM    'Y/N? $'
 
 ; Load and run a .COM file to 0100H
@@ -3562,6 +3569,17 @@ R128_OK	XOR		A
 R128_EOF	LD		A,04CH
 			RET
 R128_BAD	LD		A,0FFH
+			RET
+
+; ProDOS's F_SFIRST/F_SNEXT leave the directory open between matches.
+; Once exhausted, release its physical ProDOS handle and associated 1K
+; OPEN buffer. The caller's DMA address and wildcard FCB are unchanged.
+; On an already-closed/failed OPEN, F_CLOSE is harmless (DFCB S2=0).
+; Keep this helper in the spare region rather than crowding $9800.
+SEARCH_EOF	LD		DE,DFCB
+			CALL	F_CLOSE
+			LD		A,0FFH		; CP/M search: no more entries
+			LD		L,A			; Also return error in L
 			RET
 
 			ORG		0A400H
