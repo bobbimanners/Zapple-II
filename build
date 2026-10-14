@@ -2,11 +2,11 @@
 
 # Ugly build script
 
-merlin32 softcard65.asm
-mv softcard65 SOFTCARD65\#ff2000
+rm SOFTCARD65\#ff2000 SOFTCARD80.BIN\#041000
 
-./z80asm/z80asm -osoftcard80.bin softcard80.asm
-mv softcard80.bin SOFTCARD80.BIN\#041000
+merlin32 softcard65.asm && mv softcard65 SOFTCARD65\#ff2000
+
+./z80asm/z80asm -osoftcard80.bin softcard80.asm && mv softcard80.bin SOFTCARD80.BIN\#041000
 
 cadius replacefile zapple2.po /ZAPPLE2 SOFTCARD65\#ff2000
 cadius replacefile zapple2.po /ZAPPLE2 SOFTCARD80.BIN\#041000

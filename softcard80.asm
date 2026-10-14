@@ -4,7 +4,7 @@
 ; Requires the companion SOFTCARD65 6502 code
 ; Assemble using Udo Munk's Z80asm.
 ; Tabstops every 4 chars.
-; Bobbi 2019
+; Bobbi 2019, 2026
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; References:
 ; 1) BDOS System Calls
@@ -19,19 +19,17 @@
 ;
 ; BDOS TODOs
 ; ----------
+; TODO: Exploit aux memory to gain a larger TPA (48K instead of 32K)
 ; TODO: Prodos file handling is SLOW. Would be good to cache file handles rather than
 ;       closing/reopening every time.
-; BIOS: CP/M 2.2 jump table and console implemented; sector-level disk BIOS TODO.
-; BOOT and WBOOT implemented via the BIOS vectors.
-; BDOS/CCP deliberately leave alternate AF untouched for CP/M applications.
-; TODO: Implement missing system calls:
+; TODO: Sector-level BIOS calls.
+; TODO: Implement missing BDOS system calls:
 ;        - F_ATTRIB (needs to support wildcards, leave FCB at DMAADDR)
 ;        - RS232 (A_READ, A_WRITE)
 ;        - Printer (LWRITE)
 ; TODO: IOBYTE doesn't do anything
 ; TODO: User number doesn't do anything
 ; TODO: Software R/O disk setting is not respected
-; Console tabs now handled by direct 6502 driver
 ; Other Random TODO comments in the code
 ; 
 
@@ -665,19 +663,33 @@ _F_OPEN		LD		IX,PATHBUF		; Destination buffer
 			LD		A,(FOMLIN)		; Get ProDOS file reference number
 			LD		(IY+0EH),A		; Store file reference number in S2 field
 
-			; ProDOS GET_EOF call
-			; Assumes no files > 64K on ProDOS filesystem
+			; ProDOS GET_EOF supplies a 24-bit byte length.
 			LD		(GEMLIN),A		; Store file ref num in param list
 			LD      HL,GEMLI       ; Pass address of 6502 JSR instruction
 			CALL    PRODOS          ; Invoke ProDOS MLI (GET_EOF)
 
-			; Convert length in bytes to length in records
-			LD		HL,(GEMLIE2)	; Load 16 bit length
-			CALL	LEN2RECS		; Leaves number of records in A
-
-			; TODO If >16K bytes should set num records to 128 I think
-			; Store records used
-			LD		(IY+0FH),A		; Set records used field
+			; CP/M RC counts records in extent zero (maximum 128).
+			; Round partial 128-byte records up; honour ProDOS's 24-bit EOF.
+			LD		A,(GEMLIE3)
+			OR		A
+			JR		NZ,FO_RC_FULL
+			LD		A,(GEMLIE2)
+			CP		40H			; >= $4000 bytes (16 KiB)?
+			JR		NC,FO_RC_FULL
+			; ceil(EOF/128) for EOF < $4000, with no 16-bit wrap.
+			LD		HL,(GEMLIE1)
+			LD		BC,127
+			ADD		HL,BC
+			LD		A,L
+			RLCA
+			AND		1
+			LD		B,A
+			LD		A,H
+			ADD		A,A
+			OR		B
+			JR		FO_RC_STORE
+FO_RC_FULL	LD		A,80H
+FO_RC_STORE	LD		(IY+0FH),A
 
 			; Set sequential record number to zero
 			XOR		A				; Zero the sequential record number
@@ -776,13 +788,7 @@ FSFL1		LD		A,0FFH			; Init CDBEXT to 0FFH (see CHKDIRBLK)
 			CP		0				; See if it was an error
 			JR		NZ,FSFS2		; If error, assume EOF & just return
 
-			LD		HL,DIRBUF		; Skip over directory header
-			LD		BC,DIRHDSZ		; ...
-			ADD		HL,BC			; ...
-			LD		(CDBPTR),HL		; Start out at first file entry
-			XOR		A				; Set file count to zero
-			LD		(CDBCOUNT),A	; ...
-
+			; RDDIRBLK sets CDBPTR/CDBCOUNT based on the link pointer.
 			LD		DE,(TEMPWORD)	; Get ptr to search FCB back
 			CALL	CHKDIRBLK		; Search directory block
 			CP		0				; See if it was a match
@@ -802,26 +808,21 @@ FSFS2		LD		A,0FFH			; No match
 ; The address of the FCB describing the file to look for is in TEMPWORD
 ; Returns error codes in A and L: 0 for success, 0FFH for not found
 ; The matching FCB is always in slot 0, so success return code always 0
-F_SNEXT		LD		HL,(CDBPTR)		; Pointer into current block
-			LD		A,(CDBCOUNT)	; File count for current block
+F_SNEXT		LD		A,(CDBCOUNT)	; Entries already consumed
+			CP		ENTPERBLK		; Last entry returned on previous search?
+			JR		NC,FSNNEW		; Advance block before dereferencing
 FSNL1		LD		DE,(TEMPWORD)	; Get ptr to search FCB back
 			CALL	CHKDIRBLK		; Search directory block
 			CP		0				; See if it was a match
 			JR		Z,FSNS1			; If so, return
 
-			LD		A,0FFH			; Init CDBEXT to 0FFH (see CHKDIRBLK)
+FSNNEW		LD		A,0FFH			; Init CDBEXT to 0FFH (see CHKDIRBLK)
 			LD		(CDBEXT),A		; ...
 			CALL	RDDIRBLK		; Read next 512 byte block
 			CP		0				; See if it was an error
 			JR		NZ,FSNS2		; If error, assume EOF & just return
 
-			LD		HL,DIRBUF		; Skip over directory header
-			LD		BC,DIRHDSZ		; ...
-			ADD		HL,BC			; ...
-			LD		(CDBPTR),HL		; Start out at first file entry
-			XOR		A				; Set file count to zero
-			LD		(CDBCOUNT),A	; ...
-
+			; RDDIRBLK sets CDBPTR/CDBCOUNT based on the link pointer.
 			JR		FSNL1			; Loop
 
 FSNS1		LD		DE,(TEMPWORD)	; Get ptr to search FCB back
@@ -976,10 +977,7 @@ F_READ_GO
 
 			LD		A,(IX+20H)		; Obtain sequential record number
 			LD		B,(IX+0CH)		; Obtain extent from FCB
-			CALL	EXRC2LEN		; Leaves the length in bytes in HL
-			LD		(SMMLIP1),HL	; Write 16 bit length in FRMLIP1,FRMLIP2
-			XOR		A				; Set FRMLIP3 to zero
-			LD		(SMMLIP3),A		; ...
+			CALL	EXRC2MARK		; Set all three ProDOS position bytes
 			LD		HL,SMMLI		; Pass address of 6502 JSR instruction
 			CALL	PRODOS			; Invoke ProDOS MLI - SET_MARK
 			CP		4DH				; See if position was out of range
@@ -1042,20 +1040,17 @@ F_WRITE_GO
 
 			LD		A,(IX+20H)		; Obtain sequential record number
 			LD		B,(IX+0CH)		; Obtain extent from FCB
-			CALL	EXRC2LEN		; Leaves the length in bytes in HL
+			CALL	EXRC2MARK		; Set full 24-bit ProDOS position
 
 ;;			; DEBUG
 ;;			PUSH	HL
-;;			LD		DE,HEXBUF		; Generate hex string to HEXBUF
-;;			CALL	NUM2HEX			; ...
+;;			LD		DE,HEXBUF		; (obsolete diagnostic)
+;;			CALL	NUM2HEX			; (obsolete diagnostic)
 ;;			LD		DE,HEXBUF		; Write hex value to console
 ;;			CALL	C_WRITESTR		;
 ;;			POP		HL
 ;;			; END DEBUG
 
-			LD		(SMMLIP1),HL	; Write 16 bit length in SMMLIP1,SMMLIP2
-			XOR		A				; Set SMMLIP3 to zero
-			LD		(SMMLIP3),A		; ...
 			LD		HL,SMMLI		; Pass address of 6502 JSR instruction
 			CALL	PRODOS			; Invoke ProDOS MLI - SET_MARK
 			CP		4DH				; See if position was out of range
@@ -1608,12 +1603,11 @@ F_READR_GO
 			LD		(SMMLIN),A		; Store in parameter list for SET_MARK
 			LD		(FRMLIN),A		; Store in parameter list for READ
 
-			LD		L,(IX+21H)		; Load random record number (LSB)
-			LD		H,(IX+22H)		; Load random record number (MSB)
-			CALL	RRN2LEN			; Leaves the length in bytes in HL
-			LD		(SMMLIP1),HL	; Write 16 bit length in FRMLIP1,FRMLIP2
-			XOR		A				; Set FRMLIP3 to zero
-			LD		(SMMLIP3),A		; ...
+			CALL	RAND2MARK		; Set full 24-bit ProDOS position
+			JR		NC,FRR_MARK_OK
+			LD		A,6				; Record outside ProDOS's 24-bit range
+			JP		IO_END
+FRR_MARK_OK
 			LD		HL,SMMLI		; Pass address of 6502 JSR instruction
 			CALL	PRODOS			; Invoke ProDOS MLI - SET_MARK
 			CP		4DH				; See if position was out of range
@@ -1677,20 +1671,27 @@ F_WRTR_GO
 			LD		HL,GEMLI		; Pass address of 6502 JSR instruction
 			CALL	PRODOS			; Invoke ProDOS MLI - GET_EOF
 		
-			LD		L,(IX+21H)		; Load random record number (LSB)
-			LD		H,(IX+22H)		; Load random record number (MSB)
-			CALL	RRN2LEN			; Leaves the length in bytes in HL
-			LD		(SMMLIP1),HL	; 16 bit len in SMMLIP1,2 for SET_MARK
-			XOR		A				; Set SMMLIP3 to zero
-			LD		(SMMLIP3),A		; ...
+			CALL	RAND2MARK		; Full 24-bit offset, carry if out of range
+			JR		NC,FWR_MARK_OK
+			LD		A,6
+			JP		IO_END
+FWR_MARK_OK
+			; Compare 24-bit EOF against requested position.
+			LD		A,(GEMLIE1)
+			LD		HL,SMMLIP1
+			SUB		(HL)
+			INC		HL
+			LD		A,(GEMLIE2)
+			SBC		A,(HL)
+			INC		HL
+			LD		A,(GEMLIE3)
+			SBC		A,(HL)
+			JR		NC,FWRS1
 
-			LD		HL,(GEMLIE1)	; Load current EOF into HL
-			LD		BC,(SMMLIP1)	; Load requested offset into BC
-			AND		A				; Clear carry
-			SBC		HL,BC			; Subtract requested byte offset from EOF
-			JR		NC,FWRS1		; If >=0 no need to SET_EOF
-
-			LD		(SEMLIE1),BC	; Requested offset for SET_EOF
+			LD		HL,(SMMLIP1)
+			LD		(SEMLIE1),HL
+			LD		A,(SMMLIP3)
+			LD		(SEMLIE3),A
 			LD		HL,SEMLI		; Pass address of 6502 JSR instruction
 			CALL	PRODOS			; Invoke ProDOS MLI - SET_EOF
 
@@ -1827,6 +1828,7 @@ F_RANDREC	PUSH	DE				; Copy pointer to FCB ...
 			DEC		HL				; Because F_READ/F_WRITE advance this
 			LD		(IX+21H),L		; Store in random access pointer ...
 			LD		(IX+22H),H		; ... In little endian format
+			LD		(IX+23H),0		; Upper record-count byte
 			RET
 
 ; Selectively reset disk drives
@@ -2200,6 +2202,23 @@ RDDIRBLK	LD		HL,(DMAADDR)	; Save existing DMA address
 			CP		0				; See if there was an error
 			JR		NZ,RDBS1		; If so, quit with error code
 
+			; Every directory block starts with two link pointers ($00-$03).
+			; A zero previous-block pointer identifies the key block, whose
+			; first 39-byte entry ($04-$2A) is the directory header.
+			; Count that header as entry 1 of 13; scan 12 actual files.
+			; Other blocks contain 13 files beginning at offset $04.
+			LD		HL,DIRBUF+4
+			XOR		A
+			LD		(CDBCOUNT),A
+			LD		A,(DIRBUF)
+			LD		B,A
+			LD		A,(DIRBUF+1)
+			OR		B
+			JR		NZ,RDBPTR
+			LD		HL,DIRBUF+DIRHDSZ
+			LD		A,1
+			LD		(CDBCOUNT),A
+RDBPTR		LD		(CDBPTR),HL
 			XOR		A				; Return code for success
 			JR		RDBS2			; Successful return
 
@@ -2375,53 +2394,73 @@ GIOAS4		LD		HL,IOBUF4		; Address of I/O buf 4 -> HL
 			LD		A,4				; FRN slot 4
 			RET
 
-; Convert length in bytes to the number of 128 byte records
-; Length in bytes is passed in HL
-; Length in records is returned in A
-; Only works for files whose size in multiple of 128 bytes
-LEN2RECS	LD      A,H				; Most significant byte of length
-			SLA     A				; Shift left to make space
-			LD      B,A				; Stash in B for now
-			LD      A,L				; Least significant byte of length
-			AND     80H				; Keep most significant bit, mask off others
-			SRA     A				; Move to LSB (shift seven times)
-			SRA     A				; ...
-			SRA     A				; ...
-			SRA     A				; ...
-			SRA     A				; ...
-			SRA     A				; ...
-			SRA     A				; ...
-			OR      B				; Leaves file length in records in A
+; Form 24-bit ProDOS byte mark from CP/M extent B and record A.
+; Valid record numbers are 0..127.  Byte offset = (B*128+A)*128.
+; Updates SET_MARK parameter directly, avoiding any 16-bit overflow.
+EXRC2MARK	LD		C,A
+			AND		1
+			RRCA				; bit 0 becomes bit 7
+			LD		(SMMLIP1),A
+			LD		A,C
+			SRL		A
+			LD		C,A
+			LD		A,B
+			RRCA
+			RRCA
+			AND		0C0H		; B bits 0..1 become byte-1 bits 6..7
+			OR		C
+			LD		(SMMLIP2),A
+			LD		A,B
+			SRL		A
+			SRL		A
+			LD		(SMMLIP3),A
+			RET
+
+; Form 24-bit ProDOS byte mark from random FCB record R0/R1/R2.
+; ProDOS supports byte offsets < $1000000, hence record <= $1FFFF.
+; Returns carry set for out-of-range random records.
+RAND2MARK	LD		A,(IX+23H)
+			CP		2
+			JR		NC,RAND_MARK_BAD
+			LD		B,A
+			LD		A,(IX+21H)
+			LD		C,A
+			AND		1
+			RRCA
+			LD		(SMMLIP1),A
+			LD		A,C
+			SRL		A
+			LD		C,A
+			LD		A,(IX+22H)
+			AND		1
+			RRCA
+			OR		C
+			LD		(SMMLIP2),A
+			LD		A,(IX+22H)
+			SRL		A
+			LD		C,A
+			LD		A,B
+			AND		1
+			RRCA
+			OR		C
+			LD		(SMMLIP3),A
+			OR		A				; Clear carry
+			RET
+RAND_MARK_BAD	SCF
 			RET
 
 ; Convert pos in extent/recs format to a linear position in 128 byte records
 ; Extent number is passed in B
 ; Records within the extent is passed in A
 ; Returns the length in records in HL - HL = (B*128)+A
-EXRC2RECS	LD		L,B				; Extent number in LSB of HL
-			LD		H,0				; ...
-			ADD		HL,HL			; Shift left seven times
-			ADD		HL,HL			; ...
-			ADD		HL,HL			; ...
-			ADD		HL,HL			; ...
-			ADD		HL,HL			; ...
-			ADD		HL,HL			; ...
-			ADD		HL,HL			; ...
-			LD		B,0				; Put recs in this extent in BC
-			LD		C,A				; ...
-			ADD		HL,BC			; Now we have total offset in records
-			RET
-
-; Convert random record number of 128 byte records to length in bytes
-; Length in records is passed in HL
-; Returns the length in bytes in HL
-RRN2LEN		ADD		HL,HL			; Shift left seven times
-			ADD		HL,HL			; ...
-			ADD		HL,HL			; ...
-			ADD		HL,HL			; ...
-			ADD		HL,HL			; ...
-			ADD		HL,HL			; ...
-			ADD		HL,HL			; ...
+EXRC2RECS	LD		H,B			; 16-bit (extent*128 + record)
+			LD		L,A			; Record must be 0..127
+			LD		A,H
+			RRCA				; Extent bit 0 -> bit 7 of low byte
+			AND		80H
+			OR		L
+			LD		L,A
+			SRL		H			; Extent bits 1..7 -> high byte
 			RET
 
 ; Convert position in terms of random record number to extent/recs
@@ -2436,51 +2475,22 @@ R2ERS1		LD		B,H				; Return extent in B
 			AND		7FH				; Just need to mask out MS-bit
 			RET
 
-; Convert pos in extent/recs format to a linear position in bytes
-; Extent number is passed in B
-; Records within the extent is passed in A
-; Returns the length in bytes in HL - HL = ((B*128)+A)*128
-EXRC2LEN	CALL	EXRC2RECS		; Does most of the work
-			CALL	RRN2LEN			; Does the rest!
-			RET
-
-; Convert value in HL into an HEX ASCII string, pointed to by DE
-; Courtesy of http://map.grauw.nl/sources/external/z80bits.html#5.2
-; Trashes A
-NUM2HEX		LD		A,H				;
-			CALL	N2H1			;
-			LD		A,H				;
-			CALL	N2H2			;
-			LD		A,L				;
-			CALL	N2H1			;
-			LD		A,L				;
-			JR		N2H2			;
-N2H1		RRA						;
-			RRA						;
-			RRA						;
-			RRA						;
-N2H2		OR		0F0H			;
-			DAA						;
-			ADD		A,0A0H			;
-			ADC		A,40H			;
-			LD		(DE),A			;
-			INC		DE				;
-			RET
-
-; Print value of C in HEX
-; Used for DEBUG only
+; Compact diagnostic helper: print C as [XX] without a four-digit
+; conversion buffer.  Preserve registers as the old PRHEX did.
 PRHEX		PUSH	AF
 			PUSH	BC
 			PUSH	DE
 			PUSH	HL
 			LD		E,'['
 			CALL	C_WRITE
-			LD		L,C				; Copy to HL for NUM2HEX
-			LD		H,0				; ...
-			LD		DE,HEXBUF		; Generate hex string to HEXBUF
-			CALL	NUM2HEX			; ...
-			LD		DE,HEXBUF+2		; Write hex value to console
-			CALL	C_WRITESTR		;
+			LD		A,C
+			RRCA
+			RRCA
+			RRCA
+			RRCA
+			CALL	PHNYB
+			LD		A,C
+			CALL	PHNYB
 			LD		E,']'
 			CALL	C_WRITE
 			POP		HL
@@ -2488,6 +2498,13 @@ PRHEX		PUSH	AF
 			POP		BC
 			POP		AF
 			RET
+PHNYB		AND		0FH
+			ADD		A,'0'
+			CP		3AH			; One past ASCII '9'
+			JR		C,PHOUT
+			ADD		A,7
+PHOUT		LD		E,A
+			JP		C_WRITE
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Very simple CCP
@@ -3487,9 +3504,6 @@ FRN1		DEFB	0
 FRN2		DEFB	0
 FRN3		DEFB	0
 FRN4		DEFB	0
-
-; Buffer for printing hex numbers to console
-HEXBUF		DEFB	0,0,0,0,'$'
 
 ; 512 byte buffer for reading directories (used by F_SFIRST and F_SNEXT)
 DIRBUF
