@@ -1576,32 +1576,83 @@ FWRERR		LD		A,0FFH			; All other errors are 0FFH
 			RET						; Done (error)
 
 
-; Compute file size
-; DE contains address of FCB describing the file
-; Error codes are returned in A and L (0 for success, 0FFH if file not found)
-; Returns the number of 128 byte records in random record count field of FCB
-F_SIZE		CALL	FCB2PATH		; Populate PATHLEN and PATH
-			LD		HL,GFIMLI		; Pass address of 6502 JSR instruction
-			CALL	PRODOS			; Invoke ProDOS MLI
-			CP		0				; See if there was an error
-			JP		NZ,FSERR		; Handle error
-			LD		HL,(GFIMLIBU)	; Obtain the blocks used field
-			ADD		HL,HL			; Mult x 4 to get 128 byte records
-			ADD		HL,HL			; ...
+; Compute file size (BDOS function 35) from the exact ProDOS EOF.
+; DE points to the caller's FCB.  On success, update FCB offsets
+; 21H..23H with ceil(EOF/128), little endian (24-bit record count).
+; A=L=0 on success, A=L=FFH on error.  Do not alter the FCB otherwise.
+;
+; GET_FILE_INFO does not return EOF, so temporarily OPEN the file,
+; GET_EOF, then CLOSE it.  Reuse a free I/O buffer from the four slots,
+; but do not claim a slot or alter the caller's S2 / open-file state.
+; Only the randomly accessed file's FCB is updated; DMAADDR is untouched.
+F_SIZE		PUSH	DE				; Keep FCB pointer across ProDOS calls
+			LD		IX,PATHBUF		; FCB2PATH needs its destination in IX
+			CALL	FCB2PATH
 
-			; Store records used in R0,R1 fields of FCB
-			PUSH	DE				; Copy DE ...
-			POP		IX				; ... into IX
-			LD		(IX+21H),L		; Store LSB of recs used in R0
-			LD		(IX+22H),H		; Store LSB of recs used in R1
-			XOR		A				; Store zero in R2
-			LD		(IX+23H),A		; ...
+			XOR		A				; Look for an unused FRN/IOBUF slot
+			CALL	GETIOADDR		; HL=free IOBUF, or A=FFH
+			CP		0FFH
+			JP		Z,FSERRPOP
+			LD		BC,OFFSET		; Convert Z80 to 6502 buffer address
+			ADD		HL,BC
+			LD		(FOMLII),HL
+			LD		HL,FOMLI		; ProDOS OPEN
+			CALL	PRODOS
+			OR		A
+			JP		NZ,FSERRPOP	; No file opened: nothing to close
 
-			XOR		A				; Success
-			LD		L,A				; Return in L also
+			LD		A,(FOMLIN)		; Temporary ProDOS reference number
+			LD		(GEMLIN),A
+			LD		(FCMLIN),A
+			LD		HL,GEMLI		; ProDOS GET_EOF, 24-bit byte count
+			CALL	PRODOS
+			PUSH	AF				; Save GET_EOF result across CLOSE
+			LD		HL,FCMLI		; Always CLOSE the temporary file
+			CALL	PRODOS
+			LD		B,A				; CLOSE error, if any
+			POP		AF
+			OR		A
+			JP		NZ,FSERRPOP	; GET_EOF failed
+			LD		A,B
+			OR		A
+			JP		NZ,FSERRPOP	; CLOSE failed
+
+			; Shift 24-bit EOF right 7 to obtain 128-byte records.
+			; A:H:L is the 24-bit value (high:middle:low).
+			; E remembers whether the discarded low 7 bits are nonzero.
+			LD		A,(GEMLIE1)
+			LD		L,A
+			AND		7FH
+			LD		E,A
+			LD		A,(GEMLIE2)
+			LD		H,A
+			LD		A,(GEMLIE3)
+			LD		B,7
+FS_SHIFT	SRL		A
+			RR		H
+			RR		L
+			DJNZ	FS_SHIFT
+			LD		C,A				; High byte of record count
+			LD		A,E				; Round up partial final record
+			OR		A
+			JR		Z,FS_STORE
+			INC		HL
+			LD		A,H
+			OR		L
+			JR		NZ,FS_STORE
+			INC		C				; Carry into 3rd record-count byte
+FS_STORE	POP		DE				; Original caller's FCB
+			PUSH	DE
+			POP		IX
+			LD		(IX+21H),L		; R0 (LSB)
+			LD		(IX+22H),H		; R1
+			LD		(IX+23H),C		; R2 (MSB)
+			XOR		A
+			LD		L,A
 			RET
-FSERR		LD		A,0FFH			; File not found
-			LD		L,A				; Return in L also
+FSERRPOP	POP		DE				; Leave FCB unchanged on failure
+			LD		A,0FFH
+			LD		L,A
 			RET
 
 ; Update random access pointer
