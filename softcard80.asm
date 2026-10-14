@@ -1010,16 +1010,12 @@ F_READ_GO
 			INC		(IX+0CH)		; Increment the extent
 
 FRS1		XOR		A				; Zero for success
-			LD		L,A				; Return code in L also
 			JP		IO_END			; Close transient handle
 FREOF		LD		A,1				; EOF return code
-			LD		L,A				; Return code in L also
 			JP		IO_END			; Close transient handle
 FRBFCB		LD		A,9				; Invalid FCB return code
-			LD		L,A				; Return code in L also
 			JP		IO_END			; Close transient handle
 FRERR		LD		A,0FFH			; All other errors are 0FFH
-			LD		L,A				; Return code in L aslo
 			JP		IO_END			; Close transient handle
 
 ; Write next record
@@ -1031,7 +1027,6 @@ F_WRITE		PUSH	DE				; Copy pointer to FCB ...
 			CALL	IO_BEGIN		; Reopen logical CP/M FCB if needed
 			OR		A
 			JR		Z,F_WRITE_GO
-			LD		L,A				; Invalid/open-error FCB
 			JP		IO_END			; Close transient handle
 F_WRITE_GO
 			LD		A,(IX+0EH)		; Obtain file reference num from FCB S2
@@ -1083,16 +1078,12 @@ F_WRITE_GO
 			INC		(IX+0CH)		; Increment the extent
 
 FWS1		XOR		A				; Zero for success
-			LD		L,A				; Return code in L also
 			JP		IO_END			; Close transient handle
 FWBFCB		LD		A,9				; Invalid FCB return code
-			LD		L,A				; Return code in L also
 			JP		IO_END			; Close transient handle
 FWDF		LD		A,2				; Disk full return code
-			LD		L,A				; Return code in L also
 			JP		IO_END			; Close transient handle
 FWERR		LD		A,0FFH			; All other errors are 0FFH
-			LD		L,A				; Return code in L aslo
 			JP		IO_END			; Close transient handle
 
 ; Create (and open) file
@@ -1596,7 +1587,6 @@ F_READRAND	PUSH	DE				; Copy pointer to FCB ...
 			CALL	IO_BEGIN		; Reopen logical CP/M FCB if needed
 			OR		A
 			JR		Z,F_READR_GO
-			LD		L,A				; Invalid/open-error FCB
 			JP		IO_END			; Close transient handle
 F_READR_GO
 			LD		A,(IX+0EH)		; Obtain file reference num from FCB S2
@@ -1637,16 +1627,12 @@ FRR_MARK_OK
 			LD		(IX+0CH),B		; Update sequential extent number
 
 			XOR		A				; Zero for success
-			LD		L,A				; Return code in L also
 			JP		IO_END			; Close transient handle
 FRRRUD		LD		A,1				; Reading unwritten data return code
-			LD		L,A				; Return code in L also
 			JP		IO_END			; Close transient handle
 FRRBFCB		LD		A,9				; Invalid FCB return code
-			LD		L,A				; Return code in L also
 			JP		IO_END			; Close transient handle
 FRRERR		LD		A,0FFH			; All other errors are 0FFH
-			LD		L,A				; Return code in L aslo
 			JP		IO_END			; Close transient handle
 
 ; Random access write record
@@ -1659,7 +1645,6 @@ F_WRITERAND	PUSH	DE				; Copy pointer to FCB ...
 			CALL	IO_BEGIN		; Reopen logical CP/M FCB if needed
 			OR		A
 			JR		Z,F_WRTR_GO
-			LD		L,A				; Invalid/open-error FCB
 			JP		IO_END			; Close transient handle
 F_WRTR_GO
 			LD		A,(IX+0EH)		; Obtain file reference num from FCB S2
@@ -1724,16 +1709,12 @@ FWRS1		LD		HL,SMMLI		; Pass address of 6502 JSR instruction
 			LD		(IX+0CH),B		; Update sequential extent number
 
 			XOR		A				; Zero for success
-			LD		L,A				; Return code in L also
 			JP		IO_END			; Close transient handle
 FWRBFCB		LD		A,9				; Invalid FCB return code
-			LD		L,A				; Return code in L also
 			JP		IO_END			; Close transient handle
 FWRDF		LD		A,2				; Disk fill return code
-			LD		L,A				; Return code in L also
 			JP		IO_END			; Close transient handle
 FWRERR		LD		A,0FFH			; All other errors are 0FFH
-			LD		L,A				; Return code in L aslo
 			JP		IO_END			; Close transient handle
 
 
@@ -1933,25 +1914,21 @@ F2PS7		LD		A,C				; Store length of string
 			RET						;
 
 ; Clear FCB pointed to by DMAADDR
-CLRFCB		LD		HL,(DMAADDR)	; Set all 16 bytes to FCB to zero
-			LD		C,0				; ...
-			XOR		A				; ...
-CFL1		LD		(HL),C			; ...
-			INC		HL				; ...
-			INC		A				; ...
-			CP		16				; ...
-			JR		NZ,CFL1			; ...
-
-			LD		HL,(DMAADDR)	; Set all filename chars in FCB to space
-			INC		HL				; ...
-			LD		C,' '			; ...
-			XOR		A				; ...
-CFL2		LD		(HL),C			; ...
-			INC		HL				; ...
-			INC		A				; ...
-			CP		8+3				; ...
-			JR		NZ,CFL2			; ...
-
+CLRFCB		LD		HL,(DMAADDR)	; 16-byte CP/M FCB header to zero
+			LD		C,16
+			XOR		A
+CFL1		LD		(HL),A
+			INC		HL
+			DEC		C
+			JR		NZ,CFL1
+			LD		HL,(DMAADDR)	; FCB name/extension padded with spaces
+			INC		HL
+			LD		C,11
+			LD		A,' '
+CFL2		LD		(HL),A
+			INC		HL
+			DEC		C
+			JR		NZ,CFL2
 			RET
 
 ; This operation is almost the inverse of FCB2PATH.  It takes a pointer to the
@@ -2140,10 +2117,11 @@ N2FSTORE	LD		HL,(DMAADDR)
 ; Overwrites ALL 16 map bytes, so no separate clearing pass is needed.
 ; Trashes AF, BC, DE, HL; preserves IX and IY.
 N2FMAP		ADD		A,15			; Round record count up to 16
-			SRL		A
-			SRL		A
-			SRL		A
-			SRL		A				; Number of 2 KB blocks (0..8)
+			RRCA
+			RRCA
+			RRCA
+			RRCA
+			AND		0FH			; (records+15)/16 (0..8)
 			LD		C,A
 			LD		HL,(DMAADDR)
 			LD		DE,16
@@ -2170,37 +2148,22 @@ N2FMSTORE	LD		(HL),A			; Little endian, low byte
 ; Used by F_SFIRST and F_SNEXT
 ; Trashes HL + registers trashed by F_READ (best to assume all of them!)
 ; Returns A=0 for success, A=0FFH on error
-RDDIRBLK	LD		HL,(DMAADDR)	; Save existing DMA address
-			PUSH	HL				; ...
-
-			; Read first 512 byte block of directory
-			LD		DE,DFCB			; Use this FCB to open the directory
-			LD		HL,DIRBUF1		; Set DMAADDR to point to DIRBUF1
-			LD		(DMAADDR),HL	; ...
-			CALL	F_READ			; Read first record of directory
-			CP		0				; See if there was an error
-			JP		NZ,RDBS1		; If so, quit with error code
-
-			LD		DE,DFCB			; Use this FCB to open the directory
-			LD		HL,DIRBUF2		; Set DMAADDR to point to DIRBUF2
-			LD		(DMAADDR),HL	; ...
-			CALL	F_READ			; Read second record of directory
-			CP		0				; See if there was an error
-			JR		NZ,RDBS1		; If so, quit with error code
-
-			LD		DE,DFCB			; Use this FCB to open the directory
-			LD		HL,DIRBUF3		; Set DMAADDR to point to DIRBUF3
-			LD		(DMAADDR),HL	; ...
-			CALL	F_READ			; Read third record of directory
-			CP		0				; See if there was an error
-			JR		NZ,RDBS1		; If so, quit with error code
-
-			LD		DE,DFCB			; Use this FCB to open the directory
-			LD		HL,DIRBUF4		; Set DMAADDR to point to DIRBUF4
-			LD		(DMAADDR),HL	; ...
-			CALL	F_READ			; Read fourth record of directory
-			CP		0				; See if there was an error
-			JR		NZ,RDBS1		; If so, quit with error code
+RDDIRBLK	LD		HL,(DMAADDR)	; Preserve caller's DMA address
+			PUSH	HL
+			LD		HL,DIRBUF1	; Four consecutive 128-byte record buffers
+			LD		B,4
+RDBREAD	PUSH	BC			; F_READ may destroy registers
+			PUSH	HL
+			LD		(DMAADDR),HL
+			LD		DE,DFCB
+			CALL	F_READ
+			POP		HL
+			POP		BC
+			OR		A			; 0=success, any other status=error
+			JR		NZ,RDBS1
+			LD		DE,128
+			ADD		HL,DE
+			DJNZ	RDBREAD
 
 			; Every directory block starts with two link pointers ($00-$03).
 			; A zero previous-block pointer identifies the key block, whose
@@ -2234,25 +2197,21 @@ RDBS2		POP		HL				; Reset DMA address as we found it
 ; Compare with FCB at DMAADDR already created by NAME2FCB
 ; Returns A=0 if entry matches, A=FFH if no match
 ; Trashes A,BC,DE,HL
-MATCHFCB	INC		DE				; Skip over drive byte in FCB
-			LD		HL,(DMAADDR)	; Will read FCB at DMAADDR pointer
-			INC		HL				; Skip over drive byte in FCB
-			LD		C,0				; Initialize character counter
-MFL1		LD		A,(DE)			; Load byte of search pattern
-			CP		'?'				; Is it '?' wildcard?
-			JR		Z,MFS1			; If so, automatic char match
-			LD		B,(HL)			; Load byte of match candidate
-			CP		B				; See if the characters match
-			JR		NZ,MFS2			; If not, then no match
-MFS1		INC		DE				; Advance source pointer
-			INC		HL				; Advance match candidate pointer
-			INC		C				; Increment counter
-			LD		A,8+3			; Compare character counter
-			CP		C				; ...
-			JR		NZ,MFL1			; Loop if characters left
-			XOR		A				; We have a match
-			RET						;
-MFS2		LD		A,0FFH			; No match
+MATCHFCB	INC		DE			; Skip drive byte
+			LD		HL,(DMAADDR)
+			INC		HL
+			LD		B,11			; 8.3 filename bytes
+MFL1		LD		A,(DE)
+			CP		'?'			; Wildcard matches any byte
+			JR		Z,MFS1
+			CP		(HL)
+			JR		NZ,MFS2
+MFS1		INC		DE
+			INC		HL
+			DJNZ	MFL1
+			XOR		A
+			RET
+MFS2		LD		A,0FFH
 			RET
 
 ; Compare a ProDOS directory file entry to see if it matches
@@ -2276,11 +2235,8 @@ CHKDIRENT	LD		B,0				; Hardcode drive A: MATCHFCB ignores it
 			CALL	MATCHFCB		; Compare search FCB w/ FCB in DMA buffer
 			POP		DE				; Recover DE
 			POP		HL				; Recover HL
-			CP		0				; Does it match?
-			JR		Z,CDES2			; If so, return
-CDES1		LD		A,0FFH			; No match
-			RET						;
-CDES2		XOR		A				; Match
+			RET					; MATCHFCB returns 0 or $FF
+CDES1		LD		A,0FFH			; Deleted entry
 			RET
 
 ; Search a 512 byte block of a ProDOS directory for a matching file entry
@@ -2365,33 +2321,29 @@ CDBEXT		DEFB	0				; Stores extent number
 ; Scan through FRN1, FRN2, FRN3, FRN4 to find the file reference number in A
 ; If found, return FRN slot# 1,2,3,4 in A, I/O buffer address in HL
 ; If not found, return A=0FFH
-; Trashes B
-GETIOADDR	LD		B,A				; Stash file ref number into B
-			LD		A,(FRN1)		; Does it match FRN1?
-			CP		B				; ...
-			JR		Z,GIOAS1		; ...
-			LD		A,(FRN2)		; Does it match FRN2?
-			CP		B				; ...
-			JR		Z,GIOAS2		; ...
-			LD		A,(FRN3)		; Does it match FRN3?
-			CP		B				; ...
-			JR		Z,GIOAS3		; ...
-			LD		A,(FRN4)		; Does it match FRN4?
-			CP		B				; ...
-			JR		Z,GIOAS4		; ...
-			LD		A,0FFH			; No match, return A=0FFH
-			RET						; ...
-GIOAS1		LD		HL,IOBUF1		; Address of I/O buf 1 -> HL
-			LD		A,1				; FRN slot 1
+; Trashes BC
+GETIOADDR	LD		B,A			; Requested FRN (0 = first free slot)
+			LD		HL,FRN1		; Four adjacent bytes
+			LD		C,1			; One-based slot number
+GIASCAN	LD		A,(HL)
+			CP		B
+			JR		Z,GIAFOUND
+			INC		HL
+			INC		C
+			LD		A,C
+			CP		5
+			JR		NZ,GIASCAN
+			LD		A,0FFH
 			RET
-GIOAS2		LD		HL,IOBUF2		; Address of I/O buf 2 -> HL
-			LD		A,2				; FRN slot 2
-			RET
-GIOAS3		LD		HL,IOBUF3		; Address of I/O buf 3 -> HL
-			LD		A,3				; FRN slot 3
-			RET
-GIOAS4		LD		HL,IOBUF4		; Address of I/O buf 4 -> HL
-			LD		A,4				; FRN slot 4
+GIAFOUND	LD		A,C			; Return slot 1..4 in A
+			PUSH	AF
+			DEC		A			; Buffer address = $9800 + (slot-1)*$400
+			ADD		A,A
+			ADD		A,A
+			LD		HL,IOBUF1
+			ADD		A,H
+			LD		H,A
+			POP		AF
 			RET
 
 ; Form 24-bit ProDOS byte mark from CP/M extent B and record A.
