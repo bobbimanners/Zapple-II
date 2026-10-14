@@ -23,8 +23,7 @@
 ;       closing/reopening every time.
 ; TODO: Need to implement the BIOS entry points and jump table (see MG's Ruby)
 ; TODO: Needs proper boot / warm boot entry points
-; TODO: Maybe I should eliminate use of "EX AF,AF'" in BDOS since CP/M apps
-;       may expect exclusive use of alternate register set.
+; BDOS/CCP deliberately leave alternate AF untouched for CP/M applications.
 ; TODO: Implement missing system calls:
 ;        - F_ATTRIB (needs to support wildcards, leave FCB at DMAADDR)
 ;        - RS232 (A_READ, A_WRITE)
@@ -546,8 +545,19 @@ B_DRV_RESET		EQU		25H			; Selectively reset disk drives
 
 			ORG		BDOSADDR
 
-BDOSINIT	DI						; Make sure interrupts are off
-			LD		SP,STCKTOP		; Initialize SP
+; Entry at 0000H is a COLD start only until the first initialization.
+; Repoint its JP operand to BDOSWARM so RST 0 / JP 0000H from a transient
+; perform an ordinary CP/M warm boot without repeating the sign-on.
+BDOSINIT	DI
+			LD		SP,STCKTOP		; Valid stack for BPMSIGN
+			LD		HL,BDOSWARM
+			LD		(0001H),HL		; Retarget JP at 0000H (operand only)
+			CALL	BPMSIGN			; Print TPA banner exactly once
+
+; Warm-boot path for BDOS 0, RST 0, JP 0000H and Ctrl-C.
+; Keep the existing BDOS reset semantics, but do not print BPMSIGN.
+BDOSWARM	DI					; Make sure interrupts are off
+			LD		SP,STCKTOP		; Discard transient's stack
 			XOR		A				; A=0
 			LD		(IOBYTE),A		; Initialize IOBYTE
 			LD		(CURDRV),A		; Drive A:, User 0
@@ -565,7 +575,6 @@ BDOSINIT	DI						; Make sure interrupts are off
 			LD		HL,0000H		; Initialize LOGVEC & ROVEC to 0000H
 			LD		(LOGVEC),HL		; ...
 			LD		(ROVEC),HL		; ...
-			CALL	BPMSIGN			; Show TPA size on startup
 			JP		CCP				; Start the CCP
 
 ; The TPA is 0100H..BDOSADDR-1. Derive KiB from BDOSADDR at
@@ -681,7 +690,7 @@ C_READ		LD		HL,RDKEY		; We are going to call RDKEY
 			LD		(SOFTCARD),A	; Do it!
 			LD		A,(AREG)		; Grab the return value
 			CP		83H				; See if it is Ctrl-C
-			JP		Z,BDOSINIT		; If Ctrl-C quit user program, go to CCP
+			JP		Z,BDOSWARM		; Ctrl-C is a warm boot (no banner)
 			PUSH	AF				; Preserve A (and F)
 			LD		HL,COUT			; Echo the character using COUT
 			LD		(ADDR),HL		; ...
@@ -2140,21 +2149,17 @@ F2PS1		ADD		A,'A'-1			; Convert to drive letter
 			JP		Z,F2PS7			; Don't handle filename or extension
 
 F2PL1		; Handle the filename - up to 8 characters
+			LD		A,C				; Already copied 8 filename characters?
+			CP		10				; 2 for drive/slash, plus 8
+			JP		Z,F2PS3			; No need to save A in alternate AF
 			LD		A,(HL)			; Obtain filename character
-			CP		' '				; See if it is a space
-			JP		Z,F2PS3			; If so we are done with filename
-			EX		AF,AF'			; We need to re-use A here
-			LD		A,C				; Get character count
-			CP		10				; Drive letter, slash and 8 char filename
-			JP		Z,F2PS2			; If so we are done with filename
-			EX		AF,AF'			; Swap back to original A reg
+			CP		' '				; End of filename?
+			JP		Z,F2PS3
 			LD		(IX+0),A		; Copy to PATH buffer
 			INC		C				; Increment filename char count
 			INC		HL				; Next byte of filename in FCB
 			INC		IX				; Next byte of PATH buffer
-			JP		F2PL1			; Loop till done
-
-F2PS2		EX		AF,AF'			; Swap back to original A reg
+			JP		F2PL1
 
 F2PS3		; Eat any space characters at end of filename
 F2PL2		LD		A,(HL)			; Read next character from FCB
@@ -2170,25 +2175,21 @@ F2PS4		LD		A,'.'			; Separator is a period
 			LD		B,0				; Use B to track num chars in extension
 
 			; Handle the extension - up to 3 characters
-F2PL3		LD		A,(HL)			; Obtain extension character
-			CP		' '				; See if it is a space (? or NULL maybe?)
-			JP		Z,F2PS7			; If so we are done with extension
-			CP		'$'				; See if it is a dollar ($$$ extension)
-			JP		NZ,F2PS5		; If not skip the substitution
+F2PL3		LD		A,B				; Number of extension chars copied
+			CP		3				; Maximum of three
+			JP		Z,F2PS7
+			LD		A,(HL)			; Obtain extension character
+			CP		' '				; End of extension?
+			JP		Z,F2PS7
+			CP		'$'				; ProDOS filename translation
+			JP		NZ,F2PS5
 			LD		A,'8'			; Replace '$' with '8'
-F2PS5		EX		AF,AF'			; We need to re-use A here
-			LD		A,B				; Get character count
-			CP		3				; Extension can be up to 3 chars
-			JP		Z,F2PS6			; If so we are done with filename
-			EX		AF,AF'			; Swap back to original A reg
-			LD		(IX+0),A		; Copy to PATH buffer
-			INC		C				; Count the chars (overall)
-			INC		B				; Count the chars (in extension)
+F2PS5		LD		(IX+0),A		; Copy to PATH buffer
+			INC		C				; Overall character count
+			INC		B				; Extension character count
 			INC		HL				; Next byte of filename in FCB
 			INC		IX				; Next byte of PATH buffer
-			JP		F2PL3			; Loop till done
-
-F2PS6		EX		AF,AF'			; Swap back to original A reg
+			JP		F2PL3
 
 F2PS7		LD		A,C				; Store length of string
 			LD		(IY+0),A		; We kept size byte in IY at start
@@ -2933,14 +2934,13 @@ DLS1		DEC		HL				; Put HL back to the beginning
 ;          Set length byte for PATHBUF & create FCB in FCB2
 ;          -> State 6
 ; State 6: Emit space to FILEBUF
-CMDSPC		EX		AF,AF'			; Save character for later
-			LD		A,B				; Get parser state
+CMDSPC		LD		A,B				; Get parser state
 			CP		0				; State 0 - eat the space
 			JP		NZ,CSS1			;
 			RET						;
 CSS1		CP		1				; State 1 - eat the space
 			JP		NZ,CSS2			;
-			EX		AF,AF'			; Get character back
+			LD		A,' '			; CMDSPC always emits a space
 			CALL	EMTFILBUF		; Emit char to FILEBUF
 			LD		A,E				; Write length byte to PATHBUF
 			LD		(PATHBUF),A		; ...
@@ -2970,7 +2970,7 @@ CSS2		CP		2				; State 2 - eat the space
 			RET						;
 CSS3		CP		3				; State 3
 			JP		NZ,CSS4			;
-			EX		AF,AF'			; Get character back
+			LD		A,' '			; CMDSPC always emits a space
 			CALL	EMTFILBUF		; Emit char to FILEBUF
 			LD		A,E				; Write length byte to PATHBUF
 			LD		(PATHBUF),A		; ...
@@ -2994,7 +2994,7 @@ CSS4		CP		4				; State 4 - eat the space
 			RET						;
 CSS5		CP		5				; State 5
 			JP		NZ,CSS6			;
-			EX		AF,AF'			; Get character back
+			LD		A,' '			; CMDSPC always emits a space
 			CALL	EMTFILBUF		; Emit char to FILEBUF
 			LD		A,E				; Write length byte to PATHBUF
 			LD		(PATHBUF),A		; ...
@@ -3015,7 +3015,7 @@ CSS5		CP		5				; State 5
 			RET						;
 CSS6		CP		6				; State 6
 			JP		NZ,CSS7			;
-			EX		AF,AF'			; Get character back
+			LD		A,' '			; CMDSPC always emits a space
 			CALL	EMTFILBUF		; Emit char to FILEBUF
 CSS7		RET
 
@@ -3036,47 +3036,47 @@ CSS7		RET
 ;          Emit character to PATHBUF
 ; State 6: Emit character to FILEBUF
 ;          Do not emit character to PATHBUF
-CMDNSPC		EX		AF,AF'			; Save character for later
-			LD		A,B				; Get parser state
+CMDNSPC		LD		A,B				; Get parser state
 			CP		0				; State 0 - eat the character
 			JP		NZ,CNS1			;
-			EX		AF,AF'			; Get character back
+			LD		A,(HL)			; Reload current source character
 			CALL	EMTPATHBUF		; Emit char to PATHBUF
 			INC		B				; Transition to state 1
 			RET						;
 CNS1		CP		1				; State 1 - eat the character
 			JP		NZ,CNS2			;
-			EX		AF,AF'			; Get character back
+			LD		A,(HL)			; Reload current source character
 			CALL	EMTPATHBUF		; Emit char to PATHBUF
 			RET						;
 CNS2		CP		2				; State 2
 			JP		NZ,CNS3			;
-			EX		AF,AF'			; Get character back
+			LD		A,(HL)			; Reload current source character
 			CALL	EMTPATHBUF		; Emit char to PATHBUF
 			CALL	EMTFILBUF		; Emit char to FILEBUF
 			INC		B				; Transition to state 3
 			RET						;
 CNS3		CP		3				; State 3
 			JP		NZ,CNS4			;
-			EX		AF,AF'			; Get character back
+			LD		A,(HL)			; Reload current source character
 			CALL	EMTPATHBUF		; Emit char to PATHBUF
 			CALL	EMTFILBUF		; Emit char to FILEBUF
-CNS4		CP		4				; State 3
+			RET					; State 3 is complete
+CNS4		CP		4				; State 4
 			JP		NZ,CNS5			;
-			EX		AF,AF'			; Get character back
+			LD		A,(HL)			; Reload current source character
 			CALL	EMTPATHBUF		; Emit char to PATHBUF
 			CALL	EMTFILBUF		; Emit char to FILEBUF
 			INC		B				; Transition to state 5
 			RET						;
 CNS5		CP		5				; State 5
 			JP		NZ,CNS6			;
-			EX		AF,AF'			; Get character back
+			LD		A,(HL)			; Reload current source character
 			CALL	EMTPATHBUF		; Emit char to PATHBUF
 			CALL	EMTFILBUF		; Emit char to FILEBUF
 			RET						;
 CNS6		CP		6				; State 6
 			JP		NZ,CNS7			;
-			EX		AF,AF'			; Get character back
+			LD		A,(HL)			; Reload current source character
 			CALL	EMTFILBUF		; Emit char to FILEBUF
 CNS7		RET
 
@@ -3210,7 +3210,7 @@ BYEYES		LD		E,13
 			XOR		A				; CMD=0: 6502 leaves Z80 mode
 			LD		(CMD),A
 			LD		(SOFTCARD),A	; Should never resume on Z80
-			JP		BDOSINIT		; Defensive fallback only
+			JP		BDOSWARM		; Defensive fallback only
 
 BYEASK		DEFM	'Y/N? $'
 
