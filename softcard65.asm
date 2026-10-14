@@ -112,9 +112,9 @@ PRMSG LDY #0 ; Initialize index
  LDA ($06),Y ; Length of string
  STA $08 ; Store length in temp
 :L1 INY  ; Advance char pointer
+ LDA ($06),Y ; Get char
  TYA ; VPUT uses Y for video column
  PHA ; Save PRMSG string index
- LDA ($06),Y ; Get char
  JSR VPUT ; Print it
  PLA ; Restore string index
  TAY

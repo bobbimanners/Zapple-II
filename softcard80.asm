@@ -48,6 +48,8 @@ BDOSADDR	EQU		08400H			;
 STCKTOP		EQU		097FFH			; Top of Z80 stack (below IOBUFs)
 
 SOFTCARD	EQU		0E400H			; Softcard in slot 4 ($C400)
+PDUNIT		EQU		070H			; ProDOS volume device: slot 7, drive 1
+
 
 OFFSET		EQU		01000H			; Offset to add to Z80 addr to get 6502
 									; address. Correct for Z80 addr <= 0AFFFH
@@ -1265,7 +1267,124 @@ F_DMAOFF	LD		(DMAADDR),DE	;
 			RET
 
 ; Return address of allocation map in HL
-DRV_AVEC	LD		HL,ALLOCVEC		;
+DRV_AVEC	CALL	V_GETFREE		; Refresh logical allocation map
+			LD		HL,ALLOCVEC
+			RET
+
+; Refresh CP/M free-space bitmap from underlying ProDOS volume bitmap.
+; ProDOS bit 1 means *free*, one bit per 512 bytes. CP/M bit 1 means
+; *allocated*, one bit per 2 KiB. We only return the total available
+; space, not stable physical block identities.
+;
+; MAME setup: CFFA in slot 7, hard1 (PDUNIT=$70). Other drives need
+; PDUNIT adjusted, or later implement dynamic unit discovery.
+; Read block 2 -> volume header bitmap pointer ($27), block count ($29).
+; Read all necessary bitmap blocks (up to 16), stop after 2012 free
+; ProDOS 512-byte blocks (503 virtual 2 KiB blocks) have been found.
+; MLI READ_BLOCK failures conservatively report no free space.
+; Called only by BDOS function 27. Trashes AF, BC, DE, HL.
+V_GETFREE	LD		HL,2
+			LD		(VRBLK),HL
+			CALL	V_READ
+			JP		NZ,V_ERROR
+			LD		HL,(VOLBUF+27H)
+			LD		A,H
+			OR		L
+			JP		Z,V_ERROR	; No valid bitmap pointer
+			LD		(VRBLK),HL
+			LD		HL,(VOLBUF+29H)
+			LD		A,H
+			OR		L
+			JP		Z,V_ERROR	; Invalid volume size
+			LD		(VLEFT),HL
+			LD		HL,0
+			LD		(VFREE),HL
+
+V_NEXTMAP	LD		HL,(VLEFT)	; No more valid volume blocks to scan?
+			LD		A,H
+			OR		L
+			JP		Z,V_READY
+			CALL	V_READ
+			JP		NZ,V_ERROR
+			LD		HL,VOLBUF
+			LD		BC,512
+V_MAPBYTE	LD		E,(HL)			; One byte, eight bitmap bits MSB first
+			LD		D,8
+V_MAPBIT	PUSH	HL
+			LD		HL,(VLEFT)
+			LD		A,H
+			OR		L
+			JP		Z,V_DONEPOP	; Ignore padding beyond volume end
+			DEC		HL
+			LD		(VLEFT),HL
+			POP		HL
+			LD		A,E
+			ADD		A,A			; Carry set for free ProDOS block
+			LD		E,A
+			JP		NC,V_NFRE	; Occupied disk block
+			PUSH	HL
+			LD		HL,(VFREE)
+			INC		HL
+			LD		(VFREE),HL
+			LD		A,H
+			CP		07H
+			JP		NZ,V_MORE
+			LD		A,L
+			CP		0DCH			; 2012 = 0x07DC
+			JP		Z,V_READYPOP
+V_MORE		POP		HL
+V_NFRE		DEC		D
+			JP		NZ,V_MAPBIT
+			INC		HL
+			DEC		BC
+			LD		A,B
+			OR		C
+			JP		NZ,V_MAPBYTE
+			LD		HL,(VRBLK)
+			INC		HL
+			LD		(VRBLK),HL
+			JP		V_NEXTMAP
+
+V_DONEPOP	POP		HL
+			JP		V_READY
+V_READYPOP	POP		HL
+			JP		V_READY
+V_ERROR	LD		HL,0			; If MLI fails, do not invent free space
+			LD		(VFREE),HL
+
+V_READY		LD		HL,(VFREE)	; Convert free 512-byte blocks -> 2K
+			SRL		H
+			RR		L
+			SRL		H
+			RR		L
+			LD		B,H
+			LD		C,L			; BC = 0..503 free virtual blocks
+			LD		HL,ALLOCVEC
+			LD		D,64
+			LD		A,0FFH			; Mark every CP/M block as used
+V_FILL		LD		(HL),A
+			INC		HL
+			DEC		D
+			JP		NZ,V_FILL
+			LD		HL,ALLOCVEC+63	; Allocate free bits from end
+			LD		D,1				; bit 0 represents block 511
+V_MARK		LD		A,B
+			OR		C
+			RET		Z
+			LD		A,D
+			CPL
+			AND		(HL)
+			LD		(HL),A
+			SLA		D				; Next virtual block towards 0
+			JP		NZ,V_MARKNEXT
+			LD		D,1
+			DEC		HL
+V_MARKNEXT	DEC		BC
+			JP		V_MARK
+
+V_READ		LD		HL,VRMLI
+			CALL	PRODOS			; A=0 success, nonzero MLI error
+			OR		A
 			RET
 
 ; Software write-protect current disk
@@ -1641,6 +1760,7 @@ CFL2		LD		(HL),C			; ...
 ; The FCB is written to the buffer pointed to by DMAADDR
 ; Trashes pretty much all registers (except IX, IY)
 NAME2FCB	PUSH	BC				; We will need C later
+			PUSH	HL				; Remember source ProDOS dir entry for EOF
 			EX		DE,HL			; Stash HL in DE for call to CLRFCB
 			CALL	CLRFCB			; Clear FCB at DMAADDR
 			EX		DE,HL			; Get file entry pointer back in HL
@@ -1729,40 +1849,82 @@ N2FL4		LD		A,(HL)			; Get character
 			JP		N2FL4			; Loop
 
 			; Handle file size info
-N2FS6		POP		BC				; Get C back
-			LD		A,C				; Check value of C
-			CP		0				; See if zero (meaning do not check size)
-			RET		Z				; Nothing else to do
-			LD		DE,(DMAADDR)	; Pointer to start of FCB
-			LD		IX,PATHBUF		; Destination buffer
-			CALL	FCB2PATH		; Populate PATHLEN and PATH from new FCB
-			LD		HL,GFIMLI		; Pass address of 6502 JSR instruction
-			CALL	PRODOS			; Invoke ProDOS MLI
-			CP		0				; See if there was an error
-			JP		NZ,N2FERR		; Handle error
-			LD		HL,(GFIMLIBU)	; ProDOS blocks used (approx. size)
-			ADD		HL,HL			; Convert 512-byte blocks to 128-byte records
-			ADD		HL,HL			; (later: use ProDOS EOF instead)
-			PUSH	HL				; Keep total count for exact-extent test
-			CALL	RECS2EXRC		; B = extent count, A = record remainder
+N2FS6		POP		HL				; Source ProDOS file entry
+			POP		BC				; Original size-request flag in C
+			LD		A,C
+			OR		A
+			RET		Z				; FCB for parsing only; don't touch allocation bytes
+
+			; ProDOS file entry EOF is a 24-bit little-endian byte count
+			; at offsets 21..23. blocks_used includes sapling/tree
+			; index blocks and is *not* the logical length.
+			LD		DE,21
+			ADD		HL,DE
+			LD		E,(HL)			; EOF low byte
+			INC		HL
+			LD		D,(HL)			; EOF middle byte
+			INC		HL
+			LD		B,(HL)			; EOF high byte
+
+			; EX is one byte in this implementation. Saturate at
+			; 256 * 128 records = 4 MiB, represented by EX=255 RC=128.
+			LD		A,B
+			CP		40H
+			JP		NC,N2FMAX
+
+			; Compute ceil(EOF / 128) using EOF >> 7 plus one
+			; for any nonzero fractional record. Result in HL.
+			LD		A,E
+			AND		7FH
+			LD		C,0
+			JP		Z,N2FALGN
+			INC		C
+N2FALGN	LD		A,E
+			RLCA
+			AND		1
+			LD		L,A
+			LD		A,D
+			ADD		A,A
+			OR		L
+			LD		L,A
+			LD		A,D
+			RLCA
+			AND		1
+			LD		H,A
+			LD		A,B
+			ADD		A,A
+			OR		H
+			LD		H,A
+			LD		A,C
+			OR		A
+			JP		Z,N2FROUND
+			INC		HL
+
+N2FROUND	PUSH	HL				; Save total records for exact boundary
+			CALL	RECS2EXRC		; B = quotient /128, A = remainder
 			POP		HL
-			LD		C,A				; Save record remainder
+			LD		C,A
 			LD		A,H
-			OR		L				; Zero-length file?
-			JR		Z,N2FRCOK
+			OR		L
+			JP		Z,N2FSTORE	; Zero-length file
 			LD		A,C
-			OR		A				; Nonzero number of records in final extent?
-			JR		NZ,N2FRCOK
-			DEC		B				; Exact multiple of 128 records:
-			LD		C,080H			; last extent is full, not an empty next extent
-N2FRCOK		LD		DE,(DMAADDR)	; Pointer to returned FCB
-			PUSH	DE
+			OR		A
+			JP		NZ,N2FSTORE
+			DEC		B				; Exactly n*128 records: previous extent is full
+			LD		C,080H
+			JP		N2FSTORE
+
+N2FMAX		LD		B,0FFH			; Clip files >=4 MiB to largest EX/RC
+			LD		C,080H
+
+N2FSTORE	LD		HL,(DMAADDR)
+			PUSH	HL
 			POP		IX
-			LD		(IX+0CH),B		; Highest extent number
-			LD		(IX+0FH),C		; Records in highest extent (0..128)
+			LD		(IX+0CH),B
+			LD		(IX+0FH),C
 			LD		A,C
-			CALL	N2FMAP			; Fill FCB block allocation map (16..31)
-			RET	
+			CALL	N2FMAP
+			RET
 
 ; Generate a synthetic CP/M 2.2 allocation map in the directory FCB.
 ; A = records in THIS extent (0..128), DMAADDR = returned FCB.
@@ -1798,16 +1960,6 @@ N2FMSTORE	LD		(HL),A			; Little endian, low byte
 			INC		D
 			DJNZ	N2FMLP
 			RET
-
-N2FERR		LD		DE,(DMAADDR)	; Pointer to start of FCB
-			PUSH	DE				; Copy into IX
-			POP		IX				; ...
-			LD		A,0				; If error, set num extents to zero
-			LD		(IX+0CH),A		; Store in EX field of FCB
-			LD		A,0				; If error, set record count to zero
-			LD		(IX+0FH),A		; Store in RC field of FCB
-			CALL	N2FMAP			; Failed file info: clear stale map bytes too
-			RET	
 
 ; Read 512 byte block of directory
 ; Used by F_SFIRST and F_SNEXT
@@ -3008,9 +3160,31 @@ DPB			DEFW	32				; # 128 byte records per track (for Disk II)
 			DEFW	0				; Checksum vector size
 			DEFW	0				; # of reserved tracks
 
-; Fake allocation vector (2048 allocation blocks / 8 = 256 bytes)
-ALLOCVEC	DEFS	256				; TODO: This is a waste of memory
-									; Get rid of it?
+ ; Virtual 1 MiB CP/M allocation vector: 512 * 2 KiB blocks / 8 bits.
+ ; Bits: 1=occupied, 0=free. Only blocks 9..511 may be free;
+ ; block 0 directory and block IDs 1..8 are reserved for synthetic
+ ; file allocation entries. This is an *accounting* approximation,
+ ; not a persistent or per-file unique CP/M block allocator.
+ALLOCVEC	DEFS	64
+
+; Scratch for ProDOS READ_BLOCK in main-memory text page 2 ($0800).
+; The relocated loader previously uses this as an OPEN buffer, but closes
+; the file before starting the Z80. The custom console uses TEXT PAGE 1.
+; Z80 $F800 is 6502 $0800 in the SoftCard's shared high-memory window.
+; Keep this buffer separate from DIRBUF and the four live ProDOS OPEN buffers.
+VOLBUF		EQU		0F800H
+VLEFT		DEFW	0				; Remaining ProDOS blocks in volume
+VFREE		DEFW	0				; Count of free 512-byte blocks (max 2012)
+
+; ProDOS READ_BLOCK call, read-only, used to inspect volume bitmap.
+VRMLI		DEFB	20H,00H,0BFH	; JSR $BF00
+			DEFB	080H			; ProDOS READ_BLOCK
+			DEFW	VRPL+OFFSET
+			DEFB	60H				; RTS
+VRPL		DEFB	3
+VRUNIT		DEFB	PDUNIT
+			DEFW	0800H			; physical 6502 address (NOT VOLBUF+OFFSET)
+VRBLK		DEFW	0				; Requested ProDOS 512-byte block
 
 ; 64 byte buffer for storing a file path as a Pascal style string
 PATHBUF
