@@ -103,8 +103,25 @@ MAINLOOP
  STA SFTCRD ; Pause Z80, resume 6502
  JSR HANDLR ; Handle calls made by Z80 code
  JMP MAINLOOP ; Keep on keeping on
+* Exit to the ProDOS program selector. CMD=0 in HANDLR reaches here;
+* loader errors use the same exit. QUIT normally never returns.
 DONE
- BRK  ; Drop to monitor
+ LDA #0
+ STA $C000 ; 80STORE off
+ STA $C002 ; RAMRD main
+ STA $C004 ; RAMWRT main
+ STA $C00C ; 80COL off (ProDOS selector controls display)
+ JSR CL    ; Close all remaining open ProDOS files
+ INC $03F4 ; Invalidate the monitor power-up byte for safe reboot
+ JSR $BF00 ; ProDOS MLI
+ DB $65    ; QUIT
+ DW QUIT_PL
+ BRK       ; Unexpected: QUIT returned
+QUIT_PL DB 4 ; ProDOS QUIT: 4 parameters
+ DB 0      ; Standard quit type
+ DW 0      ; Reserved
+ DB 0      ; Reserved
+ DW 0      ; Reserved
 
 * Pointer to message is in ZP $06-$07
 * Uses ZP $08 as temporary
@@ -112,9 +129,9 @@ PRMSG LDY #0 ; Initialize index
  LDA ($06),Y ; Length of string
  STA $08 ; Store length in temp
 :L1 INY  ; Advance char pointer
- LDA ($06),Y ; Get char
- TYA ; VPUT uses Y for video column
- PHA ; Save PRMSG string index
+ TYA ; Save the message index BEFORE loading the character
+ PHA ; VPUT modifies Y, so preserve it
+ LDA ($06),Y ; Character must still be in A for VPUT
  JSR VPUT ; Print it
  PLA ; Restore string index
  TAY

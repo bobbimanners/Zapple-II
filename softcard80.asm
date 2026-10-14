@@ -565,7 +565,42 @@ BDOSINIT	DI						; Make sure interrupts are off
 			LD		HL,0000H		; Initialize LOGVEC & ROVEC to 0000H
 			LD		(LOGVEC),HL		; ...
 			LD		(ROVEC),HL		; ...
+			CALL	BPMSIGN			; Show TPA size on startup
 			JP		CCP				; Start the CCP
+
+; The TPA is 0100H..BDOSADDR-1. Derive KiB from BDOSADDR at
+; assembly time, then turn it into decimal at run time. 10 right shifts
+; convert a byte count to KiB; valid for any sensible BDOS placement.
+; We print two digits (CP/M's TPA cannot exceed 63 KiB).
+BPMSIGN		LD		DE,BPMSG
+			CALL	C_WRITESTR
+			LD		HL,BDOSADDR-0100H
+			LD		B,10
+BPMSHIFT	SRL		H
+			RR		L
+			DJNZ	BPMSHIFT
+			LD		A,L
+			LD		B,'0'
+BPMTENS		CP		10
+			JR		C,BPMDIGITS
+			SUB		10
+			INC		B
+			JR		BPMTENS
+BPMDIGITS	PUSH	AF
+			LD		E,B
+			CALL	C_WRITE
+			POP		AF
+			ADD		A,'0'
+			LD		E,A
+			CALL	C_WRITE
+			LD		DE,BPMSUFF
+			JP		C_WRITESTR
+
+BPMSG		DEFB	13
+			DEFM	'BP/M TPA '
+			DEFB	'$'
+BPMSUFF		DEFM	'K'
+			DEFB	13,'$'
 
 BDOSIMP
 ;;			CALL	PRHEX			; Print sys call number
@@ -2728,6 +2763,7 @@ PRHEX		PUSH	AF
 ; - REN          - Rename file (REN BAR.TXT=FOO.TXT)
 ; - SAVE         - Save memory to disk (SAVE 7 FOO.COM)
 ; - TYPE         - Show text file on console (TYPE TEST.TXT)
+; - BYE          - Confirm and exit to the ProDOS selector
 ; - FILENAME.COM - Load and run FILENAME.COM at 0100H
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -3069,6 +3105,8 @@ TYPCMD		DEFB	5
 			DEFM	'TYPE '
 SAVCMD		DEFB	5
 			DEFM	'SAVE '
+BYECMD		DEFB	4
+			DEFM	'BYE '
 
 ; Compares string at HL with string at DE
 ; HL points to length byte preceeding string to search for
@@ -3134,11 +3172,47 @@ BIS4		LD		DE,PATHBUF2+1	; Skip over drive byte in FCB
 			CALL	Z,SAVEFILE		; If so, call function for SAVE
 			JP		BIS6			; Done
 			
-BIS5		LD		A,0FFH			; Not a builtin
+BIS5		LD		DE,PATHBUF2+1
+			LD		HL,BYECMD
+			CALL	COMPSTR
+			CP		0
+			JP		NZ,BIS7
+			CALL	CCPBYE
+			JP		BIS6
+
+BIS7		LD		A,0FFH			; Not a builtin
 			RET
 
 BIS6		XOR		A				; Is a builtin
 			RET
+
+; Ask for confirmation. C_READ performs the normal CP/M keyboard echo.
+; Any response other than Y/N (case insensitive) asks again.
+; On Y, CMD=0 transfers permanently to the 6502 loader's QUIT path.
+CCPBYE		LD		DE,BYEASK
+			CALL	C_WRITESTR
+BYEKEY		CALL	C_READ
+			CP		'Y'
+			JR		Z,BYEYES
+			CP		'y'
+			JR		Z,BYEYES
+			CP		'N'
+			JR		Z,BYENO
+			CP		'n'
+			JR		Z,BYENO
+			LD		E,13
+			CALL	C_WRITE
+			JR		CCPBYE
+BYENO		LD		E,13
+			JP		C_WRITE
+BYEYES		LD		E,13
+			CALL	C_WRITE
+			XOR		A				; CMD=0: 6502 leaves Z80 mode
+			LD		(CMD),A
+			LD		(SOFTCARD),A	; Should never resume on Z80
+			JP		BDOSINIT		; Defensive fallback only
+
+BYEASK		DEFM	'Y/N? $'
 
 ; Load and run a .COM file to 0100H
 ; The FCB describing the file to run is in PATHBUF2
