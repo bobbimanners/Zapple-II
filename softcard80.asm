@@ -15,8 +15,6 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;
-; TODO: Look further down for CCP TODOs!!!!!!!
-;
 ; BDOS TODOs
 ; ----------
 ; TODO: Exploit aux memory to gain a larger TPA (48K instead of 32K)
@@ -30,7 +28,6 @@
 ; TODO: IOBYTE doesn't do anything
 ; TODO: User number doesn't do anything
 ; TODO: Software R/O disk setting is not respected
-; Other Random TODO comments in the code
 ; 
 
 BDOSADDR	EQU		08100H			; 
