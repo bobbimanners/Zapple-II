@@ -21,8 +21,8 @@
 ; ----------
 ; TODO: Prodos file handling is SLOW. Would be good to cache file handles rather than
 ;       closing/reopening every time.
-; TODO: Need to implement the BIOS entry points and jump table (see MG's Ruby)
-; TODO: Needs proper boot / warm boot entry points
+; BIOS: CP/M 2.2 jump table and console implemented; sector-level disk BIOS TODO.
+; BOOT and WBOOT implemented via the BIOS vectors.
 ; BDOS/CCP deliberately leave alternate AF untouched for CP/M applications.
 ; TODO: Implement missing system calls:
 ;        - F_ATTRIB (needs to support wildcards, leave FCB at DMAADDR)
@@ -545,13 +545,96 @@ B_DRV_RESET		EQU		25H			; Selectively reset disk drives
 
 			ORG		BDOSADDR
 
+; CP/M 2.2 BIOS jump table (17 entries, three bytes each).
+; Applications discover the BIOS WBOOT entry from the 16-bit operand
+; at 0001H. The following three JP instructions must be CONST, CONIN,
+; CONOUT in that order; TE_APPLE.COM copies exactly those nine bytes.
+; Keep this table contiguous. The disk-sector entries are safe stubs,
+; NOT a ProDOS block/sector BIOS (BP/M files continue through BDOS).
+BIOS		JP		BDOSINIT		; BOOT    +00H
+BIOSWBOOT	JP		BDOSWARM		; WBOOT   +03H
+BIOSCSTAT	JP		BIOSCONST		; CONST   +06H
+BIOSCKBD	JP		BIOSCONIN		; CONIN   +09H
+BIOSCTTY	JP		BIOSCONOUT		; CONOUT  +0CH
+			JP		BIOSLIST		; LIST    +0FH
+			JP		BIOSPUNCH		; PUNCH   +12H
+			JP		BIOSRDR			; READER  +15H
+			JP		BIOSHOME		; HOME    +18H
+			JP		BIOSSELDSK		; SELDSK  +1BH
+			JP		BIOSSETTRK		; SETTRK  +1EH
+			JP		BIOSSETSEC		; SETSEC  +21H
+			JP		BIOSSETDMA		; SETDMA  +24H
+			JP		BIOSREAD		; READ    +27H
+			JP		BIOSWRITE		; WRITE   +2AH
+			JP		BIOSLSTST		; LISTST  +2DH
+			JP		BIOSSECTRAN	; SECTRAN +30H
+
+; CP/M BIOS console: unlike the cooked BDOS C_READ, CONIN does not
+; echo or treat Ctrl-C specially. CONOUT takes its byte in C, and
+; must not suppress LF at the Z80 layer (C_WRITE deliberately does).
+; Neither routine touches the alternate Z80 register set.
+BIOSCONST	LD		A,3			; 6502 keyboard peek
+			LD		(CMD),A
+			LD		(SOFTCARD),A
+			LD		A,(AREG)
+			OR		A
+			RET		Z
+			LD		A,0FFH		; CP/M CONST: FF=ready, 00=not
+			RET
+
+BIOSCONIN	PUSH	HL
+			LD		HL,RDKEY		; VGET waits but doesn't echo
+			LD		(ADDR),HL
+			LD		A,1
+			LD		(CMD),A
+			LD		(SOFTCARD),A
+			LD		A,(AREG)
+			AND		7FH			; 6502 keyboard sets bit 7
+			POP		HL
+			RET
+
+BIOSCONOUT	PUSH	DE			; C contains character
+			PUSH	HL
+			LD		E,C
+			CALL	C_PUT		; Uncooked output to VPUT
+			POP		HL
+			POP		DE
+			RET
+
+; No auxiliary I/O devices yet. READER must return CP/M EOF (^Z).
+BIOSLIST	RET				; no printer attached
+BIOSPUNCH	RET				; no punch attached
+BIOSRDR		LD		A,1AH
+			RET
+BIOSLSTST	XOR		A			; printer not ready
+			RET
+
+; Sector BIOS is deliberately unimplemented: don't tell applications
+; that reads or writes succeeded when no data was transferred.
+; BDOS's existing ProDOS file-based interface remains unchanged.
+BIOSHOME	RET
+BIOSSELDSK	LD		HL,0000H	; no sector-level DPH available
+			RET
+BIOSSETTRK	RET
+BIOSSETSEC	RET
+BIOSSETDMA	LD		(DMAADDR),BC
+			RET
+BIOSREAD	LD		A,1			; error, not success
+			RET
+BIOSWRITE	LD		A,1			; error, not success
+			RET
+BIOSSECTRAN	LD		H,B			; identity mapping
+			LD		L,C
+			RET
+
 ; Entry at 0000H is a COLD start only until the first initialization.
-; Repoint its JP operand to BDOSWARM so RST 0 / JP 0000H from a transient
-; perform an ordinary CP/M warm boot without repeating the sign-on.
+; Repoint its JP operand to the real BIOS WBOOT jump (BIOS+3),
+; so CP/M applications can discover CONST/CONIN/CONOUT via (0001H).
+; Subsequent RST 0 / JP 0000H runs an ordinary warm boot.
 BDOSINIT	DI
 			LD		SP,STCKTOP		; Valid stack for BPMSIGN
-			LD		HL,BDOSWARM
-			LD		(0001H),HL		; Retarget JP at 0000H (operand only)
+			LD		HL,BIOSWBOOT
+			LD		(0001H),HL		; 0000H -> BIOS WBOOT JP (CP/M ABI)
 			CALL	BPMSIGN			; Print TPA banner exactly once
 
 ; Warm-boot path for BDOS 0, RST 0, JP 0000H and Ctrl-C.
@@ -708,7 +791,7 @@ C_READ		LD		HL,RDKEY		; We are going to call RDKEY
 C_WRITE		LD		A,E
 			CP		0AH
 			RET		Z
-			JP		C_PUT
+			JR		C_PUT
 
 ; Shared low-level output path for cooked and direct console writes.
 ; E = ASCII character; 6502 console driver accepts bit 7 set or clear.
@@ -726,8 +809,8 @@ C_PUT		LD		A,80H
 ; The 6502 driver itself currently ignores LF for CR/LF compatibility.
 C_RAWIO		LD		A,E
 			CP		0FFH
-			JP		Z,RIS1
-			JP		C_PUT
+			JR		Z,RIS1
+			JR		C_PUT
 
 			; If character is waiting, read from console & return in A
 			; Otherwise, return 00H in A
@@ -736,7 +819,7 @@ RIS1		LD		A,3				; CMD=3 means peek at keyboard
 			LD		(SOFTCARD),A	; Do it
 			LD		A,(AREG)		; Grab the return value
 			CP		0				; If zero, no chars are waiting
-			JP		Z,RIS2			; ...
+			JR		Z,RIS2			; ...
 			LD		HL,RDKEY		; We are going to call RDKEY
 			LD		(ADDR),HL		; ...
 			LD		A,1				; CMD=1 means call 6502 sub
@@ -771,7 +854,7 @@ C_WRITESTR	LD		A,(DE)			; Fetch character from string
 			CALL	C_WRITE			; Sent char to console
 			POP		DE				; Recover the pointer
 			INC		DE				; Advance pointer
-			JP		C_WRITESTR		; Handle the next char
+			JR		C_WRITESTR		; Handle the next char
 
 ; Read console string
 ; DE points to the string buffer. First byte of the buffer is the capacity
@@ -797,7 +880,7 @@ CRSL1		PUSH	HL				; Preserve HL
 			CP		8				; Backspace ^H pressed?
 			JP		Z,CRSS2			; Handle backspace
 			CP		7FH				; Delete key pressed?
-			JP		Z,CRSS1			; Handle delete
+			JR		Z,CRSS1			; Handle delete
 			CP		26				; ^X pressed?
 			JP		Z,CRSS3			; Handle ^X
 			LD		B,A				; Stash character in B
@@ -808,7 +891,7 @@ CRSL1		PUSH	HL				; Preserve HL
 			LD		(HL),B			; Write character to buffer
 			INC		HL				; Advance to next character
 			INC		(IX+1)			; Increment character count
-			JP		CRSL1			; Loop
+			JR		CRSL1			; Loop
 			RET						;
 CRSS1		PUSH	HL
 			LD		E,8				; Print two backspaces (^H)
@@ -870,14 +953,14 @@ DRV_ALLRST	LD		A,(CURDRV)		; Contains both user & current drive
 ; Return 00 for success, 0FFH for error in A and L
 DRV_SET		LD		A,E				; Prepare to compare disk number
 			CP		16				; Support 16 'drives' A: - P:
-			JP		NC,DSERR		; If A>15 ... error
+			JR		NC,DSERR		; If A>15 ... error
 			LD		B,A				; Stash in B for now
 			LD		A,(CURDRV)		; Has both user number & current drive
 			AND		0F0H			; Mask out old drive number
 			OR		B				; Replace with new drive number
 			LD		(CURDRV),A		; Store the requested drive number
 			XOR		A				; A=0: Return code meaning success
-			JP		DSRET			; 
+			JR		DSRET			; 
 DSERR		LD		A,0FFH			; Return code for error
 DSRET		LD		L,A				; Return code in L too
 			RET
@@ -966,7 +1049,7 @@ FOFULL		PUSH	DE
 			LD		DE,FOFULLMSG
 			CALL	C_WRITESTR
 			POP		DE
-			JP		FOERR
+			JR		FOERR
 FOFULLMSG	DEFM	'Zapple-II: NO FREE IOBUF'
 			DEFB	13,'$'
 
@@ -983,21 +1066,21 @@ F_CLOSE		LD		H,D				; Pointer to FCB ...
 			ADD		HL,BC			; Compute address
 			LD		A,(HL)			; Obtain file reference num from FCB S2
 			CP		0FEH			; Virtual CP/M open, no ProDOS ref
-			JP		NZ,FCPHYS
+			JR		NZ,FCPHYS
 			LD		(HL),0			; Mark CP/M file closed
 			JP		FCSUCC
 FCPHYS		CP		0				; If file reference number is zero ...
-			JP		Z,FCSUCC		; ... Nothing to do, just return
+			JR		Z,FCSUCC		; ... Nothing to do, just return
 			LD		(FCMLIN),A		; Store in parameter list
 			LD		HL,FCMLI		; Pass address of 6502 JSR instruction
 			CALL	PRODOS			; Invoke ProDOS MLI
 			CP		0				; See if there was an error
-			JP		NZ,FCERR		; Handle error
+			JR		NZ,FCERR		; Handle error
 
 			LD		A,(FCMLIN)		; Obtain file reference number again
 			CALL	GETIOADDR		; Returns FRN slot in A, IOBUF in HL
 			CP		0FFH			; Check for error
-			JP		Z,FCERR			; If FRN not found, error out
+			JR		Z,FCERR			; If FRN not found, error out
 
 			LD		HL,FRN1-1		; Compute addr of FRN slot to set to zero
 			LD		B,0				; ...
@@ -1039,7 +1122,7 @@ FSFL1		LD		A,0FFH			; Init CDBEXT to 0FFH (see CHKDIRBLK)
 			LD		(CDBEXT),A		; ...
 			CALL	RDDIRBLK		; Read first 512 byte block
 			CP		0				; See if it was an error
-			JP		NZ,FSFS2		; If error, assume EOF & just return
+			JR		NZ,FSFS2		; If error, assume EOF & just return
 
 			LD		HL,DIRBUF		; Skip over directory header
 			LD		BC,DIRHDSZ		; ...
@@ -1051,8 +1134,8 @@ FSFL1		LD		A,0FFH			; Init CDBEXT to 0FFH (see CHKDIRBLK)
 			LD		DE,(TEMPWORD)	; Get ptr to search FCB back
 			CALL	CHKDIRBLK		; Search directory block
 			CP		0				; See if it was a match
-			JP		Z,FSFS1			; If so, return
-			JP		FSFL1			; Loop
+			JR		Z,FSFS1			; If so, return
+			JR		FSFL1			; Loop
 
 FSFS1		LD		DE,(TEMPWORD)	; Get ptr to search FCB back
 			LD		A,(DE)			; Obtain drive number
@@ -1072,13 +1155,13 @@ F_SNEXT		LD		HL,(CDBPTR)		; Pointer into current block
 FSNL1		LD		DE,(TEMPWORD)	; Get ptr to search FCB back
 			CALL	CHKDIRBLK		; Search directory block
 			CP		0				; See if it was a match
-			JP		Z,FSNS1			; If so, return
+			JR		Z,FSNS1			; If so, return
 
 			LD		A,0FFH			; Init CDBEXT to 0FFH (see CHKDIRBLK)
 			LD		(CDBEXT),A		; ...
 			CALL	RDDIRBLK		; Read next 512 byte block
 			CP		0				; See if it was an error
-			JP		NZ,FSNS2		; If error, assume EOF & just return
+			JR		NZ,FSNS2		; If error, assume EOF & just return
 
 			LD		HL,DIRBUF		; Skip over directory header
 			LD		BC,DIRHDSZ		; ...
@@ -1087,7 +1170,7 @@ FSNL1		LD		DE,(TEMPWORD)	; Get ptr to search FCB back
 			XOR		A				; Set file count to zero
 			LD		(CDBCOUNT),A	; ...
 
-			JP		FSNL1			; Loop
+			JR		FSNL1			; Loop
 
 FSNS1		LD		DE,(TEMPWORD)	; Get ptr to search FCB back
 			LD		A,(DE)			; Obtain drive number
@@ -1131,21 +1214,21 @@ FD_WILD		PUSH	DE				; Preserve FCB
 			LD		HL,FDMLI		; Pass address of 6502 JSR instruction
 			CALL	PRODOS			; Invoke ProDOS MLI
 			CP		0				; See if there was an error
-			JP		NZ,FDS2			; Handle error
+			JR		NZ,FDS2			; Handle error
 		
 FDL1		POP		DE				; Get the FCB back
 			PUSH	DE				; And stash it for next time
 			CALL	F_SNEXT			; Search for file, create FCB
 			CP		0FFH			; If not found ...
-			JP		Z,FDS1			; ... We are done
+			JR		Z,FDS1			; ... We are done
 			LD		IX,PATHBUF		; Destination buffer
 			LD		DE,FILEBUF		; FCB created by F_NEXT is in FILEBUF
 			CALL	FCB2PATH		; Populate PATHLEN and PATH
 			LD		HL,FDMLI		; Pass address of 6502 JSR instruction
 			CALL	PRODOS			; Invoke ProDOS MLI
 			CP		0				; See if there was an error
-			JP		NZ,FDS2			; Handle error
-			JP		FDL1			; Loop for all matching files
+			JR		NZ,FDS2			; Handle error
+			JR		FDL1			; Loop for all matching files
 	
 FDS1		POP		DE				; Restore stack
 			XOR		A				; Return success
@@ -1167,9 +1250,9 @@ IO_BEGIN	XOR		A
 			LD		(IOVIRT),A
 			LD		A,(IX+0EH)
 			CP		0FEH
-			JP		Z,IO_REOPEN
+			JR		Z,IO_REOPEN
 			OR		A				; Zero means not open
-			JP		Z,IO_BAD
+			JR		Z,IO_BAD
 			XOR		A
 			RET
 IO_BAD		LD		A,9				; Invalid FCB
@@ -1207,12 +1290,12 @@ IO_REOPEN	LD		A,1
 IO_END		PUSH	AF
 			LD		A,(IOVIRT)
 			OR		A
-			JP		Z,IO_DONE
+			JR		Z,IO_DONE
 			PUSH	IX
 			POP		DE
 			CALL	F_CLOSE
 			OR		A
-			JP		NZ,IO_CERR
+			JR		NZ,IO_CERR
 			LD		(IX+0EH),0FEH	; Still logically open to CP/M
 IO_DONE		POP		AF
 			LD		L,A
@@ -1231,9 +1314,9 @@ F_READ		PUSH	DE				; Copy pointer to FCB ...
 			POP		IX				; ... into IX
 			CALL	IO_BEGIN		; Reopen logical CP/M FCB if needed
 			OR		A
-			JP		Z,F_READ_GO
+			JR		Z,F_READ_GO
 			LD		L,A				; Invalid/open-error FCB
-			JP		IO_END			; Close transient handle
+			JR		IO_END			; Close transient handle
 F_READ_GO
 			LD		A,(IX+0EH)		; Obtain file reference num from FCB S2
 			LD		(SMMLIN),A		; Store in parameter list for SET_MARK
@@ -1262,16 +1345,16 @@ F_READ_GO
 			LD		HL,FRMLI		; Pass address of 6502 JSR instruction
 			CALL	PRODOS			; Invoke ProDOS MLI - READ
 			CP		4CH				; See if it was EOF
-			JP		Z,FREOF			; If so, return EOF code (1)
+			JR		Z,FREOF			; If so, return EOF code (1)
 			CP		43H				; See if it was a bad file ref number
-			JP		Z,FRBFCB		; If so, return invalid FCB code (9)
+			JR		Z,FRBFCB		; If so, return invalid FCB code (9)
 			CP		0				; See if there was some other error
-			JP		NZ,FRERR		; If so, return code 0FFH (h/w error)
+			JR		NZ,FRERR		; If so, return code 0FFH (h/w error)
 
 			LD		A,(IX+20H)		; Get sequential rec num from FCB
 			INC		(IX+20H)		; Increment sequential record number
 			CP		127				; Accumulator before increment
-			JP		NZ,FRS1			; If not, then nothing else to do
+			JR		NZ,FRS1			; If not, then nothing else to do
 			XOR		A				; Set sequential rec num to zero
 			LD		(IX+20H),A		; ...
 			INC		(IX+0CH)		; Increment the extent
@@ -1297,7 +1380,7 @@ F_WRITE		PUSH	DE				; Copy pointer to FCB ...
 			POP		IX				; ... into IX
 			CALL	IO_BEGIN		; Reopen logical CP/M FCB if needed
 			OR		A
-			JP		Z,F_WRITE_GO
+			JR		Z,F_WRITE_GO
 			LD		L,A				; Invalid/open-error FCB
 			JP		IO_END			; Close transient handle
 F_WRITE_GO
@@ -1338,16 +1421,16 @@ F_WRITE_GO
 			LD		HL,FWMLI		; Pass address of 6502 JSR instruction
 			CALL	PRODOS			; Invoke ProDOS MLI - WRITE
 			CP		43H				; See if it is a bad reference number
-			JP		Z,FWBFCB		; If so, return invalid FCB code (9)
+			JR		Z,FWBFCB		; If so, return invalid FCB code (9)
 			CP		48H				; See if it was an overrun error
-			JP		Z,FWDF			; If so, return disk full code (2)
+			JR		Z,FWDF			; If so, return disk full code (2)
 			CP		0				; See if there was some other error
-			JP		NZ,FWERR		; If so, return code 0FFH (h/w error)
+			JR		NZ,FWERR		; If so, return code 0FFH (h/w error)
 
 			LD		A,(IX+20H)		; Get sequential rec num from FCB
 			INC		(IX+20H)		; Increment sequential record number
 			CP		127				; Accumulator before increment
-			JP		NZ,FWS1			; If not, then nothing else to do
+			JR		NZ,FWS1			; If not, then nothing else to do
 			XOR		A				; Set sequential rec num to zero
 			LD		(IX+20H),A		; ...
 			INC		(IX+0CH)		; Increment the extent
@@ -1374,7 +1457,7 @@ F_MAKE		LD		IX,PATHBUF		; Destination buffer
 			LD		HL,FMMLI		; Pass address of 6502 JSR instruction
 			CALL	PRODOS			; Invoke ProDOS MLI
 			CP		0				; See if there was an error
-			JP		NZ,FMERR		; Handle error
+			JR		NZ,FMERR		; Handle error
 			CALL	F_OPEN			; Open same FCB without touching search state
 			OR		A
 			RET		Z
@@ -1426,7 +1509,7 @@ F_RENAME	LD		IX,PATHBUF		; Destination buffer 1
 			LD		HL,FRNMLI		; Pass address of 6502 JSR instruction
 			CALL	PRODOS			; Invoke ProDOS MLI
 			CP		0				; See if there was an error
-			JP		NZ,FRNERR		; Handle error
+			JR		NZ,FRNERR		; Handle error
 			XOR		A				; Success
 			LD		L,A				; Return code in L also
 			RET
@@ -1526,10 +1609,10 @@ V_SETMASK	LD		C,A
 			LD		A,B
 			OR		A
 			LD		A,C
-			JP		Z,V_MASKDONE
+			JR		Z,V_MASKDONE
 			SRL		A
 			DEC		B
-			JP		V_SETMASK
+			JR		V_SETMASK
 V_MASKDONE	LD		(VFMASK),A
 			LD		HL,(DPBDSM)
 			SRL		H
@@ -1547,7 +1630,7 @@ V_MASKDONE	LD		(VFMASK),A
 			LD		DE,9
 			OR		A
 			SBC		HL,DE
-			JP		NC,V_BUDGETOK
+			JR		NC,V_BUDGETOK
 			LD		HL,0
 V_BUDGETOK	LD		(VBUDGET),HL
 
@@ -1578,33 +1661,33 @@ V_MAPBIT	PUSH	HL
 			LD		HL,(VLEFT)
 			LD		A,H
 			OR		L
-			JP		Z,V_DONEPOP
+			JR		Z,V_DONEPOP
 			DEC		HL
 			LD		(VLEFT),HL
 			POP		HL
 			LD		A,E
 			ADD		A,A
 			LD		E,A
-			JP		NC,V_USED
+			JR		NC,V_USED
 			PUSH	HL
 			LD		HL,(VFREE)
 			INC		HL
 			LD		(VFREE),HL
 			POP		HL
 V_USED		DEC		D
-			JP		NZ,V_MAPBIT
+			JR		NZ,V_MAPBIT
 			INC		HL
 			DEC		BC
 			LD		A,B
 			OR		C
-			JP		NZ,V_MAPBYTE
+			JR		NZ,V_MAPBYTE
 			LD		HL,(VRBLK)
 			INC		HL
 			LD		(VRBLK),HL
 			JP		V_NEXTMAP
 
 V_DONEPOP	POP		HL
-			JP		V_READY
+			JR		V_READY
 
 ; All input READ_BLOCK calls have finished. Reuse the $0800-$0FFF
 ; main-memory scratch area as the complete 2048-byte CP/M allocation map.
@@ -1635,13 +1718,13 @@ V_MARK		LD		A,B
 			LD		(HL),A
 			LD		A,(VFMASK)
 			SRL		A
-			JP		NZ,V_NEXTBIT
+			JR		NZ,V_NEXTBIT
 			LD		A,080H
 			DEC		HL
 V_NEXTBIT	LD		(VFMASK),A
 			LD		(VFEND),HL
 			DEC		BC
-			JP		V_MARK
+			JR		V_MARK
 
 V_BADHDR	LD		A,0FEH		; Invalid/misread volume header
 V_ERROR	LD		(VERR),A	; Capture MLI status for MAME debug
@@ -1696,21 +1779,21 @@ V_PFXNAME	LD		A,B
 			JP		Z,V_NOMATCH
 			LD		A,(HL)
 			CP		'/'
-			JP		Z,V_PFXDONE
+			JR		Z,V_PFXDONE
 			INC		C
 			LD		A,C
 			CP		16		; ProDOS volume name is <= 15 chars
 			JP		NC,V_NOMATCH
 			INC		HL
 			DEC		B
-			JP		V_PFXNAME
+			JR		V_PFXNAME
 V_PFXDONE	LD		A,C
 			OR		A
 			JP		Z,V_NOMATCH
 			LD		(V_NAMELEN),A
 			LD		A,1
 			LD		(V_HASPFX),A
-			JP		V_ENUM
+			JR		V_ENUM
 V_NOPREFIX	XOR		A
 			LD		(V_HASPFX),A
 
@@ -1728,7 +1811,7 @@ V_SCAN		LD		A,(IX+0)
 			LD		C,A		; Name length from ON_LINE
 			LD		A,(V_HASPFX)
 			OR		A
-			JP		Z,V_TRYDIR
+			JR		Z,V_TRYDIR
 			LD		A,(V_NAMELEN)
 			CP		C
 			JP		NZ,V_NEXT
@@ -1744,7 +1827,7 @@ V_CMPNAME	LD		A,(DE)
 			LD		A,(HL)
 			AND		0DFH
 			CP		C
-			JP		NZ,V_DIFFER
+			JR		NZ,V_DIFFER
 			INC		DE
 			INC		HL
 			DJNZ	V_CMPNAME
@@ -1780,12 +1863,12 @@ V_MKPATH	LD		A,(DE)
 			LD		HL,VFMLI		; GET_FILE_INFO on absolute path
 			CALL	PRODOS
 			OR		A
-			JP		NZ,V_TRYNEXT
+			JR		NZ,V_TRYNEXT
 			LD		A,(VFTYPE)
 			CP		0FH		; $0F is a ProDOS subdirectory
-			JP		NZ,V_TRYNEXT
+			JR		NZ,V_TRYNEXT
 			POP		BC
-			JP		V_FOUND
+			JR		V_FOUND
 V_TRYNEXT	POP		BC
 V_NEXT		LD		DE,16
 			ADD		IX,DE
@@ -1805,10 +1888,10 @@ DRV_SETRO	LD		B,80H			; Set MS-bit in B, will rotate this below
 			AND		0FH				; Mask out user number
 			INC		A				; It is easier if A: is 1, B is 2 etc.
 			CP		9				; See if it in LS-byte or MS-byte of ROVEC
-			JP		NC,DSRMSB		; If A>8 then drive bit in in MS-byte
+			JR		NC,DSRMSB		; If A>8 then drive bit in in MS-byte
 DSRL1		RL		B				; 
 			DEC		A				;
-			JP		NZ,DSRL1		;
+			JR		NZ,DSRL1		;
 			LD		A,(ROVEC)		; Fetch the LS-byte of ROVEC
 			OR		B				; Set the bit using OR
 			LD		(ROVEC),A		; Store LS-byte back to ROVEC
@@ -1817,7 +1900,7 @@ DSRMSB		LD		C,8				; Subtract 8 from the drive number
 			SUB		C				; A = A-8
 DSRL2		RL		B				;
 			DEC		A				;
-			JP		NZ,DSRL2		;
+			JR		NZ,DSRL2		;
 			LD		A,(ROVEC+1)		; Fetch the MS-byte of ROVEC
 			OR		B				; Set the bit using OR
 			LD		(ROVEC+1),A		; Store MS-byte back to ROVEC
@@ -1837,7 +1920,7 @@ DRV_DPB		CALL	V_GETFREE		; Set DSM from real volume first
 ; If E is 0FFH then user number is returned in A
 F_USERNUM	LD		A,E				; See if it is get or set
 			CP		0FFH			; 0FFH means 'get'
-			JP		Z,FUNS1			; It is 'get'
+			JR		Z,FUNS1			; It is 'get'
 			LD		B,A				; Stash the user number to set in B
 			SLA		B				; Left shift four times
 			SLA		B				; ...
@@ -1865,7 +1948,7 @@ F_READRAND	PUSH	DE				; Copy pointer to FCB ...
 			POP		IX				; ...
 			CALL	IO_BEGIN		; Reopen logical CP/M FCB if needed
 			OR		A
-			JP		Z,F_READR_GO
+			JR		Z,F_READR_GO
 			LD		L,A				; Invalid/open-error FCB
 			JP		IO_END			; Close transient handle
 F_READR_GO
@@ -1895,11 +1978,11 @@ F_READR_GO
 			LD		HL,FRMLI		; Pass address of 6502 JSR instruction
 			CALL	PRODOS			; Invoke ProDOS MLI - READ
 			CP		4CH				; See if it was EOF
-			JP		Z,FRRRUD		; If so, return EOF code (1)
+			JR		Z,FRRRUD		; If so, return EOF code (1)
 			CP		43H				; See if it was a bad file ref number
 			JP		Z,FRBFCB		; If so, return invalid FCB code (9)
 			CP		0				; See if there was some other error
-			JP		NZ,FRRERR		; If so, return code 0FFH (h/w error)
+			JR		NZ,FRRERR		; If so, return code 0FFH (h/w error)
 
 			LD		L,(IX+21H)		; Load random record number (LSB)
 			LD		H,(IX+22H)		; Load random record number (MSB)
@@ -1929,7 +2012,7 @@ F_WRITERAND	PUSH	DE				; Copy pointer to FCB ...
 			POP		IX				; ...
 			CALL	IO_BEGIN		; Reopen logical CP/M FCB if needed
 			OR		A
-			JP		Z,F_WRTR_GO
+			JR		Z,F_WRTR_GO
 			LD		L,A				; Invalid/open-error FCB
 			JP		IO_END			; Close transient handle
 F_WRTR_GO
@@ -1953,7 +2036,7 @@ F_WRTR_GO
 			LD		BC,(SMMLIP1)	; Load requested offset into BC
 			AND		A				; Clear carry
 			SBC		HL,BC			; Subtract requested byte offset from EOF
-			JP		NC,FWRS1		; If >=0 no need to SET_EOF
+			JR		NC,FWRS1		; If >=0 no need to SET_EOF
 
 			LD		(SEMLIE1),BC	; Requested offset for SET_EOF
 			LD		HL,SEMLI		; Pass address of 6502 JSR instruction
@@ -1975,11 +2058,11 @@ FWRS1		LD		HL,SMMLI		; Pass address of 6502 JSR instruction
 			LD		HL,FWMLI		; Pass address of 6502 JSR instruction
 			CALL	PRODOS			; Invoke ProDOS MLI - WRITE
 			CP		43H				; See if it was a bad file ref number
-			JP		Z,FWRBFCB		; If so, return invalid FCB code (9)
+			JR		Z,FWRBFCB		; If so, return invalid FCB code (9)
 			CP		48H				; See if it was a bad file ref number
-			JP		Z,FWRDF			; If so, return invalid FCB code (9)
+			JR		Z,FWRDF			; If so, return invalid FCB code (9)
 			CP		0				; See if there was some other error
-			JP		NZ,FWRERR		; If so, return code 0FFH (h/w error)
+			JR		NZ,FWRERR		; If so, return code 0FFH (h/w error)
 
 			LD		L,(IX+21H)		; Load random record number (LSB)
 			LD		H,(IX+22H)		; Load random record number (MSB)
@@ -2129,7 +2212,7 @@ FCB2PATH	PUSH	IX				; Copy IX->IY
 			INC		IX				; Advance past the size byte before writing
 			LD		A,(DE)			; Get drive number from FCB
 			CP		0				; See if it is zero (default drive)
-			JP		NZ,F2PS1		; If drive explicit
+			JR		NZ,F2PS1		; If drive explicit
 			LD		A,(CURDRV)		; If default drive use CURDRV
 			AND		0FH				; Mask out user number
 			INC		A				; CURDRV is zero based
@@ -2151,22 +2234,22 @@ F2PS1		ADD		A,'A'-1			; Convert to drive letter
 F2PL1		; Handle the filename - up to 8 characters
 			LD		A,C				; Already copied 8 filename characters?
 			CP		10				; 2 for drive/slash, plus 8
-			JP		Z,F2PS3			; No need to save A in alternate AF
+			JR		Z,F2PS3			; No need to save A in alternate AF
 			LD		A,(HL)			; Obtain filename character
 			CP		' '				; End of filename?
-			JP		Z,F2PS3
+			JR		Z,F2PS3
 			LD		(IX+0),A		; Copy to PATH buffer
 			INC		C				; Increment filename char count
 			INC		HL				; Next byte of filename in FCB
 			INC		IX				; Next byte of PATH buffer
-			JP		F2PL1
+			JR		F2PL1
 
 F2PS3		; Eat any space characters at end of filename
 F2PL2		LD		A,(HL)			; Read next character from FCB
 			CP		' '				; Is it space?
-			JP		NZ,F2PS4		; If not, we are done eating!
+			JR		NZ,F2PS4		; If not, we are done eating!
 			INC		HL				; Otherwise advance to next char
-			JP		F2PL2			; And loop
+			JR		F2PL2			; And loop
 
 F2PS4		LD		A,'.'			; Separator is a period
 			LD		(IX+0),A		; Write to buffer
@@ -2177,19 +2260,19 @@ F2PS4		LD		A,'.'			; Separator is a period
 			; Handle the extension - up to 3 characters
 F2PL3		LD		A,B				; Number of extension chars copied
 			CP		3				; Maximum of three
-			JP		Z,F2PS7
+			JR		Z,F2PS7
 			LD		A,(HL)			; Obtain extension character
 			CP		' '				; End of extension?
-			JP		Z,F2PS7
+			JR		Z,F2PS7
 			CP		'$'				; ProDOS filename translation
-			JP		NZ,F2PS5
+			JR		NZ,F2PS5
 			LD		A,'8'			; Replace '$' with '8'
 F2PS5		LD		(IX+0),A		; Copy to PATH buffer
 			INC		C				; Overall character count
 			INC		B				; Extension character count
 			INC		HL				; Next byte of filename in FCB
 			INC		IX				; Next byte of PATH buffer
-			JP		F2PL3
+			JR		F2PL3
 
 F2PS7		LD		A,C				; Store length of string
 			LD		(IY+0),A		; We kept size byte in IY at start
@@ -2203,7 +2286,7 @@ CFL1		LD		(HL),C			; ...
 			INC		HL				; ...
 			INC		A				; ...
 			CP		16				; ...
-			JP		NZ,CFL1			; ...
+			JR		NZ,CFL1			; ...
 
 			LD		HL,(DMAADDR)	; Set all filename chars in FCB to space
 			INC		HL				; ...
@@ -2213,7 +2296,7 @@ CFL2		LD		(HL),C			; ...
 			INC		HL				; ...
 			INC		A				; ...
 			CP		8+3				; ...
-			JP		NZ,CFL2			; ...
+			JR		NZ,CFL2			; ...
 
 			RET
 
@@ -2250,16 +2333,16 @@ N2FL1		INC		HL				; Advance source pointer
 			JP		Z,N2FS6			; We are done
 			LD		A,(HL)			; Read character
 			CP		'.'				; See if it is a period
-			JP		Z,N2FS2			; Prepare to copy the extension
+			JR		Z,N2FS2			; Prepare to copy the extension
 			CP		'*'				; See if it is an asterix
-			JP		Z,N2FS3			; Handle asterix wildcard
+			JR		Z,N2FS3			; Handle asterix wildcard
 			LD		(DE),A			; Write character
 			
 			CP		'8'				; See if character in name is '8'
-			JP		NZ,N2FS0		; If not, then no substitution
+			JR		NZ,N2FS0		; If not, then no substitution
 			LD		A,B				; See how many chars have been written
 			CP		8				; >=8? If so we are in the extension
-			JP		C,N2FS0			; If not, then no substitution
+			JR		C,N2FS0			; If not, then no substitution
 			LD		A,'$'			; Otherwise substitute '8'->'$'
 			LD		(DE),A			; Re-write the substituted character
 
@@ -2278,12 +2361,12 @@ N2FS2		LD		DE,(DMAADDR)	; Destination is start of extension
 			INC		DE				;
 			INC		DE				;
 			LD		B,8				; 8 chars have been written
-			JP		N2FS1			; Jump back into the read-write loop
+			JR		N2FS1			; Jump back into the read-write loop
 
 			; Handle asterix wildcard character
 N2FS3		LD		A,B				; See how many chars have been written
 			CP		8				; >=8? If so we are in the extension
-			JP		C,N2FS4			; If in main filename (not extension)
+			JR		C,N2FS4			; If in main filename (not extension)
 
 			; Asterix in extension
 N2FL2		LD		A,'?'			; We will write '?' to rest of extension
@@ -2292,8 +2375,8 @@ N2FL2		LD		A,'?'			; We will write '?' to rest of extension
 			INC		B				; Increment character count
 			LD		A,B				; See if we are done
 			CP		8+3				; Filename+extension
-			JP		Z,N2FS6			; We are done
-			JP		N2FL2			; Loop
+			JR		Z,N2FS6			; We are done
+			JR		N2FL2			; Loop
 
 N2FS4		; Asterix in main filename
 N2FL3		LD		A,'?'			; We will write '?' to rest of filename
@@ -2302,8 +2385,8 @@ N2FL3		LD		A,'?'			; We will write '?' to rest of filename
 			INC		B				; Increment character count
 			LD		A,B				; See if we are done
 			CP		8				; Filename+extension
-			JP		Z,N2FS5			; We are done - eat chars up until '.'
-			JP		N2FL3			; Loop
+			JR		Z,N2FS5			; We are done - eat chars up until '.'
+			JR		N2FL3			; Loop
 
 N2FS5		; Eat rest of chars up until '.'
 N2FL4		LD		A,(HL)			; Get character
@@ -2313,8 +2396,8 @@ N2FL4		LD		A,(HL)			; Get character
 			DEC		C				; Decrement count of chars remaining
 			LD		A,C				; Get count of chars remaining
 			CP		0				; If none left ...
-			JP		Z,N2FS6			; We are done
-			JP		N2FL4			; Loop
+			JR		Z,N2FS6			; We are done
+			JR		N2FL4			; Loop
 
 			; Handle file size info
 N2FS6		POP		HL				; Source ProDOS file entry
@@ -2345,7 +2428,7 @@ N2FS6		POP		HL				; Source ProDOS file entry
 			LD		A,E
 			AND		7FH
 			LD		C,0
-			JP		Z,N2FALGN
+			JR		Z,N2FALGN
 			INC		C
 N2FALGN	LD		A,E
 			RLCA
@@ -2365,7 +2448,7 @@ N2FALGN	LD		A,E
 			LD		H,A
 			LD		A,C
 			OR		A
-			JP		Z,N2FROUND
+			JR		Z,N2FROUND
 			INC		HL
 
 N2FROUND	PUSH	HL				; Save total records for exact boundary
@@ -2374,13 +2457,13 @@ N2FROUND	PUSH	HL				; Save total records for exact boundary
 			LD		C,A
 			LD		A,H
 			OR		L
-			JP		Z,N2FSTORE	; Zero-length file
+			JR		Z,N2FSTORE	; Zero-length file
 			LD		A,C
 			OR		A
-			JP		NZ,N2FSTORE
+			JR		NZ,N2FSTORE
 			DEC		B				; Exactly n*128 records: previous extent is full
 			LD		C,080H
-			JP		N2FSTORE
+			JR		N2FSTORE
 
 N2FMAX		LD		B,0FFH			; Clip files >=4 MiB to largest EX/RC
 			LD		C,080H
@@ -2449,24 +2532,24 @@ RDDIRBLK	LD		HL,(DMAADDR)	; Save existing DMA address
 			LD		(DMAADDR),HL	; ...
 			CALL	F_READ			; Read second record of directory
 			CP		0				; See if there was an error
-			JP		NZ,RDBS1		; If so, quit with error code
+			JR		NZ,RDBS1		; If so, quit with error code
 
 			LD		DE,DFCB			; Use this FCB to open the directory
 			LD		HL,DIRBUF3		; Set DMAADDR to point to DIRBUF3
 			LD		(DMAADDR),HL	; ...
 			CALL	F_READ			; Read third record of directory
 			CP		0				; See if there was an error
-			JP		NZ,RDBS1		; If so, quit with error code
+			JR		NZ,RDBS1		; If so, quit with error code
 
 			LD		DE,DFCB			; Use this FCB to open the directory
 			LD		HL,DIRBUF4		; Set DMAADDR to point to DIRBUF4
 			LD		(DMAADDR),HL	; ...
 			CALL	F_READ			; Read fourth record of directory
 			CP		0				; See if there was an error
-			JP		NZ,RDBS1		; If so, quit with error code
+			JR		NZ,RDBS1		; If so, quit with error code
 
 			XOR		A				; Return code for success
-			JP		RDBS2			; Successful return
+			JR		RDBS2			; Successful return
 
 RDBS1		LD		A,0FFH			; Error return code
 
@@ -2486,16 +2569,16 @@ MATCHFCB	INC		DE				; Skip over drive byte in FCB
 			LD		C,0				; Initialize character counter
 MFL1		LD		A,(DE)			; Load byte of search pattern
 			CP		'?'				; Is it '?' wildcard?
-			JP		Z,MFS1			; If so, automatic char match
+			JR		Z,MFS1			; If so, automatic char match
 			LD		B,(HL)			; Load byte of match candidate
 			CP		B				; See if the characters match
-			JP		NZ,MFS2			; If not, then no match
+			JR		NZ,MFS2			; If not, then no match
 MFS1		INC		DE				; Advance source pointer
 			INC		HL				; Advance match candidate pointer
 			INC		C				; Increment counter
 			LD		A,8+3			; Compare character counter
 			CP		C				; ...
-			JP		NZ,MFL1			; Loop if characters left
+			JR		NZ,MFL1			; Loop if characters left
 			XOR		A				; We have a match
 			RET						;
 MFS2		LD		A,0FFH			; No match
@@ -2510,7 +2593,7 @@ CHKDIRENT	LD		B,0				; Hardcode drive A: MATCHFCB ignores it
 			LD		A,(HL)			; Get first byte of file entry
 			AND		0FH				; Mask to get the filename length
 			CP		0				; If zero ...
-			JP		Z,CDES1			; File is deleted - no match
+			JR		Z,CDES1			; File is deleted - no match
 			PUSH	HL				; Preserve HL
 			PUSH	DE				; Preserve DE
 			LD		C,1				; Do check file sizes and put in FCB
@@ -2523,7 +2606,7 @@ CHKDIRENT	LD		B,0				; Hardcode drive A: MATCHFCB ignores it
 			POP		DE				; Recover DE
 			POP		HL				; Recover HL
 			CP		0				; Does it match?
-			JP		Z,CDES2			; If so, return
+			JR		Z,CDES2			; If so, return
 CDES1		LD		A,0FFH			; No match
 			RET						;
 CDES2		XOR		A				; Match
@@ -2548,8 +2631,8 @@ CDBL1		CALL	CHKDIRENT		; Match the file entry at HL, build FCB
 
 			LD		A,(CDBEXT)		; Load CDBEXT
 			CP		0FFH			; If it is 0FFH, means this is first ...
-			JP		Z,CDBS0			; ... time we have looked at this dirent
-			JP		CDBS01			; Not the first extent for this dirent
+			JR		Z,CDBS0			; ... time we have looked at this dirent
+			JR		CDBS01			; Not the first extent for this dirent
 
 			; First extent for directory entry (highest numbered extent)
 			; This extent may contain 1-128 records
@@ -2560,7 +2643,7 @@ CDBS0		LD		HL,(DMAADDR)	; Address of FCB created by CHKDIRENT
 			LD		(CDBEXT),A		; Store it for next time
 			LD		(IY+0CH),A		; Store it in the FCB returned to caller
 			CP		0				; If CDBEXT will be zero next time
-			JP		Z,CDBS1			; ... we can advance to next entry
+			JR		Z,CDBS1			; ... we can advance to next entry
 			JP		CDBS2			; Return FCB for this extent (it match)
 
 			; Not the first extent for directory entry
@@ -2578,8 +2661,8 @@ CDBS01		LD		HL,(DMAADDR)	; CHKDIRENT has rebuilt FCB
 			CALL	N2FMAP
 			POP		AF
 			CP		0				; If CDBEXT will be zero next time
-			JP		Z,CDBS1			; ... we can advance to next entry
-			JP		CDBS2			; Return FCB for this extent (it match)
+			JR		Z,CDBS1			; ... we can advance to next entry
+			JR		CDBS2			; Return FCB for this extent (it match)
 
 CDBS1		LD		HL,(CDBPTR)		; Pointer to file entry
 			LD		BC,FILEENTSZ	; Advance to next file entry
@@ -2593,7 +2676,7 @@ CDBS1		LD		HL,(CDBPTR)		; Pointer to file entry
 
 CDBS2		POP		AF				; Get return code back in A
 			CP		0				; Was it a match?
-			JP		Z,CDBS3			; If so, we are done
+			JR		Z,CDBS3			; If so, we are done
 			LD		A,(CDBCOUNT)	; Get the counter back
 			CP		ENTPERBLK		; Done all of them in this block?
 			JP		NZ,CDBL1		; If not, loop
@@ -2615,16 +2698,16 @@ CDBEXT		DEFB	0				; Stores extent number
 GETIOADDR	LD		B,A				; Stash file ref number into B
 			LD		A,(FRN1)		; Does it match FRN1?
 			CP		B				; ...
-			JP		Z,GIOAS1		; ...
+			JR		Z,GIOAS1		; ...
 			LD		A,(FRN2)		; Does it match FRN2?
 			CP		B				; ...
-			JP		Z,GIOAS2		; ...
+			JR		Z,GIOAS2		; ...
 			LD		A,(FRN3)		; Does it match FRN3?
 			CP		B				; ...
-			JP		Z,GIOAS3		; ...
+			JR		Z,GIOAS3		; ...
 			LD		A,(FRN4)		; Does it match FRN4?
 			CP		B				; ...
-			JP		Z,GIOAS4		; ...
+			JR		Z,GIOAS4		; ...
 			LD		A,0FFH			; No match, return A=0FFH
 			RET						; ...
 GIOAS1		LD		HL,IOBUF1		; Address of I/O buf 1 -> HL
@@ -2694,7 +2777,7 @@ RRN2LEN		ADD		HL,HL			; Shift left seven times
 ; Returns extent number in B and records within extent in A
 RECS2EXRC	SLA		H				; 7 MS-bits of extent number
 			BIT		7,L				; See if MS-bit of L is set
-			JP		Z,R2ERS1		; If set ...
+			JR		Z,R2ERS1		; If set ...
 			INC		H				; ... set LSB of extent number
 R2ERS1		LD		B,H				; Return extent in B
 			LD		A,L				; Now for the recs in the extent
@@ -2792,14 +2875,14 @@ CCPL1		LD		A,(CURDRV)		; Get current drive & user number
 
 			LD		A,(FILEBUF+1)	; Number of chars entered
 			CP		0 				; If none ...
-			JP		Z,CCPL1			; Loop until user types something!
+			JR		Z,CCPL1			; Loop until user types something!
 
 			; Two char built-in commands A:, B:, C: etc
 			CP		2				; Check if two chars ...
-			JP		NZ,CCPS1		; If not, skip
+			JR		NZ,CCPS1		; If not, skip
 			LD		A,(FILEBUF+3)	; See if second char is ':'
 			CP		':'				; ...
-			JP		NZ,CCPS1		; If not, skip
+			JR		NZ,CCPS1		; If not, skip
 			LD		A,(FILEBUF+2)	; Get the character before the ':'
 			SUB		'A'				; A is 0, B is 1 etc.
 			LD		E,A				; Set the default drive
@@ -2832,12 +2915,12 @@ UCL1		LD		A,C				; See if any chars are left
 			DEC		C				; Decrement count remaining
 			LD		A,(HL)			; Get char from buffer
 			CP		'z'				; Compare with ASCII 'z'
-			JP		NC,UCS1			; If >'z' nothing to do
+			JR		NC,UCS1			; If >'z' nothing to do
 			CP		'a'-1			; Compare with char before ASCII 'a'
-			JP		C,UCS1			; If <='a'-1 then nothing to do
+			JR		C,UCS1			; If <='a'-1 then nothing to do
 			SUB		'a'-'A'			; Convert to upper case
 UCS1		LD		(HL),A			; Put converted char back
-			JP		UCL1			; Loop
+			JR		UCL1			; Loop
 
 ; Parse the command line
 ; Replaces the contents of FILEBUF with command tail as Pascal-style string
@@ -2859,21 +2942,21 @@ PARSE		CALL	RSTPATHBUF		; Set IY and E for writing PATHBUF
 			LD		C,(HL)			; Get the length of source string
 CTL1		LD		A,C				; See if any chars are left in input
 			CP		0				; ...
-			JP		Z,CTS2			; If 0, go update the length byte
+			JR		Z,CTS2			; If 0, go update the length byte
 			INC		HL				; Advance to next char of source string
 			DEC		C				; Decrement count remaining
 			LD		A,(HL)			; Get char from buffer
 			CP		' '				; See if it a space
-			JP		Z,CTS1			; If space ...
+			JR		Z,CTS1			; If space ...
 			CALL	CMDNSPC			; Handle non-space
-			JP		CTL1			; Loop
+			JR		CTL1			; Loop
 CTS1		CALL	CMDSPC			; Handle space
-			JP		CTL1			; Loop
+			JR		CTL1			; Loop
 CTS2		LD		A,' '			; Fake an additional space on the end ...
 			CALL	CMDSPC			; ... so parser can get itself in correct state
 			LD		A,D				; Get string length of command tail
 			CP		1				; If length is 1, is just a space
-			JP		NZ,CTS3			; If not length 1, store length, otherwise ...
+			JR		NZ,CTS3			; If not length 1, store length, otherwise ...
 			LD		D,0				; ... Set length to zero
 CTS3		LD		HL,FILEBUF		; First byte is length of string
 			LD		(HL),D			; Write string length
@@ -2899,7 +2982,7 @@ DRVLETTER	INC		HL				; Advance to second char
 			INC		HL				; ...
 			LD 		A,(HL)			; See if second char typed is a colon
 			CP 		':'				;
-			JP 		NZ,DLS1			; If not then skip to default drive
+			JR 		NZ,DLS1			; If not then skip to default drive
 			DEC		HL				; Back to first char
 			LD 		A,(HL)			; Get the drive letter
 			SUB 	'A'-1			; Convert to 1-based drive number
@@ -2936,7 +3019,7 @@ DLS1		DEC		HL				; Put HL back to the beginning
 ; State 6: Emit space to FILEBUF
 CMDSPC		LD		A,B				; Get parser state
 			CP		0				; State 0 - eat the space
-			JP		NZ,CSS1			;
+			JR		NZ,CSS1			;
 			RET						;
 CSS1		CP		1				; State 1 - eat the space
 			JP		NZ,CSS2			;
@@ -2966,10 +3049,10 @@ CSS1		CP		1				; State 1 - eat the space
 			INC		B				; Transition to state 2
 			RET						;
 CSS2		CP		2				; State 2 - eat the space
-			JP		NZ,CSS3			;
+			JR		NZ,CSS3			;
 			RET						;
 CSS3		CP		3				; State 3
-			JP		NZ,CSS4			;
+			JR		NZ,CSS4			;
 			LD		A,' '			; CMDSPC always emits a space
 			CALL	EMTFILBUF		; Emit char to FILEBUF
 			LD		A,E				; Write length byte to PATHBUF
@@ -2990,10 +3073,10 @@ CSS3		CP		3				; State 3
 			INC		B				; Transition to state 4
 			RET						;
 CSS4		CP		4				; State 4 - eat the space
-			JP		NZ,CSS5			;
+			JR		NZ,CSS5			;
 			RET						;
 CSS5		CP		5				; State 5
-			JP		NZ,CSS6			;
+			JR		NZ,CSS6			;
 			LD		A,' '			; CMDSPC always emits a space
 			CALL	EMTFILBUF		; Emit char to FILEBUF
 			LD		A,E				; Write length byte to PATHBUF
@@ -3014,7 +3097,7 @@ CSS5		CP		5				; State 5
 			INC		B				; Transition to state 6
 			RET						;
 CSS6		CP		6				; State 6
-			JP		NZ,CSS7			;
+			JR		NZ,CSS7			;
 			LD		A,' '			; CMDSPC always emits a space
 			CALL	EMTFILBUF		; Emit char to FILEBUF
 CSS7		RET
@@ -3038,44 +3121,44 @@ CSS7		RET
 ;          Do not emit character to PATHBUF
 CMDNSPC		LD		A,B				; Get parser state
 			CP		0				; State 0 - eat the character
-			JP		NZ,CNS1			;
+			JR		NZ,CNS1			;
 			LD		A,(HL)			; Reload current source character
 			CALL	EMTPATHBUF		; Emit char to PATHBUF
 			INC		B				; Transition to state 1
 			RET						;
 CNS1		CP		1				; State 1 - eat the character
-			JP		NZ,CNS2			;
+			JR		NZ,CNS2			;
 			LD		A,(HL)			; Reload current source character
 			CALL	EMTPATHBUF		; Emit char to PATHBUF
 			RET						;
 CNS2		CP		2				; State 2
-			JP		NZ,CNS3			;
+			JR		NZ,CNS3			;
 			LD		A,(HL)			; Reload current source character
 			CALL	EMTPATHBUF		; Emit char to PATHBUF
 			CALL	EMTFILBUF		; Emit char to FILEBUF
 			INC		B				; Transition to state 3
 			RET						;
 CNS3		CP		3				; State 3
-			JP		NZ,CNS4			;
+			JR		NZ,CNS4			;
 			LD		A,(HL)			; Reload current source character
 			CALL	EMTPATHBUF		; Emit char to PATHBUF
 			CALL	EMTFILBUF		; Emit char to FILEBUF
 			RET					; State 3 is complete
 CNS4		CP		4				; State 4
-			JP		NZ,CNS5			;
+			JR		NZ,CNS5			;
 			LD		A,(HL)			; Reload current source character
 			CALL	EMTPATHBUF		; Emit char to PATHBUF
 			CALL	EMTFILBUF		; Emit char to FILEBUF
 			INC		B				; Transition to state 5
 			RET						;
 CNS5		CP		5				; State 5
-			JP		NZ,CNS6			;
+			JR		NZ,CNS6			;
 			LD		A,(HL)			; Reload current source character
 			CALL	EMTPATHBUF		; Emit char to PATHBUF
 			CALL	EMTFILBUF		; Emit char to FILEBUF
 			RET						;
 CNS6		CP		6				; State 6
-			JP		NZ,CNS7			;
+			JR		NZ,CNS7			;
 			LD		A,(HL)			; Reload current source character
 			CALL	EMTFILBUF		; Emit char to FILEBUF
 CNS7		RET
@@ -3115,15 +3198,15 @@ COMPSTR		LD		C,(HL)			; Get length byte
 			INC		HL				; Advance to first character of pattern
 CSTL1		LD		A,C				; See if count is zero
 			CP		0				; ...
-			JP		Z,CSTS1			; If so, we have a match
+			JR		Z,CSTS1			; If so, we have a match
 			LD		B,(HL)			; Get character of search pattern
 			LD		A,(DE)			; Get byte from input string
 			CP		B				; Compare them
-			JP		NZ,CSTS2		; If different, no match
+			JR		NZ,CSTS2		; If different, no match
 			INC		HL				; Advance pointers
 			INC		DE				; ...
 			DEC		C				; Decrement count
-			JP		CSTL1			; Loop
+			JR		CSTL1			; Loop
 CSTS1		LD		A,0				; Return 0 for match
 			RET						;
 CSTS2		LD		A,0FFH			; Return 0FFH for no match
@@ -3136,7 +3219,7 @@ BUILTIN		LD		DE,PATHBUF2+1	; Skip over drive byte in FCB
 			LD		HL,DIRCMD		; See if 'DIR'
 			CALL	COMPSTR			; ...
 			CP		0				; ...
-			JP		NZ,BIS1			; If not, skip
+			JR		NZ,BIS1			; If not, skip
 			CALL	DIRECT			; Perform DIR
 			JP		BIS6			; Done
 
@@ -3144,7 +3227,7 @@ BIS1		LD		DE,PATHBUF2+1	; Skip over drive byte in FCB
 			LD		HL,ERACMD		; See if 'ERA'
 			CALL	COMPSTR			; ...
 			CP		0				; ...
-			JP		NZ,BIS2			; If not, skip
+			JR		NZ,BIS2			; If not, skip
 			CALL	ERASE			; Perform ERA
 			JP		BIS6			; Done
 
@@ -3152,7 +3235,7 @@ BIS2		LD		DE,PATHBUF2+1	; Skip over drive byte in FCB
 			LD		HL,RENCMD		; See if 'REN'
 			CALL	COMPSTR			; ...
 			CP		0				; ...
-			JP		NZ,BIS3			; If not, skip
+			JR		NZ,BIS3			; If not, skip
 			CALL	Z,RENAME		; If so, call function for REN
 			JP		BIS6			; Done
 
@@ -3160,25 +3243,25 @@ BIS3		LD		DE,PATHBUF2+1	; Skip over drive byte in FCB
 			LD		HL,TYPCMD		; See if 'TYPE'
 			CALL	COMPSTR			; ...
 			CP		0				; ...
-			JP		NZ,BIS4			; If not, skip
+			JR		NZ,BIS4			; If not, skip
 			CALL	Z,TYPEFILE		; If so, call function for TYPE
-			JP		BIS6			; Done
+			JR		BIS6			; Done
 
 BIS4		LD		DE,PATHBUF2+1	; Skip over drive byte in FCB
 			LD		HL,SAVCMD		; See if 'SAVE'
 			CALL	COMPSTR			; ...
 			CP		0				; ...
-			JP		NZ,BIS5			; If not, skip
+			JR		NZ,BIS5			; If not, skip
 			CALL	Z,SAVEFILE		; If so, call function for SAVE
-			JP		BIS6			; Done
+			JR		BIS6			; Done
 			
 BIS5		LD		DE,PATHBUF2+1
 			LD		HL,BYECMD
 			CALL	COMPSTR
 			CP		0
-			JP		NZ,BIS7
+			JR		NZ,BIS7
 			CALL	CCPBYE
-			JP		BIS6
+			JR		BIS6
 
 BIS7		LD		A,0FFH			; Not a builtin
 			RET
@@ -3230,9 +3313,9 @@ RCL1		CALL	F_READ			; Read records until done
 			ADD		HL,BC			; ...
 			LD		(DMAADDR),HL	; ...
 			CP		0				; Check return code from F_READ
-			JP		Z,RCL1			; If zero, keep looping
+			JR		Z,RCL1			; If zero, keep looping
 			CP		1				; Check return code from F_READ
-			JP		NZ,RCLERR		; If not EOF (1), then error
+			JR		NZ,RCLERR		; If not EOF (1), then error
 			CALL	F_CLOSE			; Close the file
 			LD		HL,FILEBUF		; Reset DMAADDR to 0080H
 			LD		(DMAADDR),HL	; ...
@@ -3294,7 +3377,7 @@ DIRL1		LD		DE,FCB1			; Default FCB address 1
 			CP		0				;
 			RET		NZ				; If not found, we're done
 			CALL	PRDIRENT		; Print entry
-			JP		DIRL1			; Loop for all files in dir
+			JR		DIRL1			; Loop for all files in dir
 
 ; Set up FCB1 to search all files
 ; If length of command tail is zero, or length of command tail is 3
@@ -3304,15 +3387,15 @@ DIRFCB		LD		HL,FILEBUF		; Take a look at command tail
 			POP		IX				; ...
 			LD		A,(HL)			; Get length of command tail
 			CP		0				; If zero ...
-			JP		Z,DFS1			; ... Then default drive
+			JR		Z,DFS1			; ... Then default drive
 			CP		4				; If 4 chars (w/ leading/trailing spc)
-			JP		NZ,DFS1			; If not, then default drive
+			JR		NZ,DFS1			; If not, then default drive
 			LD		A,(IX+3)		; Should be ':'
 			CP		':'				; See if it is
-			JP		NZ,DFS1			; If not, then default drive
+			JR		NZ,DFS1			; If not, then default drive
 			LD		A,(IX+2)		; Load drive letter from command tail
 			SUB		'A'-1			; Make into 1-based drive number
-			JP		DFS2			; Go make the FCB
+			JR		DFS2			; Go make the FCB
 DFS1		LD		A,(CURDRV)		; Get current drive
 			AND		0FH				; Mask out user number
 			INC		A				; 1-based for FCB
@@ -3343,10 +3426,10 @@ PRDL1		LD		E,(HL)			;
 			INC		C				;
 			LD		A,9				; 8+1 because we already incremented
 			CP		C				;
-			JP		Z,PRDS2			; Jump to routine to print the '.'
+			JR		Z,PRDS2			; Jump to routine to print the '.'
 PRDS1		LD		A,12			; 8+3+1 because we already incremented
 			CP		C				;
-			JP		NZ,PRDL1		;
+			JR		NZ,PRDL1		;
 			LD		E,13			;
 			CALL	C_WRITE			;
 			POP		HL				;
@@ -3355,7 +3438,7 @@ PRDS2		LD		E,'.'			;
 			PUSH	HL				;
 			CALL	C_WRITE			;
 			POP		HL				;
-			JP		PRDS1			;
+			JR		PRDS1			;
 
 ; Erase file(s)
 ; Pattern for erase is in FCB1
@@ -3366,7 +3449,7 @@ ERASE		LD		HL,FILEBUF		; Reset DMAADDR to 0080H
 			LD		DE,FCB1			; Pass address of FCB1
 			CALL	F_DELETE		; Do the delete operation
 			CP		0				; Check return code
-			JP		NZ,ERER			; If non zero print error
+			JR		NZ,ERER			; If non zero print error
 			RET
 
 ERER		LD		DE,NFMSG		; 'Not found' message
@@ -3389,8 +3472,8 @@ RENL1		INC		HL				; Advance to next char
 			JP		Z,RENS4			; If at end then bad format
 			LD		A,(HL)			; Fetch char
 			CP		'='				; See if it is equals sign
-			JP		Z,RENS1			; Handle '=' sign
-			JP		RENL1			; Loop
+			JR		Z,RENS1			; Handle '=' sign
+			JR		RENL1			; Loop
 RENS1		LD		A,B				; Get char count
 			SUB		2				; For initial space and '='
 			LD		DE,FILEBUF		; Will write through ptr DE
@@ -3401,8 +3484,8 @@ RENL2		INC		HL				; Advance to next char
 			INC		B				; Increase char count
 			LD		A,B				; Copy to A for compare
 			CP		C				; Compare with string length
-			JP		Z,RENS3			; If at end then jump out
-			JP		RENL2			; Loop
+			JR		Z,RENS3			; If at end then jump out
+			JR		RENL2			; Loop
 RENS3		LD		A,B				; Get overall char count into A
 			SUB		4				; Compensate for extra chars
 			LD		HL,FILEBUF		; Get char count of first string
@@ -3433,7 +3516,7 @@ RENS3		LD		A,B				; Get overall char count into A
 			CALL	F_RENAME		; Perform the rename
 
 			CP		0				; See if it was successful
-			JP		NZ,RENS5		; If not, display message
+			JR		NZ,RENS5		; If not, display message
 			RET						;
 
 RENS4		LD		DE,BFMSG		; 'Bad format' message
@@ -3450,18 +3533,18 @@ TYPEFILE	LD		DE,FCB1			; Point to FCB1
 			LD		(DMAADDR),HL	; ...
 			CALL	F_OPEN			; Open the file with wildcard search
 			CP		0				;
-			JP		NZ,TFOERR		; Open error
+			JR		NZ,TFOERR		; Open error
 TFL1		LD		HL,FILEBUF		; Write ^Z to buffer in case 0 bytes read
 			LD		A,26			; ...
 			LD		(HL),A			; ...
 			LD		DE,FCB1			; Point to FCB1
 			CALL	F_READ			; Read records until done
 			CP		0				; Check return code from F_READ
-			JP		NZ,TFS1			; If non-zero jump out of loop
+			JR		NZ,TFS1			; If non-zero jump out of loop
 			CALL	TYPEBLK			; Display block on screen
-			JP		TFL1			; Loop
+			JR		TFL1			; Loop
 TFS1		CP		1				; Check return code from F_READ
-			JP		NZ,TFLERR		; If not EOF (1), then error
+			JR		NZ,TFLERR		; If not EOF (1), then error
 			CALL	TYPEBLK			; Display last block on screen
 			CALL	F_CLOSE			; Close the file
 			LD		E,13			; Carriage return
@@ -3482,7 +3565,7 @@ TYPEBLK		PUSH	DE				; Preserve DE, DL
 			LD		C,0				; Initialize character count
 TBL1		LD		A,(HL)			; Get character
 			CP		26				; See if it is ^Z character
-			JP		Z,TBS1			; If so, we are done
+			JR		Z,TBS1			; If so, we are done
 			LD		E,A				; Write to console
 			PUSH	HL				;
 			PUSH	DE				;
@@ -3493,7 +3576,7 @@ TBL1		LD		A,(HL)			; Get character
 			INC		C				; Increment character count
 			LD		A,C				; See if we have printed whole block
 			CP		80H				; ...
-			JP		NZ,TBL1			; If not, loop
+			JR		NZ,TBL1			; If not, loop
 TBS1		POP		HL				; Restore HL, DE
 			POP		DE				; ...
 			RET
