@@ -998,8 +998,7 @@ F_READ_GO
 			ADD		HL,BC			; ...
 			LD		(FRMLIDB),HL	; Store I/O buffer address in parm list
 
-			LD		HL,FRMLI		; Pass address of 6502 JSR instruction
-			CALL	PRODOS			; Invoke ProDOS MLI - READ
+			CALL	READ128		; READ and pad a short record with ^Z
 			CP		4CH				; See if it was EOF
 			JR		Z,FREOF			; If so, return EOF code (1)
 			CP		43H				; See if it was a bad file ref number
@@ -1617,8 +1616,7 @@ FRR_MARK_OK
 			LD		BC,OFFSET		; Convert to 6502 address
 			ADD		HL,BC			; ...
 			LD		(FRMLIDB),HL	; Store I/O buffer address in parm list
-			LD		HL,FRMLI		; Pass address of 6502 JSR instruction
-			CALL	PRODOS			; Invoke ProDOS MLI - READ
+			CALL	READ128		; READ and pad a short record with ^Z
 			CP		4CH				; See if it was EOF
 			JR		Z,FRRRUD		; If so, return EOF code (1)
 			CP		43H				; See if it was a bad file ref number
@@ -3520,7 +3518,53 @@ DIRBUF4		DEFS	128
 			ORG		9800H	; Try this - WORKS
 IOBUF1		DEFS	1024
 IOBUF2		DEFS	1024
-IOFREE		DEFS	1024	; $A000-$A3FF: NOT handed to ProDOS OPEN
+; Put the read completion shim in the otherwise spare $A000-$A3FF area.
+; It cannot overlap ProDOS buffers or the dedicated $A400-$A7FF stack.
+; Keeping it here actually saves 6 bytes in the crowded resident area.
+IOFREE
+; Both F_READ and F_READRAND use this helper after SET_MARK succeeds.
+; ProDOS READ sets FRMLITC even if EOF is reached before 128 bytes.
+; $4C is EOF only when the transfer count is zero; a short read returns
+; success and must be padded in the CP/M DMA buffer, not on disk.
+; Return ProDOS status unchanged for errors other than $4C;
+; otherwise return 0 if 1..128 bytes were read and $4C if none.
+READ128		XOR		A
+			LD		(FRMLITC),A	; No stale transfer count on error
+			LD		(FRMLITC+1),A
+			LD		HL,FRMLI
+			CALL	PRODOS
+			OR		A
+			JR		Z,R128_COUNT
+			CP		04CH
+			RET		NZ		; Preserve bad FRN / other error
+R128_COUNT	LD		A,(FRMLITC+1)
+			OR		A			; 128 requested: high byte must be 0
+			JR		NZ,R128_BAD
+			LD		A,(FRMLITC)
+			OR		A
+			JR		Z,R128_EOF
+			CP		128
+			JR		Z,R128_OK
+			JR		NC,R128_BAD	; ProDOS cannot return >128 bytes
+			LD		C,A			; Bytes read (1..127)
+			LD		B,0
+			LD		HL,(DMAADDR)
+			ADD		HL,BC		; First unfilled byte
+			LD		A,128
+			SUB		C
+			LD		B,A			; Number of bytes to pad (1..127)
+			LD		A,01AH		; CP/M text EOF marker (^Z)
+R128_FILL	LD		(HL),A
+			INC		HL
+			DJNZ	R128_FILL
+R128_OK	XOR		A
+			RET
+R128_EOF	LD		A,04CH
+			RET
+R128_BAD	LD		A,0FFH
+			RET
+
+			ORG		0A400H
 ; Dedicated stack: the live directory buffer ends at ~$97F2.
 ; Z80 SP=$A800, grows down into $A400-$A7FF, not DIRBUF.
 ; This intentionally limits simultaneously open ProDOS files to two.
