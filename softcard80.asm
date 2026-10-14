@@ -34,7 +34,7 @@
 ; 
 
 BDOSADDR	EQU		08100H			; 
-STCKTOP		EQU		097FFH			; Top of Z80 stack (below IOBUFs)
+STCKTOP		EQU		0A800H			; Dedicated 1K stack $A400-$A7FF
 
 SOFTCARD	EQU		0E400H			; Softcard in slot 4 ($C400)
 
@@ -299,7 +299,7 @@ BDOSWARM	DI					; Make sure interrupts are off
 			LD		(FRN1),A		; Initialize FRNs to zero
 			LD		(FRN2),A		; ...
 			LD		(FRN3),A		; ...
-			LD		(FRN4),A		; ...
+			LD		(FRN4),A		; Reserved unused slot (legacy)
 			LD		HL,FILEBUF		; Initialize DMAADDR to 0080H
 			LD		(DMAADDR),HL	; ...
 			LD		HL,0000H		; Initialize LOGVEC & ROVEC to 0000H
@@ -857,40 +857,39 @@ FD_CHKWILD	LD	A,(HL)
 			LD		A,0FFH
 FD_OK		LD		L,A
 			RET
-FD_WILD		PUSH	DE				; Preserve FCB
-			CALL	F_SFIRST		; Search for file, create FCB
-			CP		0FFH			; If not found ...
-			JP		Z,FDS2			; ... Return with error
-			LD		DE,FILEBUF		; FCB created by F_SFIRST is in FILEBUF
-			LD		IX,PATHBUF		; Destination buffer
-			CALL	FCB2PATH		; Populate PATHLEN and PATH
-			LD		HL,FDMLI		; Pass address of 6502 JSR instruction
-			CALL	PRODOS			; Invoke ProDOS MLI
-			CP		0				; See if there was an error
-			JR		NZ,FDS2			; Handle error
-		
-FDL1		POP		DE				; Get the FCB back
-			PUSH	DE				; And stash it for next time
-			CALL	F_SNEXT			; Search for file, create FCB
-			CP		0FFH			; If not found ...
-			JR		Z,FDS1			; ... We are done
-			LD		IX,PATHBUF		; Destination buffer
-			LD		DE,FILEBUF		; FCB created by F_NEXT is in FILEBUF
-			CALL	FCB2PATH		; Populate PATHLEN and PATH
-			LD		HL,FDMLI		; Pass address of 6502 JSR instruction
-			CALL	PRODOS			; Invoke ProDOS MLI
-			CP		0				; See if there was an error
-			JR		NZ,FDS2			; Handle error
-			JR		FDL1			; Loop for all matching files
-	
-FDS1		POP		DE				; Restore stack
-			XOR		A				; Return success
-			LD		L,A				; Return code in L also
-			RET
-
-FDS2		POP		DE				; Restore stack
-			LD		A,0FFH			; 0FFH for error
-			LD		L,A				; Return code in L also
+; Wildcard delete: never mutate an open ProDOS directory while using
+; its cached search state.  Delete ONE match, close the directory before
+; DESTROY, then restart F_SFIRST against the updated directory.
+; The first search distinguishes "no matches" from "all matches deleted".
+FD_WILD		PUSH	DE				; Save original wildcard FCB
+			CALL	F_SFIRST		; Find the first matching file
+			CP		0FFH
+			JR		Z,FDS2			; Nothing matched initially
+FDL1		LD		DE,DFCB
+			CALL	F_CLOSE			; Release directory before DESTROY
+			OR		A
+			JR		NZ,FDS2
+			LD		DE,FILEBUF		; Matching FCB from F_SFIRST
+			LD		IX,PATHBUF
+			CALL	FCB2PATH
+			LD		HL,FDMLI
+			CALL	PRODOS			; ProDOS DESTROY
+			OR		A
+			JR		NZ,FDS2
+			POP		DE				; Restore original wildcard
+			PUSH	DE
+			CALL	F_SFIRST		; Re-read directory after deletion
+			CP		0FFH
+			JR		NZ,FDL1		; Another match
+FDS1		XOR		A				; Success: at least one file deleted
+			JR		FDSDONE
+FDS2		LD		A,0FFH			; No match / ProDOS error
+FDSDONE		PUSH	AF				; Preserve deletion status
+			LD		DE,DFCB
+			CALL	F_CLOSE			; Release directory on every exit
+			POP		AF
+			POP		DE				; Balance saved wildcard FCB
+			LD		L,A
 			RET
 
 ; CP/M files are logically open even while their ProDOS handle is closed.
@@ -1724,7 +1723,7 @@ FWRERR		LD		A,0FFH			; All other errors are 0FFH
 ; A=L=0 on success, A=L=FFH on error.  Do not alter the FCB otherwise.
 ;
 ; GET_FILE_INFO does not return EOF, so temporarily OPEN the file,
-; GET_EOF, then CLOSE it.  Reuse a free I/O buffer from the four slots,
+; GET_EOF, then CLOSE it.  Reuse a free I/O buffer from the three usable slots,
 ; but do not claim a slot or alter the caller's S2 / open-file state.
 ; Only the randomly accessed file's FCB is updated; DMAADDR is untouched.
 F_SIZE		PUSH	DE				; Keep FCB pointer across ProDOS calls
@@ -2246,9 +2245,13 @@ CDES1		LD		A,0FFH			; Deleted entry
 ; CDBPTR points to the next ProDOS file entry to parse
 ; CDBCOUNT is set to the number of file entries already parsed in this block
 ; Returns A=0 if entry matches, A=FFH if no match
-CHKDIRBLK	LD		A,(CDBCOUNT)	; File entry counter
-			LD		HL,(CDBPTR)		; Pointer to next file entry
-CDBL1		CALL	CHKDIRENT		; Match the file entry at HL, build FCB
+; Always reload the ProDOS directory pointer at the top of the loop.
+; EX='?' processing uses HL for the synthetic FCB in DMAADDR; if a
+; candidate does not match, CDBS2 loops here without advancing CDBPTR.
+; Never pass that DMA address to CHKDIRENT as a ProDOS dir entry.
+CHKDIRBLK
+CDBL1		LD		HL,(CDBPTR)		; Reload each iteration, including EX='?' retries
+			CALL	CHKDIRENT		; Match the file entry at HL, build FCB
 			PUSH	AF				; Stash return code for now
 			PUSH	DE				; Copy pointer to search FCB ...
 			POP		IX				; ... into IX
@@ -2284,8 +2287,10 @@ CDBS01		LD		HL,(DMAADDR)	; CHKDIRENT has rebuilt FCB
 			LD		(CDBEXT),A		; Store it for next time
 			LD		(IY+0CH),A		; Store it in EX
 			PUSH	AF				; Keep extent number across N2FMAP
+			PUSH	DE				; N2FMAP clobbers DE (search FCB pointer)
 			LD		A,080H			; Full extent => eight 2 KB blocks
 			CALL	N2FMAP
+			POP		DE				; Restore search FCB pointer for CDBL1
 			POP		AF
 			CP		0				; If CDBEXT will be zero next time
 			JR		Z,CDBS1			; ... we can advance to next entry
@@ -2318,8 +2323,8 @@ CDBCOUNT	DEFB	0				; Stores file entry counter
 CDBEXT		DEFB	0				; Stores extent number
 
 ; Find IOBUF address for a file reference number
-; Scan through FRN1, FRN2, FRN3, FRN4 to find the file reference number in A
-; If found, return FRN slot# 1,2,3,4 in A, I/O buffer address in HL
+; Scan only FRN1..FRN3: fourth 1K region is reserved for the stack.
+; If found, return FRN slot# 1,2,3 in A, I/O buffer address in HL
 ; If not found, return A=0FFH
 ; Trashes BC
 GETIOADDR	LD		B,A			; Requested FRN (0 = first free slot)
@@ -2331,7 +2336,7 @@ GIASCAN	LD		A,(HL)
 			INC		HL
 			INC		C
 			LD		A,C
-			CP		5
+			CP		4
 			JR		NZ,GIASCAN
 			LD		A,0FFH
 			RET
@@ -2459,21 +2464,21 @@ PHOUT		LD		E,A
 			JP		C_WRITE
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-; Very simple CCP
+; Compact CP/M 2.2-style CCP
 ;
 ; Commands:
 ; - d:           - Change default drive (A:, B: etc.)
 ; - DIR          - Show directory (DIR, DIR A:, DIR FOO.TXT, DIR *.COM)
 ; - ERA          - Erase file(s) (ERA FOO.TXT, ERA F*.TXT)
 ; - REN          - Rename file (REN BAR.TXT=FOO.TXT)
-; - SAVE         - Save memory to disk (SAVE 7 FOO.COM)
+; - SAVE         - Save 256-byte pages of TPA (SAVE 7 FOO.COM)
 ; - TYPE         - Show text file on console (TYPE TEST.TXT)
 ; - BYE          - Confirm and exit to the ProDOS selector
 ; - FILENAME.COM - Load and run FILENAME.COM at 0100H
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-; TODO: Implement SAVE command
-; TODO: Sanity check / validate number of command args for builtins ???
+; Built-in argument counts and common filename mistakes are validated.
+; Full CP/M filename grammar is not yet enforced.
 
 ; Get a line of text from the console & handle it
 CCP			
@@ -2489,10 +2494,8 @@ CCPL1		LD		A,(CURDRV)		; Get current drive & user number
 			LD		A,120			; Max line length
 			LD		(DE),A			; Stored in first char of buffer
 			CALL	C_READSTR		; Get a line from the user
-			LD		H,D				; DE->HL
-			LD		L,E				; ...
-			INC		HL				; Skip over capacity byte
-			CALL	UCASE			; Convert buffer to uppercase
+			LD		HL,FILEBUF+1	; Use actual count byte, not DE (editing clobbers E)
+			CALL	UCASE			; Uppercase commands AND transient command tails
 
 			LD		A,(FILEBUF+1)	; Number of chars entered
 			CP		0 				; If none ...
@@ -2506,11 +2509,16 @@ CCPL1		LD		A,(CURDRV)		; Get current drive & user number
 			JR		NZ,CCPS1		; If not, skip
 			LD		A,(FILEBUF+2)	; Get the character before the ':'
 			SUB		'A'				; A is 0, B is 1 etc.
+			CP		16				; Valid CP/M drives A: through P:
+			JP		NC,CCPBADDRV
 			LD		E,A				; Set the default drive
 			CALL	DRV_SET			; ...
 			JP		CCPL1			; Go again
 
-CCPS1		LD		HL,FCB1			; Clear FCB1
+CCPBADDRV LD      DE,BFMSG
+           CALL    C_WRITESTR
+           JP      CCPL1
+CCPS1      LD      HL,FCB1			; Clear FCB1
 			LD		(DMAADDR),HL	;
 			CALL	CLRFCB			;
 
@@ -2526,22 +2534,21 @@ CCPS1		LD		HL,FCB1			; Clear FCB1
 
 			JP		CCP				; Go again
 
-; Convert input buffer to uppercase
-; HL points to Pascal-style string (length byte first)
-UCASE		LD		C,(HL)			; Length of string
-UCL1		LD		A,C				; See if any chars are left
-			CP		0				; ...
-			RET		Z				; If 0, we are done
-			INC		HL				; Advance to next char
-			DEC		C				; Decrement count remaining
-			LD		A,(HL)			; Get char from buffer
-			CP		'z'				; Compare with ASCII 'z'
-			JR		NC,UCS1			; If >'z' nothing to do
-			CP		'a'-1			; Compare with char before ASCII 'a'
-			JR		C,UCS1			; If <='a'-1 then nothing to do
-			SUB		'a'-'A'			; Convert to upper case
-UCS1		LD		(HL),A			; Put converted char back
-			JR		UCL1			; Loop
+; Uppercase the command input (Pascal string) in place.
+UCASE      LD      B,(HL)
+UCL1       LD      A,B
+           OR      A
+           RET     Z
+           INC     HL
+           LD      A,(HL)
+           CP      'a'
+           JR      C,UCS1
+           CP      'z'+1
+           JR      NC,UCS1
+           SUB     'a'-'A'
+           LD      (HL),A
+UCS1       DJNZ    UCL1
+           RET
 
 ; Parse the command line
 ; Replaces the contents of FILEBUF with command tail as Pascal-style string
@@ -2579,8 +2586,10 @@ CTS2		LD		A,' '			; Fake an additional space on the end ...
 			CP		1				; If length is 1, is just a space
 			JR		NZ,CTS3			; If not length 1, store length, otherwise ...
 			LD		D,0				; ... Set length to zero
-CTS3		LD		HL,FILEBUF		; First byte is length of string
-			LD		(HL),D			; Write string length
+CTS3		LD		(IX+0),0		; CP/M command tail needs a zero terminator
+								; IX points just past the generated tail.
+			LD		HL,FILEBUF		; First byte is length of string
+			LD		(HL),D			; Write string length (excluding zero)
 			RET						;
 
 ; Helper function to reset the PATHBUF buffer pointer & character count
@@ -2623,166 +2632,80 @@ DLS1		DEC		HL				; Put HL back to the beginning
 			LD		B,A				; Always use default drive
 			RET
 
-; Handle a space character in the command line
-; Character is passed in A
-; State 0: Do not emit space to FILEBUF
-; State 1: Do space to FILEBUF
-;          Set length byte for PATHBUF & create FCB in PATHBUF2
-;          -> State 2
-; State 2: Do not emit space to FILEBUF
-; State 3: Emit space to FILEBUF
-;          Set length byte for PATHBUF & create FCB in FCB1
-;          -> State 4
-; State 4: Do not emit space to FILEBUF
-; State 5: Emit space to FILEBUF
-;          Set length byte for PATHBUF & create FCB in FCB2
-;          -> State 6
-; State 6: Emit space to FILEBUF
-CMDSPC		LD		A,B				; Get parser state
-			CP		0				; State 0 - eat the space
-			JR		NZ,CSS1			;
-			RET						;
-CSS1		CP		1				; State 1 - eat the space
-			JP		NZ,CSS2			;
-			LD		A,' '			; CMDSPC always emits a space
-			CALL	EMTFILBUF		; Emit char to FILEBUF
-			LD		A,E				; Write length byte to PATHBUF
-			LD		(PATHBUF),A		; ...
-			CALL	RSTPATHBUF		; Reset IY & E for next use
-			PUSH	HL				; Preserve HL, BC, DE
-			PUSH	BC				; ...
-			PUSH	DE				; ...
-			LD		HL,PATHBUF2		; DMAADDR to PATHBUF2 - will put FCB there
-			LD		(DMAADDR),HL	; ...
-			LD		HL,PATHBUF		; NAME2FCB will use filename at PATHBUF
-			CALL	DRVLETTER		; Handle any x: drive letter prefix
-			LD		C,0				; Do not check file sizes
-			CALL	NAME2FCB		; Create FCB at PATHBUF2
-			LD		A,'C'			; Set extension to .COM, in case not typed
-			LD		(PATHBUF2+9),A	; ...
-			LD		A,'O'			; ...
-			LD		(PATHBUF2+10),A	; ...
-			LD		A,'M'			; ...
-			LD		(PATHBUF2+11),A	; ...
-			POP		DE				; Restore DE, BC, HL
-			POP		BC				; ...
-			POP		HL				; ...
-			INC		B				; Transition to state 2
-			RET						;
-CSS2		CP		2				; State 2 - eat the space
-			JR		NZ,CSS3			;
-			RET						;
-CSS3		CP		3				; State 3
-			JR		NZ,CSS4			;
-			LD		A,' '			; CMDSPC always emits a space
-			CALL	EMTFILBUF		; Emit char to FILEBUF
-			LD		A,E				; Write length byte to PATHBUF
-			LD		(PATHBUF),A		; ...
-			CALL	RSTPATHBUF		; Reset IY & E for next use
-			PUSH	HL				; Preserve HL, BC, DE
-			PUSH	BC				; ...
-			PUSH	DE				; ...
-			LD		HL,FCB1			; DMAADDR to FCB1 - will put FCB there
-			LD		(DMAADDR),HL	; ...
-			LD		HL,PATHBUF		; NAME2FCB will use filename at PATHBUF
-			CALL	DRVLETTER		; Handle any x: drive letter prefix
-			LD		C,0				; Do not check file sizes
-			CALL	NAME2FCB		; Create FCB at FCB1
-			POP		DE				; Restore DE, BC, HL
-			POP		BC				; ...
-			POP		HL				; ...
-			INC		B				; Transition to state 4
-			RET						;
-CSS4		CP		4				; State 4 - eat the space
-			JR		NZ,CSS5			;
-			RET						;
-CSS5		CP		5				; State 5
-			JR		NZ,CSS6			;
-			LD		A,' '			; CMDSPC always emits a space
-			CALL	EMTFILBUF		; Emit char to FILEBUF
-			LD		A,E				; Write length byte to PATHBUF
-			LD		(PATHBUF),A		; ...
-			CALL	RSTPATHBUF		; Reset IY & E for next use
-			PUSH	HL				; Preserve HL, BC, DE
-			PUSH	BC				; ...
-			PUSH	DE				; ...
-			LD		HL,FCB2			; DMAADDR to FCB2 - will put FCB there
-			LD		(DMAADDR),HL	; ...
-			LD		HL,PATHBUF		; NAME2FCB will use filename at PATHBUF
-			CALL	DRVLETTER		; Handle any x: drive letter prefix
-			LD		C,0				; Do not check file sizes
-			CALL	NAME2FCB		; Create FCB at FCB2
-			POP		DE				; Restore DE, BC, HL
-			POP		BC				; ...
-			POP		HL				; ...
-			INC		B				; Transition to state 6
-			RET						;
-CSS6		CP		6				; State 6
-			JR		NZ,CSS7			;
-			LD		A,' '			; CMDSPC always emits a space
-			CALL	EMTFILBUF		; Emit char to FILEBUF
-CSS7		RET
+; Handle the end of command/argument tokens. State B is 0..6:
+; odd states 1/3/5 finish command / first / second argument.
+CMDSPC     LD      A,B
+           OR      A
+           RET     Z               ; Leading whitespace
+           CP      6
+           JR      Z,SPTAIL         ; Further arguments stay in command tail
+           AND     1
+           RET     Z               ; Inter-argument whitespace
+           LD      A,' '
+           CALL    EMTFILBUF
+           LD      A,E
+           LD      (PATHBUF),A
+           CALL    RSTPATHBUF
+           PUSH    HL
+           PUSH    BC
+           PUSH    DE
+           LD      A,B
+           CP      1
+           JR      Z,SPCOM
+           CP      3
+           JR      Z,SPFIRST
+           LD      HL,FCB2
+           JR      SPMKFCB
+SPCOM      LD      HL,PATHBUF2
+           JR      SPMKFCB
+SPFIRST    LD      HL,FCB1
+SPMKFCB    LD      (DMAADDR),HL
+           LD      HL,PATHBUF
+           CALL    DRVLETTER
+           LD      C,0
+           CALL    NAME2FCB
+           POP     DE
+           POP     BC
+           POP     HL
+           LD      A,B
+           CP      1
+           JR      NZ,SPNEXT
+           LD      A,'C'
+           LD      (PATHBUF2+9),A
+           LD      A,'O'
+           LD      (PATHBUF2+10),A
+           LD      A,'M'
+           LD      (PATHBUF2+11),A
+SPNEXT     INC     B
+           RET
+SPTAIL     LD      A,' '
+           JP      EMTFILBUF
 
-; Handle a non-space character in the command line
-; Character is passed in A
-; State 0: Do not emit character to FILEBUF
-;          Emit character to PATHBUF
-;          -> State 1
-; State 1: Do not emit character to FILEBUF
-;          Emit character to PATHBUF
-; State 2: Emit character to FILEBUF -> State 3
-;          Emit character to PATHBUF
-; State 3: Emit character to FILEBUF
-;          Emit character to PATHBUF
-; State 4: Emit character to FILEBUF -> State 5
-;          Emit character to PATHBUF
-; State 5: Emit character to FILEBUF
-;          Emit character to PATHBUF
-; State 6: Emit character to FILEBUF
-;          Do not emit character to PATHBUF
-CMDNSPC		LD		A,B				; Get parser state
-			CP		0				; State 0 - eat the character
-			JR		NZ,CNS1			;
-			LD		A,(HL)			; Reload current source character
-			CALL	EMTPATHBUF		; Emit char to PATHBUF
-			INC		B				; Transition to state 1
-			RET						;
-CNS1		CP		1				; State 1 - eat the character
-			JR		NZ,CNS2			;
-			LD		A,(HL)			; Reload current source character
-			CALL	EMTPATHBUF		; Emit char to PATHBUF
-			RET						;
-CNS2		CP		2				; State 2
-			JR		NZ,CNS3			;
-			LD		A,(HL)			; Reload current source character
-			CALL	EMTPATHBUF		; Emit char to PATHBUF
-			CALL	EMTFILBUF		; Emit char to FILEBUF
-			INC		B				; Transition to state 3
-			RET						;
-CNS3		CP		3				; State 3
-			JR		NZ,CNS4			;
-			LD		A,(HL)			; Reload current source character
-			CALL	EMTPATHBUF		; Emit char to PATHBUF
-			CALL	EMTFILBUF		; Emit char to FILEBUF
-			RET					; State 3 is complete
-CNS4		CP		4				; State 4
-			JR		NZ,CNS5			;
-			LD		A,(HL)			; Reload current source character
-			CALL	EMTPATHBUF		; Emit char to PATHBUF
-			CALL	EMTFILBUF		; Emit char to FILEBUF
-			INC		B				; Transition to state 5
-			RET						;
-CNS5		CP		5				; State 5
-			JR		NZ,CNS6			;
-			LD		A,(HL)			; Reload current source character
-			CALL	EMTPATHBUF		; Emit char to PATHBUF
-			CALL	EMTFILBUF		; Emit char to FILEBUF
-			RET						;
-CNS6		CP		6				; State 6
-			JR		NZ,CNS7			;
-			LD		A,(HL)			; Reload current source character
-			CALL	EMTFILBUF		; Emit char to FILEBUF
-CNS7		RET
+; Emit non-space input byte to command and/or argument buffers.
+; State transitions 0->1, 2->3, 4->5 happen on the first byte.
+CMDNSPC    LD      A,B
+           CP      6
+           JR      Z,CNSFILE
+           LD      A,(HL)
+           CALL    EMTPATHBUF
+           LD      A,B
+           OR      A
+           JR      NZ,CNSNEXT
+           INC     B
+           RET
+CNSNEXT    CP      1
+           RET     Z
+           LD      A,(HL)
+           CALL    EMTFILBUF
+           LD      A,B
+           CP      2
+           JR      Z,CNSINC
+           CP      4
+           RET     NZ
+CNSINC     INC     B
+           RET
+CNSFILE    LD      A,(HL)
+           JP      EMTFILBUF
 
 ; Write character at A to IX (which points into FILEBUF)
 ; Helper for CMDSPC/CMDNSPC
@@ -2793,130 +2716,170 @@ EMTFILBUF	LD		(IX+0H),A		; Emit char to FILEBUF
 
 ; Write character at A to IX (which points into PATHBUF)
 ; Helper for CMDNSPC
-EMTPATHBUF	LD		(IY+0H),A		; Emit char to PATHBUF
-			INC		IY				; ...
-			INC		E				; Character count for FILEBUF
-			RET
+EMTPATHBUF PUSH    AF
+           LD      A,E
+           CP      63
+           JR      NC,EPPFULL
+           POP     AF
+           LD      (IY+0H),A
+           INC     IY
+           INC     E
+           RET
+EPPFULL    POP     AF
+           RET
 
-; Table of commands.  Each command has length byte prefix.
-DIRCMD		DEFB	4
-			DEFM	'DIR '
-ERACMD		DEFB	4
-			DEFM	'ERA '
-RENCMD		DEFB	4
-			DEFM	'REN '
-TYPCMD		DEFB	5
-			DEFM	'TYPE '
-SAVCMD		DEFB	5
-			DEFM	'SAVE '
-BYECMD		DEFB	4
-			DEFM	'BYE '
+; Built-ins are matched against the first five bytes of the parsed
+; command FCB. Each fixed-size entry is name[5], nargs[1], handler[2].
+; Bit 7 of nargs permits zero arguments as well as one (DIR).
+BITABLE    DEFM    'DIR  '
+           DEFB    081H
+           DEFW    DIRECT
+           DEFM    'ERA  '
+           DEFB    1
+           DEFW    ERASE
+           DEFM    'REN  '
+           DEFB    1
+           DEFW    RENAME
+           DEFM    'TYPE '
+           DEFB    1
+           DEFW    BITYPE
+           DEFM    'SAVE '
+           DEFB    2
+           DEFW    BISAVE
+           DEFM    'BYE  '
+           DEFB    0
+           DEFW    CCPBYE
 
-; Compares string at HL with string at DE
-; HL points to length byte preceeding string to search for
-; Returns 0 in A for match, 0FFH for no match
-COMPSTR		LD		C,(HL)			; Get length byte
-			INC		HL				; Advance to first character of pattern
-CSTL1		LD		A,C				; See if count is zero
-			CP		0				; ...
-			JR		Z,CSTS1			; If so, we have a match
-			LD		B,(HL)			; Get character of search pattern
-			LD		A,(DE)			; Get byte from input string
-			CP		B				; Compare them
-			JR		NZ,CSTS2		; If different, no match
-			INC		HL				; Advance pointers
-			INC		DE				; ...
-			DEC		C				; Decrement count
-			JR		CSTL1			; Loop
-CSTS1		LD		A,0				; Return 0 for match
-			RET						;
-CSTS2		LD		A,0FFH			; Return 0FFH for no match
-			RET
+; The CCP parser normalizes arguments as " arg1 arg2 ", always
+; separating words by ONE space and retaining the leading/trailing space.
+; Number of words = number of spaces - 1 (or 0 if tail is empty).
+CCPARGC    LD      HL,FILEBUF
+           LD      B,(HL)
+           LD      C,0
+           INC     HL
+CALOOP     LD      A,B
+           OR      A
+           JR      Z,CADONE
+           LD      A,(HL)
+           CP      ' '
+           JR      NZ,CANEXT
+           INC     C
+CANEXT     INC     HL
+           DJNZ    CALOOP
+CADONE     LD      A,C
+           OR      A
+           RET     Z
+           DEC     A
+           RET
 
-; See if command entered is a built-in command (DIR, ERA, REN, TYPE, SAVE)
-; Returns 0 in A if it was a built-in, non zero otherwise
-; The FCB describing the command to run is in PATHBUF2
-BUILTIN		LD		DE,PATHBUF2+1	; Skip over drive byte in FCB
-			LD		HL,DIRCMD		; See if 'DIR'
-			CALL	COMPSTR			; ...
-			CP		0				; ...
-			JR		NZ,BIS1			; If not, skip
-			CALL	DIRECT			; Perform DIR
-			JP		BIS6			; Done
+CCPBAD     LD      DE,BFMSG
+           CALL    C_WRITESTR
+           LD      A,1
+           OR      A
+           RET
 
-BIS1		LD		DE,PATHBUF2+1	; Skip over drive byte in FCB
-			LD		HL,ERACMD		; See if 'ERA'
-			CALL	COMPSTR			; ...
-			CP		0				; ...
-			JR		NZ,BIS2			; If not, skip
-			CALL	ERASE			; Perform ERA
-			JP		BIS6			; Done
+; Disallow ambiguous file specifications in TYPE, REN and SAVE.
+; Returns A=0 for unambiguous name, nonzero for '?' anywhere.
+ISWILD     LD      B,11
+IWLOOP     LD      A,(HL)
+           CP      '?'
+           RET     Z
+           INC     HL
+           DJNZ    IWLOOP
+           XOR     A
+           RET
+CCPNOWILD  CALL    ISWILD
+           OR      A
+           RET     Z
+           JP      CCPBAD
 
-BIS2		LD		DE,PATHBUF2+1	; Skip over drive byte in FCB
-			LD		HL,RENCMD		; See if 'REN'
-			CALL	COMPSTR			; ...
-			CP		0				; ...
-			JR		NZ,BIS3			; If not, skip
-			CALL	Z,RENAME		; If so, call function for REN
-			JP		BIS6			; Done
+BITYPE     LD      HL,FCB1NAM
+           CALL    CCPNOWILD
+           RET     NZ
+           JP      TYPEFILE
+BISAVE     LD      HL,FCB2NAM
+           CALL    CCPNOWILD
+           RET     NZ
+           JP      SAVEFILE
 
-BIS3		LD		DE,PATHBUF2+1	; Skip over drive byte in FCB
-			LD		HL,TYPCMD		; See if 'TYPE'
-			CALL	COMPSTR			; ...
-			CP		0				; ...
-			JR		NZ,BIS4			; If not, skip
-			CALL	Z,TYPEFILE		; If so, call function for TYPE
-			JR		BIS6			; Done
+; Single table-driven dispatcher instead of six repeated string
+; comparisons. A handler is entered with a synthetic return address.
+BUILTIN    LD      HL,BITABLE
+           LD      C,6
+BISCAN     LD      DE,PATHBUF2+1
+           LD      B,5
+BICMP      LD      A,(DE)
+           CP      (HL)
+           JR      NZ,BISKIP
+           INC     DE
+           INC     HL
+           DJNZ    BICMP
+           LD      A,(HL)
+           LD      (BIREQ),A
+           INC     HL
+           LD      E,(HL)
+           INC     HL
+           LD      D,(HL)
+           PUSH    DE
+           CALL    CCPARGC
+           LD      B,A
+           LD      A,(BIREQ)
+           AND     0FH
+           CP      B
+           JR      Z,BIRUN
+           LD      A,(BIREQ)
+           BIT     7,A
+           JR      Z,BIFAIL
+           LD      A,B
+           OR      A
+           JR      NZ,BIFAIL
+BIRUN      POP     HL
+           LD      DE,BIRETURN
+           PUSH    DE
+           JP      (HL)
+BIRETURN   XOR     A
+           RET
+BIFAIL     POP     HL
+           CALL    CCPBAD
+           XOR     A
+           RET
+BISKIP     LD      E,B            ; Skip unmatched portion of 5-char key
+           LD      D,0
+           ADD     HL,DE
+           LD      DE,3           ; nargs and jump target
+           ADD     HL,DE
+           DEC     C
+           JR      NZ,BISCAN
+           LD      A,0FFH
+           RET
+BIREQ      DEFB    0
 
-BIS4		LD		DE,PATHBUF2+1	; Skip over drive byte in FCB
-			LD		HL,SAVCMD		; See if 'SAVE'
-			CALL	COMPSTR			; ...
-			CP		0				; ...
-			JR		NZ,BIS5			; If not, skip
-			CALL	Z,SAVEFILE		; If so, call function for SAVE
-			JR		BIS6			; Done
-			
-BIS5		LD		DE,PATHBUF2+1
-			LD		HL,BYECMD
-			CALL	COMPSTR
-			CP		0
-			JR		NZ,BIS7
-			CALL	CCPBYE
-			JR		BIS6
-
-BIS7		LD		A,0FFH			; Not a builtin
-			RET
-
-BIS6		XOR		A				; Is a builtin
-			RET
-
-; Ask for confirmation. C_READ performs the normal CP/M keyboard echo.
-; Any response other than Y/N (case insensitive) asks again.
-; On Y, CMD=0 transfers permanently to the 6502 loader's QUIT path.
-CCPBYE		LD		DE,BYEASK
-			CALL	C_WRITESTR
-BYEKEY		CALL	C_READ
-			CP		'Y'
-			JR		Z,BYEYES
-			CP		'y'
-			JR		Z,BYEYES
-			CP		'N'
-			JR		Z,BYENO
-			CP		'n'
-			JR		Z,BYENO
-			LD		E,13
-			CALL	C_WRITE
-			JR		CCPBYE
-BYENO		LD		E,13
-			JP		C_WRITE
-BYEYES		LD		E,13
-			CALL	C_WRITE
-			XOR		A				; CMD=0: 6502 leaves Z80 mode
-			LD		(CMD),A
-			LD		(SOFTCARD),A	; Should never resume on Z80
-			JP		BDOSWARM		; Defensive fallback only
-
-BYEASK		DEFM	'Y/N? $'
+; Shared confirmation reader. A=0 for Y; A=1 for N.
+; Invalid input is ignored; C_READ echoes typed characters.
+CCPYESNO   CALL    C_WRITESTR
+CYKEY      CALL    C_READ
+           AND     0DFH
+           CP      'Y'
+           JR      Z,CYYES
+           CP      'N'
+           JR      NZ,CYKEY
+           LD      E,13
+           CALL    C_WRITE
+           LD      A,1
+           RET
+CYYES      LD      E,13
+           CALL    C_WRITE
+           XOR     A
+           RET
+CCPBYE     LD      DE,BYEASK
+           CALL    CCPYESNO
+           OR      A
+           RET     NZ
+           XOR     A
+           LD      (CMD),A
+           LD      (SOFTCARD),A
+           JP      BDOSWARM
+BYEASK     DEFM    'Y/N? $'
 
 ; Load and run a .COM file to 0100H
 ; The FCB describing the file to run is in PATHBUF2
@@ -2960,13 +2923,10 @@ RCLERR		CALL	F_CLOSE			; Close the file
 			CALL	C_WRITESTR		; ...
 			RET
 
-LMSG		DEFM	'Loaded'
-			DEFB	13,'$'
-
 NFMSG		DEFM	'Not found'
 			DEFB	13,'$'
 
-REMSG		DEFM	'Read error'
+REMSG		DEFM	'I/O error'
 			DEFB	13,'$'
 
 BFMSG		DEFM	'Bad format'
@@ -2975,107 +2935,113 @@ BFMSG		DEFM	'Bad format'
 RNEMSG		DEFM	'Rename error'
 			DEFB	13,'$'
 
-; Show disk directory
-; Use FCB1 for directory search
-DIRECT		LD		A,(FCB1NAM)		; Get first char of filename
-			CP		' '				; See if it is space
-			CALL	Z,DIRFCB		; Set up FCB to search all files
-
-			LD		HL,FILEBUF		; Reset DMAADDR to 0080H
-			LD		(DMAADDR),HL	; ...
-
-			LD		E,13			; Carriage return
-			CALL	C_WRITE			;
-
-			LD		DE,FCB1			; Default FCB address 1
-			CALL	F_SFIRST		; Find first dir entry
-			CP		0				;
-			RET		NZ				; If not found, we're done
-			CALL	PRDIRENT		; Print entry
-			
-DIRL1		LD		DE,FCB1			; Default FCB address 1
-			CALL	F_SNEXT			; Find next dir entry
-			CP		0				;
-			RET		NZ				; If not found, we're done
-			CALL	PRDIRENT		; Print entry
-			JR		DIRL1			; Loop for all files in dir
+; Four names per line, with their drive letters. No sorting is done.
+DIRECT     LD      A,(FCB1NAM)
+           CP      ' '
+           CALL    Z,DIRFCB
+           XOR     A
+           LD      (DIRCOL),A
+           LD      HL,FILEBUF
+           LD      (DMAADDR),HL
+           LD      E,13
+           CALL    C_WRITE
+           LD      DE,FCB1
+           CALL    F_SFIRST
+           OR      A
+           JR      NZ,DIRDONE
+DIRLOOP    CALL    PRDIRENT
+           LD      DE,FCB1
+           CALL    F_SNEXT
+           OR      A
+           JR      Z,DIRLOOP
+DIRDONE    LD      A,(DIRCOL)
+           OR      A
+           RET     Z
+           LD      E,13
+           JP      C_WRITE
+DIRCOL     DEFB    0
 
 ; Set up FCB1 to search all files
 ; If length of command tail is zero, or length of command tail is 3
 ; and 3rd char is ':' then set up FCB for searching
-DIRFCB		LD		HL,FILEBUF		; Take a look at command tail
-			PUSH	HL				; HL->IX
-			POP		IX				; ...
-			LD		A,(HL)			; Get length of command tail
-			CP		0				; If zero ...
-			JR		Z,DFS1			; ... Then default drive
-			CP		4				; If 4 chars (w/ leading/trailing spc)
-			JR		NZ,DFS1			; If not, then default drive
-			LD		A,(IX+3)		; Should be ':'
-			CP		':'				; See if it is
-			JR		NZ,DFS1			; If not, then default drive
-			LD		A,(IX+2)		; Load drive letter from command tail
-			SUB		'A'-1			; Make into 1-based drive number
-			JR		DFS2			; Go make the FCB
-DFS1		LD		A,(CURDRV)		; Get current drive
-			AND		0FH				; Mask out user number
-			INC		A				; 1-based for FCB
-DFS2		LD		(FCB1DRV),A		; Store drive letter
-			LD		A,'?'			; Filename
-			LD		(FCB1NAM),A		;
-			LD		(FCB1NAM+1),A	;
-			LD		(FCB1NAM+2),A	;
-			LD		(FCB1NAM+3),A	;
-			LD		(FCB1NAM+4),A	;
-			LD		(FCB1NAM+5),A	;
-			LD		(FCB1NAM+6),A	;
-			LD		(FCB1NAM+7),A	;
-			LD		(FCB1NAM+8),A	;
-			LD		(FCB1NAM+9),A	;
-			LD		(FCB1NAM+10),A	;
-			RET
+DIRFCB     LD      A,(FILEBUF)
+           CP      4
+           JR      NZ,DFS1
+           LD      A,(FILEBUF+3)
+           CP      ':'
+           JR      NZ,DFS1
+           LD      A,(FILEBUF+2)
+           SUB     'A'-1
+           JR      DFS2
+DFS1       LD      A,(CURDRV)
+           AND     0FH
+           INC     A
 
-; Print a directory entry in FILEBUF
-PRDIRENT	PUSH	HL				;
-			LD		HL,FILEBUF		;
-			LD		C,0				;
-PRDL1		LD		E,(HL)			;
-			PUSH	HL				;
-			CALL	C_WRITE			;
-			POP		HL				;
-			INC		HL				;
-			INC		C				;
-			LD		A,9				; 8+1 because we already incremented
-			CP		C				;
-			JR		Z,PRDS2			; Jump to routine to print the '.'
-PRDS1		LD		A,12			; 8+3+1 because we already incremented
-			CP		C				;
-			JR		NZ,PRDL1		;
-			LD		E,13			;
-			CALL	C_WRITE			;
-			POP		HL				;
-			RET						;
-PRDS2		LD		E,'.'			;
-			PUSH	HL				;
-			CALL	C_WRITE			;
-			POP		HL				;
-			JR		PRDS1			;
+DFS2       LD      (FCB1DRV),A
+           LD      HL,FCB1NAM
+           LD      B,11
+           LD      A,'?'
+DFILL      LD      (HL),A
+           INC     HL
+           DJNZ    DFILL
+           RET
 
-; Erase file(s)
-; Pattern for erase is in FCB1
-; TODO: Should prompt Y/N if wildcards used
-ERASE		LD		HL,FILEBUF		; Reset DMAADDR to 0080H
-			LD		(DMAADDR),HL	; ...
+; Print drive: plus 8.3 filename from the first 11 bytes of DMA.
+; Four entries per row, 3-space separation. Existing dot retained.
+PRDIRENT   LD      A,(FCB1DRV)
+           DEC     A
+           ADD     A,'A'
+           LD      E,A
+           CALL    C_WRITE
+           LD      E,':'
+           CALL    C_WRITE
+           LD      E,' '
+           CALL    C_WRITE
+           LD      HL,FILEBUF+1
+           LD      B,11
+PRDLOOP    LD      A,B
+           CP      3
+           JR      NZ,PRDNODOT
+           LD      E,' '
+           PUSH    HL
+           CALL    C_WRITE
+           POP     HL
+PRDNODOT   LD      E,(HL)
+           PUSH    HL
+           CALL    C_WRITE
+           POP     HL
+           INC     HL
+           DJNZ    PRDLOOP
+           LD      A,(DIRCOL)
+           INC     A
+           AND     3
+           LD      (DIRCOL),A
+           JR      Z,PRDNEWLINE
+           LD      DE,DIRSEP
+           JP      C_WRITESTR
+PRDNEWLINE LD      E,13
+           JP      C_WRITE
+DIRSEP     DEFM    '   $'
 
-			LD		DE,FCB1			; Pass address of FCB1
-			CALL	F_DELETE		; Do the delete operation
-			CP		0				; Check return code
-			JR		NZ,ERER			; If non zero print error
-			RET
-
-ERER		LD		DE,NFMSG		; 'Not found' message
-			CALL	C_WRITESTR		; ...
-			RET						;
+; Wildcard ERA always asks before deleting, including ERA *.COM.
+; This is deliberately safer than stock CP/M 2.2, which prompts only
+; for ERA *.*. FCB1 contains the wildcard-expanded '?' characters.
+ERASE      LD      HL,FCB1NAM
+           CALL    ISWILD
+           OR      A
+           JR      Z,ERADO
+           LD      DE,BYEASK
+           CALL    CCPYESNO
+           OR      A
+           RET     NZ
+ERADO      LD      HL,FILEBUF
+           LD      (DMAADDR),HL
+           LD      DE,FCB1
+           CALL    F_DELETE
+           OR      A
+           RET     Z
+           LD      DE,NFMSG
+           JP      C_WRITESTR
 
 ; Rename a file
 ; Here we need to build our own 'special' FCB using the x:dest=src command line
@@ -3095,8 +3061,10 @@ RENL1		INC		HL				; Advance to next char
 			CP		'='				; See if it is equals sign
 			JR		Z,RENS1			; Handle '=' sign
 			JR		RENL1			; Loop
-RENS1		LD		A,B				; Get char count
-			SUB		2				; For initial space and '='
+RENS1      LD      A,B               ; Get char count
+           SUB     2
+           JP      Z,RENS4         ; Empty destination is invalid
+				; For initial space and '='
 			LD		DE,FILEBUF		; Will write through ptr DE
 			INC		DE				; Advance to initial space
 			LD		(DE),A			; Store length of first string
@@ -3113,9 +3081,11 @@ RENS3		LD		A,B				; Get overall char count into A
 			INC		HL				; ...
 			SUB		(HL)			; Subtract from char count
 			LD		HL,(TEMPWORD)	; Address of '=' sign
-			LD		(HL),A			; Store length of second string
+           LD      (HL),A           ; Store length of second string
+           OR      A
+           JP      Z,RENS4         ; Empty source is invalid
 
-			LD		HL,FCB2			; Set DMAADDR for destination
+           LD      HL,FCB2			; Set DMAADDR for destination
 			LD		(DMAADDR),HL	; ...
 			LD		HL,FILEBUF		; Set HL to dest file string
 			INC		HL				; ...
@@ -3128,10 +3098,18 @@ RENS3		LD		A,B				; Get overall char count into A
 			LD		HL,(TEMPWORD)	; Set HL to source file string
 			LD		C,0				; NAME2FCB should not do size lookup
 			CALL	NAME2FCB		; Make FCB for source file
-			LD		A,(FCB2)		; Get drive number of destination
-			LD		(FCB1),A		; Store it for source too
+           LD      A,(FCB2)       ; Get drive number of destination
+           LD      (FCB1),A
+           LD      HL,FCB1NAM     ; Neither REN filename may be ambiguous
+           CALL    ISWILD
+           OR      A
+           JP      NZ,RENS4
+           LD      HL,FCB2NAM
+           CALL    ISWILD
+           OR      A
+           JP      NZ,RENS4
 
-			LD		DE,FCB1			; Pass address of FCB to F_RENAME
+           LD      DE,FCB1			; Pass address of FCB to F_RENAME
 			LD		HL,FILEBUF		; Set DMAADDR to point to FILEBUF
 			LD		(DMAADDR),HL	; ...
 			CALL	F_RENAME		; Perform the rename
@@ -3140,9 +3118,7 @@ RENS3		LD		A,B				; Get overall char count into A
 			JR		NZ,RENS5		; If not, display message
 			RET						;
 
-RENS4		LD		DE,BFMSG		; 'Bad format' message
-			CALL	C_WRITESTR		; ...
-			RET
+RENS4      JP      CCPBAD
 RENS5		LD		DE,RNEMSG		; 'Rename error' message
 			CALL	C_WRITESTR		; ...
 			RET
@@ -3179,34 +3155,92 @@ TFLERR		CALL	F_CLOSE			; Close the file
 			CALL	C_WRITESTR		; ...
 			RET
 
-; Helper function for TYPEFILE
-TYPEBLK		PUSH	DE				; Preserve DE, DL
-			PUSH	HL				; ...
-			LD		HL,FILEBUF		; Print block in FILEBUF
-			LD		C,0				; Initialize character count
-TBL1		LD		A,(HL)			; Get character
-			CP		26				; See if it is ^Z character
-			JR		Z,TBS1			; If so, we are done
-			LD		E,A				; Write to console
-			PUSH	HL				;
-			PUSH	DE				;
-			CALL	C_WRITE			; ...
-			POP		DE				;
-			POP		HL				;
-			INC		HL				; Advance pointer
-			INC		C				; Increment character count
-			LD		A,C				; See if we have printed whole block
-			CP		80H				; ...
-			JR		NZ,TBL1			; If not, loop
-TBS1		POP		HL				; Restore HL, DE
-			POP		DE				; ...
-			RET
+; Display one 128-byte CP/M record, stopping at ^Z.
+; C_WRITE preserves BC and DE, so only the pointer needs protection.
+TYPEBLK    LD      HL,FILEBUF
+           LD      B,128
+TBL1       LD      A,(HL)
+           CP      26
+           RET     Z
+           LD      E,A
+           PUSH    HL
+           CALL    C_WRITE
+           POP     HL
+           INC     HL
+           DJNZ    TBL1
+           RET
 
-; Save memory to disk file
-; Use the FCB already constructed in FCB2
-; TODO Write this
-SAVEFILE
-			RET
+; CP/M SAVE n file: n decimal 256-byte pages starting at TPA $0100.
+; Each page is written as TWO 128-byte BDOS sequential records.
+; Max n=128, saving up to $80FF without touching resident code at $8100.
+; The second parser argument is already an FCB at FCB2.
+SAVEFILE   LD      HL,FILEBUF+2   ; Decimal number begins after first space
+           LD      B,0             ; Accumulated pages
+SVDEC      LD      A,(HL)
+           CP      ' '
+           JR      Z,SVNUMBER
+           SUB     '0'
+           JR      C,SVBAD
+           CP      10
+           JR      NC,SVBAD
+           LD      C,A
+           LD      A,B
+           CP      13            ; 13*10 exceeds 128 even with digit 0
+           JR      NC,SVBAD
+           ADD     A,A
+           LD      D,A             ; 2*previous
+           ADD     A,A
+           ADD     A,A             ; 8*previous
+           ADD     A,D             ; 10*previous
+           ADD     A,C
+           CP      129
+           JR      NC,SVBAD
+           LD      B,A
+           INC     HL
+           JR      SVDEC
+SVNUMBER   LD      A,B
+           LD      (SVPAGES),A
+           LD      DE,FCB2
+           CALL    F_MAKE
+           OR      A
+           JR      NZ,SVIOERR
+           LD      HL,0100H
+           LD      (DMAADDR),HL
+SVPAGE     LD      A,(SVPAGES)
+           OR      A
+           JR      Z,SVCLOSE
+           LD      B,2
+SVRECORD   PUSH    BC
+           LD      DE,FCB2
+           CALL    F_WRITE
+           POP     BC
+           OR      A
+           JR      NZ,SVWRITEERR
+           LD      HL,(DMAADDR)
+           LD      DE,128
+           ADD     HL,DE
+           LD      (DMAADDR),HL
+           DJNZ    SVRECORD
+           LD      A,(SVPAGES)
+           DEC     A
+           LD      (SVPAGES),A
+           JR      SVPAGE
+SVCLOSE    LD      DE,FCB2
+           CALL    F_CLOSE
+           OR      A
+           JR      NZ,SVIOERR
+SVRESET    LD      HL,FILEBUF
+           LD      (DMAADDR),HL
+           RET
+SVWRITEERR LD      DE,FCB2
+           CALL    F_CLOSE        ; Close even on an unsuccessful write
+SVIOERR    LD      DE,REMSG
+           CALL    C_WRITESTR
+           JR      SVRESET
+SVBAD      LD      DE,BFMSG
+           CALL    C_WRITESTR
+           JR      SVRESET
+SVPAGES    DEFB    0
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Additional private scratch space for BDOS
@@ -3464,11 +3498,11 @@ DIRBUF2		DEFS	128
 DIRBUF3		DEFS	128
 DIRBUF4		DEFS	128
 
-; Four 1024 byte ProDOS I/O buffers
-; These must start on a page boundary
+; Three 1024 byte ProDOS I/O buffers followed by a dedicated 1K Z80 stack
+; The three I/O buffers must start on a page boundary
 ; ProDOS occupies the space from $BF00 up (in 6502 addresses)
 ; 6502 code is loaded at $B800 for now
-; So in theory the I/O buffers could go from $A800-$B800 (09800H base)
+; RAM $A400-$A7FF is reserved for Z80 stack, not file I/O.
 
 
 			;ORG		9000H	; Try this - WORKS
@@ -3476,7 +3510,10 @@ DIRBUF4		DEFS	128
 IOBUF1		DEFS	1024
 IOBUF2		DEFS	1024
 IOBUF3		DEFS	1024
-IOBUF4		DEFS	1024
+; Dedicated stack: the live directory buffer ends at ~$97F2.
+; Z80 SP=$A800, grows down into $A400-$A7FF, not DIRBUF.
+; This intentionally limits simultaneously open ProDOS files to three.
+Z80STACK	DEFS	1024
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
