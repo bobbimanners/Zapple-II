@@ -19,18 +19,12 @@
 ;
 ; BDOS TODOs
 ; ----------
-; TODO: STAT B:*.* leaves current drive set to B!  Probably other progs too.
-; TODO: Size information from NAME2FCB seems to be a bit fishy! I think the
-;       issue here is that STAT needs to see all the extents, whereas NSWEEP
-;       uses the highest extent number it sees, and doesn't really care about
-;       the others.
 ; TODO: PIP has issues with multi file copy, and I think it is because it only
 ;		closes the destination files, but not the source files.  Maybe the
 ;		solution is to close files after each read/write.  The FCB keeps track
 ;		of the position in any case and we always seek, so this should work.
 ; TODO: Need to implement the BIOS entry points and jump table (see MG's Ruby)
 ; TODO: Needs proper boot / warm boot entry points
-; TODO: [ F_WRITE bug turns out to be bug in ProDOS 2.5.0a7 (SET_MARK) ??? ]
 ; TODO: Maybe I should eliminate use of "EX AF,AF'" in BDOS since CP/M apps
 ;       may expect exclusive use of alternate register set.
 ; TODO: Implement missing system calls:
