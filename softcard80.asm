@@ -56,6 +56,9 @@ ADDRH		EQU		0F0ECH			; 6502 $EC (MSB)
 COUT		EQU		0B803H			; Direct video output entry (B803)
 RDKEY		EQU		0B806H			; Direct keyboard/cursor entry (B806)
 BELL		EQU		0B809H			; Direct speaker click entry (B809)
+RAWOUT		EQU		0B80FH			; Raw BIOS console entry (B80F)
+; TERM.COM (separate transient utility) calls 6502 B80C to switch terminal.
+; Only a 6-byte raw-output shim is added to the resident BDOS.
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Entry point when Z80 cold starts is 0000H
@@ -596,7 +599,7 @@ BIOSCONIN	PUSH	HL
 BIOSCONOUT	PUSH	DE			; C contains character
 			PUSH	HL
 			LD		E,C
-			CALL	C_PUT		; Uncooked output to VPUT
+			CALL	C_RAWPUT	; Uncooked output to VRAWPUT
 			POP		HL
 			POP		DE
 			RET
@@ -795,10 +798,13 @@ C_WRITE		LD		A,E
 
 ; Shared low-level output path for cooked and direct console writes.
 ; E = ASCII character; 6502 console driver accepts bit 7 set or clear.
-C_PUT		LD		A,80H
+C_RAWPUT	LD		A,E			; Raw output retains correct CR/LF meaning
+			LD		HL,RAWOUT	; B80F raw 6502 vector
+			JR		C_SENDA
+C_PUT		LD		A,80H			; Cooked BDOS function 2
 			OR		E
-			LD		(AREG),A
-			LD		HL,COUT
+			LD		HL,COUT		; B803 cooked 6502 vector
+C_SENDA		LD		(AREG),A
 			LD		(ADDR),HL
 			LD		A,1
 			LD		(CMD),A
@@ -806,11 +812,11 @@ C_PUT		LD		A,80H
 			RET
 
 ; CP/M BDOS function 6: E=FF nonblocking read, else raw output.
-; The 6502 driver itself currently ignores LF for CR/LF compatibility.
+; This route uses the raw 6502 entry (CR and LF independent).
 C_RAWIO		LD		A,E
 			CP		0FFH
 			JR		Z,RIS1
-			JR		C_PUT
+			JR		C_RAWPUT
 
 			; If character is waiting, read from console & return in A
 			; Otherwise, return 00H in A

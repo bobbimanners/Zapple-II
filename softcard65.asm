@@ -19,7 +19,8 @@ FLAGS EQU $ED ; Pass 6502 flags to/from Z80
 
 * 80-column text page 1, direct main/aux video access.
 * No Apple II monitor or 80-column firmware routines are called.
-* Public entry vectors are fixed at B803, B806, B809.
+* Public entry vectors at B803, B806, B809 remain fixed.
+* B80C sets mode; B80F handles raw BIOS console output.
 
 IOBUF EQU $0800 ; 1K ProDOS OPEN buffer in unused text page 2.
                  ; The extended video driver now uses B800-BEFF.
@@ -65,11 +66,14 @@ RELOC_ST
  ORG STADDR ; Assemble for this origin
 
 * Fixed entry vectors for Z80 calls via CMD=1 / ADDR.
-* B800 is the loader's entry, B803 output, B806 input, B809 bell.
+* B800 loader, B803 cooked output, B806 input, B809 bell.
+* B80C set terminal mode, B80F raw BIOS output.
  JMP ENTRY
  JMP VPUT
  JMP VGET
  JMP VBELL
+ JMP VSETMODE ; B80C: A=0 Videx, A=1 Soroc (does not clear)
+ JMP VRAWPUT  ; B80F: raw BIOS/BDOS function 6 output
 
 ENTRY JSR VINIT ; Initialize video hardware and clear screen
  JSR PRWELC ; Print welcome message
@@ -303,54 +307,291 @@ HANDLR LDA CMD
 *        cursor is a temporary inverse of the character underneath.
 * VBELL: speaker click
 *
-* The initial terminal dialect is deliberately minimal:
-* printables, CR (new line), LF ignored (CR already moves down),
-* BS, TAB (8-col stops), ^L clear screen, ^Y cursor home.
-* Add full Videx cursor positioning later if required.
+* Two output personalities share the same screen primitives:
+*   Videx VideoTerm: $1E, column+$20, row+$20
+*   Soroc IQ-120:    ESC '=', row+$20, column+$20
+* VMODE 0=Videx (default), 1=Soroc; set using B80C vector.
+* Cursor address parameters are consumed even when malformed.
+* Cooked CR implies newline (existing CCP convention); cooked CR+LF
+* advances once. Raw BIOS CR only returns to column 0; LF goes down.
+* Soroc protected fields, graphics and auxiliary port are not emulated.
 ***************************************************
 
 VINIT
  LDA #0
- STA $C000 ; 80STORE off (write-only switch)
- STA $C002 ; RAMRD off: main RAM reads
- STA $C004 ; RAMWRT off: main RAM writes
- BIT $C054 ; PAGE1 (read/write switch)
+ STA VMODE ; Default to Videx
+ STA VSTATE ; Parser idle
+ STA VCRP ; No pending CR/LF pair
+ STA $C000 ; 80STORE off
+ STA $C002 ; RAMRD main
+ STA $C004 ; RAMWRT main
+ BIT $C054 ; PAGE1
  BIT $C051 ; TEXT on
- BIT $C052 ; full screen, MIXED off
- STA $C00D ; 80COL on (write-only switch)
- STA $C00F ; alternate character set, lowercase support
- JMP VCLEAR ; Clear screen, row=0 and column=0
-
-* Character output. Ignores 7th-bit Apple video encoding on input.
-VPUT AND #$7F
- CMP #$20
- BCS VPRINT
- CMP #$0D
- BEQ VCR
- CMP #$0A
- BEQ VDONE ; LF ignored; CR already advances a row
- CMP #$08
- BEQ VBACK
- CMP #$09
- BEQ VTAB
- CMP #$0C
- BNE :VCTL1
+ BIT $C052 ; full screen
+ STA $C00D ; 80COL on
+ STA $C00F ; alternate charset (lowercase)
+ JSR VMBASIC ; Configure Apple CP/M BASIC console control bytes
  JMP VCLEAR
-:VCTL1 CMP #$19
- BEQ VHOME
+
+* A=0 selects Videx, A=1 selects Soroc. Ignore all other values.
+* Public vector at B80C. Mode change retains screen and cursor.
+VSETMODE CMP #2
+ BCC :LONG5
+ RTS
+:LONG5
+ STA VMODE
+ LDA #0
+ STA VSTATE
+ STA VCRP
+ JMP VMBASIC ; Keep MBASIC's terminal control table in sync
+
+* Apple CP/M Microsoft BASIC-80 5.2 expects BIOS video control bytes
+* at Z80 $F396-$F39E = 6502 $0396-$039E (SoftCard memory map).
+* $0396 = coordinate bias; bit 7 reverses XY ordering.
+* $0397 = prefix for high-bit-set commands.
+* $0398 = HOME (table entry 1).
+* $039E = position cursor (table entry 7).
+* The other five commands are unsupported: set to 0 (do nothing).
+* This is 6502 page-3 RAM, outside the Z80 TPA. No MBASIC patch.
+VMBASIC LDX #5
+ LDA #0
+:BLANK STA $0399,X ; Clear $0399..$039E; set $039E below
+ DEX
+ BPL :BLANK
+ LDA #$1B
+ STA $0397 ; ESC prefix
+ LDX VMODE
+ LDA VBASTAB,X
+ STA $0396
+ LDA VBASHOME,X
+ STA $0398
+ LDA VBASPOS,X
+ STA $039E
+ RTS
+
+* Mode indexed: 0 Videx, 1 Soroc.
+* For Soroc, an encoded $AA means ESC '*' (clear screen),
+* and $BD means ESC '=' (cursor address introducer).
+* Videx uses ^L (clear) and CTRL-^ (position introducer).
+VBASTAB DB $A0,$20  ; coordinate bias (Videx swaps order)
+VBASHOME DB $0C,$AA  ; HOME: ^L or ESC '*'
+VBASPOS DB $1E,$BD  ; position: $1E or ESC '='
+
+* Raw output from BIOS CONOUT / BDOS function 6. Real terminals
+* interpret CR and LF independently; avoid cooked CCP newline policy.
+VRAWPUT AND #$7F
+ CMP #$0D
+ BNE :RC1
+ LDA #0
+ STA VCRP
+ STA VCOL
+ RTS
+:RC1 CMP #$0A
+ BNE :RC2
+ LDA #0
+ STA VCRP
+ JMP VDOWN
+:RC2 JMP VPUT
+
+* Cooked output used by BDOS function 2, CCP, loader, etc.
+* Other than CR/LF, only the parser is mode-dependent.
+VPUT AND #$7F
+ CMP #$0A
+ BEQ :KEEPC
+ PHA
+ LDA #0
+ STA VCRP
+ PLA
+:KEEPC LDX VSTATE
+ BEQ :LONG11
+ JMP VSEQ
+:LONG11
+ CMP #$1B
+ BEQ VESC
+ CMP #$20
+ BCC :LONG0
+ JMP VPRINT
+:LONG0
+ CMP #$0A
+ BNE :LONG1
+ JMP VLF
+:LONG1
+ CMP #$0D
+ BNE :LONG2
+ JMP VCR
+:LONG2
+ CMP #$08
+ BNE :LONG3
+ JMP VBACK
+:LONG3
+ CMP #$09
+ BNE :LONG4
+ JMP VTAB
+:LONG4
+ CMP #$07
+ BNE :VCTL
+ JMP VBELL
+:VCTL LDX VMODE
+ BNE VSOROC
+* Videx VideoTerm (including Apple escape editor handled below).
+ CMP #$0C
+ BNE :VD1
+ JMP VCLEAR
+:VD1 CMP #$19
+ BNE :LONG6
+ JMP VHOME
+:LONG6
+ CMP #$1E
+ BEQ VPOS
+ CMP #$1C
+ BNE :LONG7
+ JMP VRIGHT
+:LONG7
+ CMP #$1F
+ BNE :LONG8
+ JMP VUP
+:LONG8
+ CMP #$1D
+ BNE :VD2
+ JMP VEOL
+:VD2 CMP #$0B
+ BNE VDONE
+ JMP VEOP
+
+* Soroc IQ-120: ^K up, ^L forward, ^^ home.
+VSOROC CMP #$0B
+ BNE :LONG9
+ JMP VUP
+:LONG9
+ CMP #$0C
+ BNE :LONG10
+ JMP VRIGHT
+:LONG10
+ CMP #$1E
+ BNE :LONG12
+ JMP VHOME
+:LONG12
 VDONE RTS
+
+VESC LDA #1
+ STA VSTATE
+ RTS
+VPOS LDA #2
+ STA VSTATE
+ RTS
+
+* Parser states 1=ESC, 2=first coordinate, 3=second coordinate.
+VSEQ CPX #1
+ BEQ VESCCMD
+ SEC
+ SBC #$20
+ CPX #2
+ BNE :VP2
+ STA VCOORD
+ INC VSTATE
+ RTS
+:VP2 LDY #0
+ STY VSTATE
+ LDX VMODE
+ BNE :SPOS
+* Videx: first X/column, then Y/row.
+ CMP #24
+ BCS VDONE
+ LDY VCOORD
+ CPY #80
+ BCS VDONE
+ STA VROW
+ STY VCOL
+ RTS
+* Soroc: first Y/row, then X/column.
+:SPOS CMP #80
+ BCS VDONE
+ LDY VCOORD
+ CPY #24
+ BCS VDONE
+ STA VCOL
+ STY VROW
+ RTS
+
+* ESC sequences. Unrecognised commands are silently consumed.
+VESCCMD LDY #0
+ STY VSTATE
+ LDY VMODE
+ BNE :SORE
+* VideoTerm accepts the Apple editing ESC sequences.
+ CMP #'@'
+ BNE :E1
+ JMP VCLEAR
+:E1 CMP #'A'
+ BEQ VRIGHT
+ CMP #'B'
+ BEQ VBACK
+ CMP #'C'
+ BNE :LONG13
+ JMP VDOWN
+:LONG13
+ CMP #'D'
+ BEQ VUP
+ CMP #'E'
+ BNE :E2
+ JMP VEOL
+:E2 CMP #'F'
+ BNE VDONE
+ JMP VEOP
+:SORE CMP #'='
+ BEQ VPOS
+ CMP #'*'
+ BNE :S1
+ JMP VCLEAR
+:S1 CMP #'+'
+ BNE :S2
+ JMP VCLEAR
+:S2 CMP #'T'
+ BNE :S3
+ JMP VEOL
+:S3 CMP #'Y'
+ BEQ :EP
+ CMP #'V' ; Some IQ-120 documentation calls this Erase Page.
+ BEQ :LONG14
+ RTS
+:LONG14
+:EP JMP VEOP
 
 VHOME LDA #0
  STA VCOL
  STA VROW
  RTS
 
-VCR LDA #0
+* Preserve the loader/BDOS convention of CR as a newline.
+* Unlike the old driver, a lone LF now moves down; CR+LF moves once.
+VCR LDA #1
+ STA VCRP
+ LDA #0
  STA VCOL
  JMP VDOWN
+VLF LDA VCRP
+ BEQ VDOWN
+ LDA #0
+ STA VCRP
+ RTS
 
+VUP LDA VROW
+ BNE :LONG15
+ RTS
+:LONG15
+ DEC VROW
+ RTS
+VRIGHT LDA VCOL
+ CMP #79
+ BCC :LONG16
+ RTS
+:LONG16
+ INC VCOL
+ RTS
 VBACK LDA VCOL
- BEQ VDONE
+ BNE :LONG17
+ RTS
+:LONG17
  DEC VCOL
  RTS
 
@@ -366,20 +607,57 @@ VTAB LDA VCOL
  BNE :VT1
  RTS
 
-VPRINT ORA #$80 ; normal (non-inverse) video byte
+VPRINT ORA #$80
  JSR VDRAW
  INC VCOL
  LDA VCOL
  CMP #80
- BCC VDONE
+ BCS :LONG18
+ RTS
+:LONG18
  LDA #0
  STA VCOL
 VDOWN INC VROW
  LDA VROW
  CMP #24
- BCC VDONE
- DEC VROW ; stay on bottom row after scroll
+ BCS :LONG19
+ RTS
+:LONG19
+ DEC VROW
  JMP VSCROLL
+
+* Erase operations leave the original cursor position unchanged.
+* Reuse VDRAW for both physical halves rather than duplicate bank logic.
+VEOL LDA VCOL
+ PHA
+:EL1 LDA #$A0
+ JSR VDRAW
+ INC VCOL
+ LDA VCOL
+ CMP #80
+ BCC :EL1
+ PLA
+ STA VCOL
+ RTS
+
+VEOP LDA VROW
+ PHA
+ LDA VCOL
+ PHA
+ JSR VEOL
+:EP1 INC VROW
+ LDA VROW
+ CMP #24
+ BCS :EP2
+ LDA #0
+ STA VCOL
+ JSR VEOL
+ JMP :EP1
+:EP2 PLA
+ STA VCOL
+ PLA
+ STA VROW
+ RTS
 
 * Set up self-modifying absolute-indexed access to one text row.
 * Returns Y = column/2 and 80STORE on, PAGE2 selecting bank.
@@ -507,6 +785,10 @@ VCOL DB 0
 VROW DB 0
 VTCNT DB 0
 VUNDER DB 0
+VMODE DB 0 ; 0 Videx, 1 Soroc
+VSTATE DB 0 ; 0 idle, 1 ESC, 2 coord1, 3 coord2
+VCOORD DB 0
+VCRP DB 0 ; Suppress second half of CR/LF pair
 
 * Loader diagnostics without ROM I/O.
 CROUT LDA #$0D
