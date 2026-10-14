@@ -2781,7 +2781,11 @@ RCL1		CALL	F_READ			; Read records until done
 			CALL	F_CLOSE			; Close the file
 			LD		HL,FILEBUF		; Reset DMAADDR to 0080H
 			LD		(DMAADDR),HL	; ...
+            LD   A,(CURDRV)     ; Save CCP drive/user
+            PUSH AF
 			CALL	PROGSTRT		; Run user program at 0100H
+            POP  AF
+            LD   (CURDRV),A     ; Restore CCP drive/user
 			LD		E,13			; Print carriage return
 			CALL	C_WRITE			; ...
 			LD		HL,FILEBUF		; Reset DMAADDR to 0080H
