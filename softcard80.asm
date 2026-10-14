@@ -82,7 +82,7 @@ CURDRV		DEFB	0				; LS 4 bits; Current drive 0=A: etc
 ; Function to invoke is passed in C
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-BDOS		JP		BDOSIMP			; BDOS code is at top of memory
+BDOS		JP		BDOSENTRY		; Keep page-zero BDOS vector within $81xx
 
 RVEC1		DEFW	0000H			; Restart vector 1
 RVEC2		DEFW	0000H			; Restart vector 2
@@ -572,6 +572,13 @@ BIOSCTTY	JP		BIOSCONOUT		; CONOUT  +0CH
 			JP		BIOSLSTST		; LISTST  +2DH
 			JP		BIOSSECTRAN	; SECTRAN +30H
 
+; Public BDOS entry must be in the FIRST page of resident memory.
+; MESCC-based .COM programs (including TE_APPLE.COM) calculate their
+; stack top by rounding down the address at CP/M $0006 to a page
+; boundary. An address in $82xx would place SP at $8200 INSIDE BP/M!
+; 17 BIOS JP vectors = 51 bytes, so this is $8100 + $33 = $8133.
+BDOSENTRY	JP		BDOSIMP
+
 ; CP/M BIOS console: unlike the cooked BDOS C_READ, CONIN does not
 ; echo or treat Ctrl-C specially. CONOUT takes its byte in C, and
 ; must not suppress LF at the Z80 layer (C_WRITE deliberately does).
@@ -644,6 +651,19 @@ BDOSINIT	DI
 ; Keep the existing BDOS reset semantics, but do not print BPMSIGN.
 BDOSWARM	DI					; Make sure interrupts are off
 			LD		SP,STCKTOP		; Discard transient's stack
+
+			; Applications such as Apple CP/M MBASIC 5.2 replace the
+			; warm-start address at $0001 with an address in the TPA.
+			; CP/M WBOOT must restore the page-zero system jump vectors.
+			; $0000: JP BIOSWBOOT, $0005: JP BDOSENTRY.
+			LD		A,0C3H			; Opcode for JP absolute
+			LD		(0000H),A
+			LD		(0005H),A
+			LD		HL,BIOSWBOOT
+			LD		(0001H),HL
+			LD		HL,BDOSENTRY
+			LD		(0006H),HL
+
 			XOR		A				; A=0
 			LD		(IOBYTE),A		; Initialize IOBYTE
 			LD		(CURDRV),A		; Drive A:, User 0
