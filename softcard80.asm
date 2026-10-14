@@ -659,14 +659,21 @@ _F_OPEN		LD		IX,PATHBUF		; Destination buffer
 			CP		0				; See if there was an error
 			JP		NZ,FOERR		; Handle error
 
-			; Store ProDOS FRN in S2 field of FCB
-			LD		A,(FOMLIN)		; Get ProDOS file reference number
-			LD		(IY+0EH),A		; Store file reference number in S2 field
-
-			; ProDOS GET_EOF supplies a 24-bit byte length.
-			LD		(GEMLIN),A		; Store file ref num in param list
-			LD      HL,GEMLI       ; Pass address of 6502 JSR instruction
-			CALL    PRODOS          ; Invoke ProDOS MLI (GET_EOF)
+			; Do not publish S2/claim an FRN slot before GET_EOF succeeds.
+			; On failure, OPEN has nevertheless allocated a ProDOS handle:
+			; close it using the ref number from FOMLIN, then return error.
+			LD		A,(FOMLIN)
+			LD		(GEMLIN),A
+			LD		(FCMLIN),A		; Prepare cleanup CLOSE (no slot yet)
+			LD		HL,GEMLI
+			CALL	PRODOS			; GET_EOF (24-bit size)
+			OR		A
+			JR		Z,FO_EOF_OK
+			LD		HL,FCMLI
+			CALL	PRODOS			; CLOSE even if GET_EOF failed
+			JP		FOERR			; Do not trust GEMLIE1..3 or FCB S2
+FO_EOF_OK	LD		A,(FOMLIN)
+			LD		(IY+0EH),A		; Publish physical reference only now
 
 			; CP/M RC counts records in extent zero (maximum 128).
 			; Round partial 128-byte records up; honour ProDOS's 24-bit EOF.
@@ -714,7 +721,7 @@ FOFULL		PUSH	DE
 			CALL	C_WRITESTR
 			POP		DE
 			JR		FOERR
-FOFULLMSG	DEFM	'Zapple-II: NO FREE IOBUF'
+FOFULLMSG	DEFM	'NO IOBUF'
 			DEFB	13,'$'
 
 FOERR		LD		A,0FFH			; Error return status
@@ -1654,7 +1661,9 @@ F_WRTR_GO
 
 			LD		HL,GEMLI		; Pass address of 6502 JSR instruction
 			CALL	PRODOS			; Invoke ProDOS MLI - GET_EOF
-		
+			OR		A			; A nonzero means GEMLIE1..3 are invalid
+			JP		NZ,FWRERR		; IO_END releases transient handle
+
 			CALL	RAND2MARK		; Full 24-bit offset, carry if out of range
 			JR		NC,FWR_MARK_OK
 			LD		A,6
@@ -1678,6 +1687,8 @@ FWR_MARK_OK
 			LD		(SEMLIE3),A
 			LD		HL,SEMLI		; Pass address of 6502 JSR instruction
 			CALL	PRODOS			; Invoke ProDOS MLI - SET_EOF
+			OR		A			; On failure, do NOT attempt SET_MARK/WRITE
+			JP		NZ,FWRERR		; IO_END releases transient handle
 
 FWRS1		LD		HL,SMMLI		; Pass address of 6502 JSR instruction
 			CALL	PRODOS			; Invoke ProDOS MLI - SET_MARK
