@@ -15,6 +15,8 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;
+; TODO: Look further down for CCP TODOs!!!!!!!
+;
 ; BDOS TODOs
 ; ----------
 ; TODO: Exploit aux memory to gain a larger TPA (48K instead of 32K)
@@ -28,6 +30,7 @@
 ; TODO: IOBYTE doesn't do anything
 ; TODO: User number doesn't do anything
 ; TODO: Software R/O disk setting is not respected
+; Other Random TODO comments in the code
 ; 
 
 BDOSADDR	EQU		08100H			; 
@@ -692,8 +695,8 @@ FO_RC_STORE	LD		(IY+0FH),A
 			XOR		A				; Zero the sequential record number
 			LD		(IY+20H),A		; ...
 
-			; Store ProDOS FRN in slot FRN1 - FRN4
-			LD		A,(TEMPBYTE)	; Obtain IOBUF idx (1,2,3,4)
+			; Store ProDOS FRN in slot FRN1 or FRN2
+			LD		A,(TEMPBYTE)	; Obtain IOBUF idx (1,2)
 			LD		HL,FRN1-1		; Compute address of FRN slot to use
 			LD		B,0				; ...
 			LD		C,A				; ...
@@ -1720,7 +1723,7 @@ FWRERR		LD		A,0FFH			; All other errors are 0FFH
 ; A=L=0 on success, A=L=FFH on error.  Do not alter the FCB otherwise.
 ;
 ; GET_FILE_INFO does not return EOF, so temporarily OPEN the file,
-; GET_EOF, then CLOSE it.  Reuse a free I/O buffer from the three usable slots,
+; GET_EOF, then CLOSE it.  Reuse a free I/O buffer from the two usable slots,
 ; but do not claim a slot or alter the caller's S2 / open-file state.
 ; Only the randomly accessed file's FCB is updated; DMAADDR is untouched.
 F_SIZE		PUSH	DE				; Keep FCB pointer across ProDOS calls
@@ -2320,12 +2323,12 @@ CDBCOUNT	DEFB	0				; Stores file entry counter
 CDBEXT		DEFB	0				; Stores extent number
 
 ; Find IOBUF address for a file reference number
-; Scan only FRN1..FRN3: fourth 1K region is reserved for the stack.
-; If found, return FRN slot# 1,2,3 in A, I/O buffer address in HL
+; Scan only FRN1..FRN2: third 1K region is spare, fourth is stack.
+; If found, return FRN slot# 1 or 2 in A, I/O buffer address in HL
 ; If not found, return A=0FFH
 ; Trashes BC
 GETIOADDR	LD		B,A			; Requested FRN (0 = first free slot)
-			LD		HL,FRN1		; Four adjacent bytes
+			LD		HL,FRN1		; FRN1 and FRN2 only
 			LD		C,1			; One-based slot number
 GIASCAN	LD		A,(HL)
 			CP		B
@@ -2333,11 +2336,11 @@ GIASCAN	LD		A,(HL)
 			INC		HL
 			INC		C
 			LD		A,C
-			CP		4
+			CP		3
 			JR		NZ,GIASCAN
 			LD		A,0FFH
 			RET
-GIAFOUND	LD		A,C			; Return slot 1..4 in A
+GIAFOUND	LD		A,C			; Return slot 1 or 2 in A
 			PUSH	AF
 			DEC		A			; Buffer address = $9800 + (slot-1)*$400
 			ADD		A,A
@@ -3495,8 +3498,8 @@ DIRBUF2		DEFS	128
 DIRBUF3		DEFS	128
 DIRBUF4		DEFS	128
 
-; Three 1024 byte ProDOS I/O buffers followed by a dedicated 1K Z80 stack
-; The three I/O buffers must start on a page boundary
+; Two 1024 byte ProDOS I/O buffers, 1K spare, then the 1K Z80 stack
+; The two I/O buffers start on page boundaries
 ; ProDOS occupies the space from $BF00 up (in 6502 addresses)
 ; 6502 code is loaded at $B800 for now
 ; RAM $A400-$A7FF is reserved for Z80 stack, not file I/O.
@@ -3506,10 +3509,10 @@ DIRBUF4		DEFS	128
 			ORG		9800H	; Try this - WORKS
 IOBUF1		DEFS	1024
 IOBUF2		DEFS	1024
-IOBUF3		DEFS	1024
+IOFREE		DEFS	1024	; $A000-$A3FF: NOT handed to ProDOS OPEN
 ; Dedicated stack: the live directory buffer ends at ~$97F2.
 ; Z80 SP=$A800, grows down into $A400-$A7FF, not DIRBUF.
-; This intentionally limits simultaneously open ProDOS files to three.
+; This intentionally limits simultaneously open ProDOS files to two.
 Z80STACK	DEFS	1024
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
