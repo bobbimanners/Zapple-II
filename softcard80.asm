@@ -4,7 +4,7 @@
 ; Requires the companion SOFTCARD65 6502 code
 ; Assemble using Udo Munk's Z80asm.
 ; Tabstops every 4 chars.
-; Bobbi 2019, 2026
+; Bobbi 2019
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; References:
 ; 1) BDOS System Calls
@@ -1740,16 +1740,64 @@ N2FS6		POP		BC				; Get C back
 			CALL	PRODOS			; Invoke ProDOS MLI
 			CP		0				; See if there was an error
 			JP		NZ,N2FERR		; Handle error
-			LD		HL,(GFIMLIBU)	; Obtain the blocks used field
-			ADD		HL,HL			; Mult x 4 to get 128 byte records
-			ADD		HL,HL			; ...
-			CALL	RECS2EXRC		; Puts extent in B, recs in A
-			LD		DE,(DMAADDR)	; Pointer to start of FCB
-			PUSH	DE				; Copy into IX
-			POP		IX				; ...
-			LD		(IX+0CH),B		; Store num extents in EX field of FCB
-			LD		(IX+0FH),A		; Store num recs in RC field of FCB
+			LD		HL,(GFIMLIBU)	; ProDOS blocks used (approx. size)
+			ADD		HL,HL			; Convert 512-byte blocks to 128-byte records
+			ADD		HL,HL			; (later: use ProDOS EOF instead)
+			PUSH	HL				; Keep total count for exact-extent test
+			CALL	RECS2EXRC		; B = extent count, A = record remainder
+			POP		HL
+			LD		C,A				; Save record remainder
+			LD		A,H
+			OR		L				; Zero-length file?
+			JR		Z,N2FRCOK
+			LD		A,C
+			OR		A				; Nonzero number of records in final extent?
+			JR		NZ,N2FRCOK
+			DEC		B				; Exact multiple of 128 records:
+			LD		C,080H			; last extent is full, not an empty next extent
+N2FRCOK		LD		DE,(DMAADDR)	; Pointer to returned FCB
+			PUSH	DE
+			POP		IX
+			LD		(IX+0CH),B		; Highest extent number
+			LD		(IX+0FH),C		; Records in highest extent (0..128)
+			LD		A,C
+			CALL	N2FMAP			; Fill FCB block allocation map (16..31)
 			RET	
+
+; Generate a synthetic CP/M 2.2 allocation map in the directory FCB.
+; A = records in THIS extent (0..128), DMAADDR = returned FCB.
+; DPB has 2 KB allocation blocks, 2-byte block numbers (DSM=511).
+; Thus 16 records per block, 8 entries per extent.
+; Fake block IDs 1..8 are intentionally reused for each file/extent:
+; sufficient for STAT's per-file size column, NOT a filesystem allocator.
+; Overwrites ALL 16 map bytes, so no separate clearing pass is needed.
+; Trashes AF, BC, DE, HL; preserves IX and IY.
+N2FMAP		ADD		A,15			; Round record count up to 16
+			SRL		A
+			SRL		A
+			SRL		A
+			SRL		A				; Number of 2 KB blocks (0..8)
+			LD		C,A
+			LD		HL,(DMAADDR)
+			LD		DE,16
+			ADD		HL,DE			; Offset 16: start of allocation map
+			LD		B,8				; Eight 16-bit block entries
+			LD		D,1				; Fake block number, nonzero
+N2FMLP		LD		A,C
+			OR		A
+			JR		Z,N2FMZERO
+			LD		A,D				; Populated allocation entry
+			DEC		C
+			JR		N2FMSTORE
+N2FMZERO	XOR		A				; Unused block entry
+N2FMSTORE	LD		(HL),A			; Little endian, low byte
+			INC		HL
+			XOR		A
+			LD		(HL),A			; High byte of block number
+			INC		HL
+			INC		D
+			DJNZ	N2FMLP
+			RET
 
 N2FERR		LD		DE,(DMAADDR)	; Pointer to start of FCB
 			PUSH	DE				; Copy into IX
@@ -1758,6 +1806,7 @@ N2FERR		LD		DE,(DMAADDR)	; Pointer to start of FCB
 			LD		(IX+0CH),A		; Store in EX field of FCB
 			LD		A,0				; If error, set record count to zero
 			LD		(IX+0FH),A		; Store in RC field of FCB
+			CALL	N2FMAP			; Failed file info: clear stale map bytes too
 			RET	
 
 ; Read 512 byte block of directory
@@ -1896,11 +1945,18 @@ CDBS0		LD		HL,(DMAADDR)	; Address of FCB created by CHKDIRENT
 
 			; Not the first extent for directory entry
 			; Always has 128 records
-CDBS01		LD		B,080H			; 128 records
-			LD		(IY+0FH),B		; Store in num recs field
+CDBS01		LD		HL,(DMAADDR)	; CHKDIRENT has rebuilt FCB
+			PUSH	HL
+			POP		IY				; Use the current output FCB
+			LD		B,080H			; Earlier extents have 128 records
+			LD		(IY+0FH),B		; Store in RC
 			DEC		A				; Decrement extent counter
 			LD		(CDBEXT),A		; Store it for next time
-			LD		(IY+0CH),A		; Store it in the FCB returned to caller
+			LD		(IY+0CH),A		; Store it in EX
+			PUSH	AF				; Keep extent number across N2FMAP
+			LD		A,080H			; Full extent => eight 2 KB blocks
+			CALL	N2FMAP
+			POP		AF
 			CP		0				; If CDBEXT will be zero next time
 			JP		Z,CDBS1			; ... we can advance to next entry
 			JP		CDBS2			; Return FCB for this extent (it match)
@@ -2942,10 +2998,10 @@ DFCBRR		DEFB	0,0,0			; FCB rand record number
 ; Drive parameter block (CP/M 2.2 format)
 ; See Johnson-Laird Pg 33-34
 DPB			DEFW	32				; # 128 byte records per track (for Disk II)
-			DEFB	4				; Block shift (2KB allocation blocks)
-			DEFB	15				; Block mask (2KB allocation blocks)
-			DEFB	0				; Extent mask (2KB byte alocation blocks)
-			DEFW	511				; # allocation blocks on disk (1MB)
+			DEFB	4				; Block shift (2048 byte allocation blocks)
+			DEFB	15			; Block mask (2048 byte allocation blocks)
+			DEFB	0				; Extent mask (16K extents)
+			DEFW	511			; # allocation blocks minus one (1 MB)
 			DEFW	255				; # directory entries 
 			DEFB	0				; Directory allocation bitmap byte 1
 			DEFB	0				; Directory allocation bitmap byte 2
