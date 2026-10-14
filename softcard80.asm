@@ -4,7 +4,7 @@
 ; Requires the companion SOFTCARD65 6502 code
 ; Assemble using Udo Munk's Z80asm.
 ; Tabstops every 4 chars.
-; Bobbi 2019, 2026
+; Bobbi 2019
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; References:
 ; 1) BDOS System Calls
@@ -19,7 +19,8 @@
 ;
 ; BDOS TODOs
 ; ----------
-; TODO: File handling is slow.  Should cache open ProDOS files.
+; TODO: Prodos file handling is SLOW. Would be good to cache file handles rather than
+;       closing/reopening every time.
 ; TODO: Need to implement the BIOS entry points and jump table (see MG's Ruby)
 ; TODO: Needs proper boot / warm boot entry points
 ; TODO: Maybe I should eliminate use of "EX AF,AF'" in BDOS since CP/M apps
@@ -35,11 +36,10 @@
 ; Other Random TODO comments in the code
 ; 
 
-BDOSADDR	EQU		08200H			; 
+BDOSADDR	EQU		08100H			; 
 STCKTOP		EQU		097FFH			; Top of Z80 stack (below IOBUFs)
 
 SOFTCARD	EQU		0E400H			; Softcard in slot 4 ($C400)
-PDUNIT		EQU		070H			; ProDOS volume device: slot 7, drive 1
 
 
 OFFSET		EQU		01000H			; Offset to add to Z80 addr to get 6502
@@ -1404,41 +1404,123 @@ DRV_GET		LD		A,(CURDRV)		; Contains user number & current drive
 F_DMAOFF	LD		(DMAADDR),DE	;
 			RET
 
-; Return address of allocation map in HL
-DRV_AVEC	CALL	V_GETFREE		; Refresh logical allocation map
+; Return CP/M allocation map. Build it from the actual ProDOS volume bitmap.
+DRV_AVEC	CALL	V_GETFREE
 			LD		HL,ALLOCVEC
 			RET
 
-; Refresh CP/M free-space bitmap from underlying ProDOS volume bitmap.
-; ProDOS bit 1 means *free*, one bit per 512 bytes. CP/M bit 1 means
-; *allocated*, one bit per 2 KiB. We only return the total available
-; space, not stable physical block identities.
+; Scan every ProDOS bitmap block, up to the full 65535-block (~32 MiB)
+; volume limit. Set DSM to the actual volume capacity in 2 KiB CP/M blocks.
+; The CP/M allocation vector is held in 6502 $0800-$0FFF (Z80 $F800-$FFFF)
+; and built only AFTER all ProDOS READ_BLOCK calls are finished: the input
+; block buffer and the returned allocation vector intentionally overlap.
 ;
-; MAME setup: CFFA in slot 7, hard1 (PDUNIT=$70). Other drives need
-; PDUNIT adjusted, or later implement dynamic unit discovery.
-; Read block 2 -> volume header bitmap pointer ($27), block count ($29).
-; Read all necessary bitmap blocks (up to 16), stop after 2012 free
-; ProDOS 512-byte blocks (503 virtual 2 KiB blocks) have been found.
-; MLI READ_BLOCK failures conservatively report no free space.
-; Called only by BDOS function 27. Trashes AF, BC, DE, HL.
-V_GETFREE	LD		HL,2
+; Volume directory block 2 has:
+;  $04 = $Fx storage type, $23 = $27 entry length, $24 = $0D entries
+;  $27/$28 = volume bitmap start, $29/$2A = number of 512-byte blocks.
+; ProDOS bitmap: 1 = free, MSB first. CP/M bitmap: 0 = free, MSB first.
+; NOTE: one bit per *virtual* 2K block; the bitmap only conveys a free
+; space count. Block identities are synthetic (see N2FMAP).
+;
+; On errors, leave a fully allocated map, i.e. report zero free space.
+; Last ProDOS READ_BLOCK error is recorded in VERR (for MAME debugger).
+; ProDOS unit discovered from current prefix or drive directory by V_FINDUNIT.
+V_GETFREE	XOR		A
+			LD		(VERR),A
+
+			; Discover the physical unit containing the CP/M directories.
+			; This must precede READ_BLOCK of the volume header.
+			CALL	V_FINDUNIT
+			JP		NZ,V_ERROR
+
+			LD		HL,2
 			LD		(VRBLK),HL
 			CALL	V_READ
 			JP		NZ,V_ERROR
+
+			; Validate that READ_BLOCK returned a volume header.
+			LD		A,(VOLBUF+04H)
+			AND		0F0H
+			CP		0F0H
+			JP		NZ,V_BADHDR
+			LD		A,(VOLBUF+23H)
+			CP		027H
+			JP		NZ,V_BADHDR
+			LD		A,(VOLBUF+24H)
+			CP		00DH
+			JP		NZ,V_BADHDR
+
+			; How big is the actual volume? Retain this for debugging.
+			LD		HL,(VOLBUF+29H)
+			LD		(VTOTAL),HL
+			LD		A,H
+			OR		L
+			JP		Z,V_BADHDR
+
+			; All 16-bit ProDOS block numbers are representable.
+			; 65535 blocks require 16 consecutive bitmap blocks.
+			LD		(VLEFT),HL
+
+			; CP/M virtual capacity: floor(number_of_512B_blocks / 4).
+			SRL		H
+			RR		L
+			SRL		H
+			RR		L
+			LD		A,H
+			OR		L
+			JP		Z,V_BADHDR
+			LD		(VNBLOCKS),HL
+			DEC		HL
+			LD		(DPBDSM),HL	; Correct DSM, e.g. 399 for 800 KiB
+
+			; Last CP/M block uses byte DSM/8 and mask $80 >> (DSM%8).
+			LD		A,L
+			AND		07H
+			LD		B,A
+			LD		A,080H
+V_SETMASK	LD		C,A
+			LD		A,B
+			OR		A
+			LD		A,C
+			JP		Z,V_MASKDONE
+			SRL		A
+			DEC		B
+			JP		V_SETMASK
+V_MASKDONE	LD		(VFMASK),A
+			LD		HL,(DPBDSM)
+			SRL		H
+			RR		L
+			SRL		H
+			RR		L
+			SRL		H
+			RR		L
+			LD		DE,ALLOCVEC
+			ADD		HL,DE
+			LD		(VFEND),HL
+
+			; Reserve blocks 0..8 for CP/M directory / synthetic IDs.
+			LD		HL,(VNBLOCKS)
+			LD		DE,9
+			OR		A
+			SBC		HL,DE
+			JP		NC,V_BUDGETOK
+			LD		HL,0
+V_BUDGETOK	LD		(VBUDGET),HL
+
+			; Bitmap pointer must be a real volume block.
 			LD		HL,(VOLBUF+27H)
 			LD		A,H
 			OR		L
-			JP		Z,V_ERROR	; No valid bitmap pointer
+			JP		Z,V_BADHDR
 			LD		(VRBLK),HL
-			LD		HL,(VOLBUF+29H)
-			LD		A,H
-			OR		L
-			JP		Z,V_ERROR	; Invalid volume size
-			LD		(VLEFT),HL
+			LD		DE,(VTOTAL)
+			OR		A
+			SBC		HL,DE
+			JP		NC,V_BADHDR
 			LD		HL,0
 			LD		(VFREE),HL
 
-V_NEXTMAP	LD		HL,(VLEFT)	; No more valid volume blocks to scan?
+V_NEXTMAP	LD		HL,(VLEFT)
 			LD		A,H
 			OR		L
 			JP		Z,V_READY
@@ -1446,32 +1528,26 @@ V_NEXTMAP	LD		HL,(VLEFT)	; No more valid volume blocks to scan?
 			JP		NZ,V_ERROR
 			LD		HL,VOLBUF
 			LD		BC,512
-V_MAPBYTE	LD		E,(HL)			; One byte, eight bitmap bits MSB first
+V_MAPBYTE	LD		E,(HL)
 			LD		D,8
 V_MAPBIT	PUSH	HL
 			LD		HL,(VLEFT)
 			LD		A,H
 			OR		L
-			JP		Z,V_DONEPOP	; Ignore padding beyond volume end
+			JP		Z,V_DONEPOP
 			DEC		HL
 			LD		(VLEFT),HL
 			POP		HL
 			LD		A,E
-			ADD		A,A			; Carry set for free ProDOS block
+			ADD		A,A
 			LD		E,A
-			JP		NC,V_NFRE	; Occupied disk block
+			JP		NC,V_USED
 			PUSH	HL
 			LD		HL,(VFREE)
 			INC		HL
 			LD		(VFREE),HL
-			LD		A,H
-			CP		07H
-			JP		NZ,V_MORE
-			LD		A,L
-			CP		0DCH			; 2012 = 0x07DC
-			JP		Z,V_READYPOP
-V_MORE		POP		HL
-V_NFRE		DEC		D
+			POP		HL
+V_USED		DEC		D
 			JP		NZ,V_MAPBIT
 			INC		HL
 			DEC		BC
@@ -1485,44 +1561,198 @@ V_NFRE		DEC		D
 
 V_DONEPOP	POP		HL
 			JP		V_READY
-V_READYPOP	POP		HL
-			JP		V_READY
-V_ERROR	LD		HL,0			; If MLI fails, do not invent free space
-			LD		(VFREE),HL
 
-V_READY		LD		HL,(VFREE)	; Convert free 512-byte blocks -> 2K
+; All input READ_BLOCK calls have finished. Reuse the $0800-$0FFF
+; main-memory scratch area as the complete 2048-byte CP/M allocation map.
+; 65535 ProDOS blocks / 4 = 16383 virtual 2K allocation blocks.
+; Fill with $FF (occupied), then clear the free bits from the high end.
+V_READY		CALL	V_CLEARVEC
+			LD		HL,(VFREE)
 			SRL		H
 			RR		L
 			SRL		H
 			RR		L
 			LD		B,H
-			LD		C,L			; BC = 0..503 free virtual blocks
-			LD		HL,ALLOCVEC
-			LD		D,64
-			LD		A,0FFH			; Mark every CP/M block as used
-V_FILL		LD		(HL),A
-			INC		HL
-			DEC		D
-			JP		NZ,V_FILL
-			LD		HL,ALLOCVEC+63	; Allocate free bits from end
-			LD		D,1				; bit 0 represents block 511
+			LD		C,L
+
 V_MARK		LD		A,B
 			OR		C
 			RET		Z
-			LD		A,D
+			LD		HL,(VBUDGET)
+			LD		A,H
+			OR		L
+			RET		Z		; Cannot exceed actual disk capacity
+			DEC		HL
+			LD		(VBUDGET),HL
+			LD		HL,(VFEND)
+			LD		A,(VFMASK)
 			CPL
 			AND		(HL)
 			LD		(HL),A
-			SLA		D				; Next virtual block towards 0
-			JP		NZ,V_MARKNEXT
-			LD		D,1
+			LD		A,(VFMASK)
+			SRL		A
+			JP		NZ,V_NEXTBIT
+			LD		A,080H
 			DEC		HL
-V_MARKNEXT	DEC		BC
+V_NEXTBIT	LD		(VFMASK),A
+			LD		(VFEND),HL
+			DEC		BC
 			JP		V_MARK
 
+V_BADHDR	LD		A,0FEH		; Invalid/misread volume header
+V_ERROR	LD		(VERR),A	; Capture MLI status for MAME debug
+			; On failure advertise zero free blocks.
+			CALL	V_CLEARVEC
+			RET
+
+; Fill the full 2K vector with $FF, not just 64 bytes. A $FF in the
+; CP/M allocation bitmap means all blocks are used. LDIR copies the first
+; $FF forward into each following location, taking 2047 transfers.
+V_CLEARVEC	LD		HL,ALLOCVEC
+			LD		(HL),0FFH
+			LD		DE,ALLOCVEC+1
+			LD		BC,2047
+			LDIR
+			RET
+
 V_READ		LD		HL,VRMLI
-			CALL	PRODOS			; A=0 success, nonzero MLI error
+			CALL	PRODOS
 			OR		A
+			RET
+
+; Find the ProDOS unit containing the CP/M drive directories.
+; Zapple-II uses relative paths such as "A/FILE.COM", so a nonempty
+; ProDOS prefix identifies the volume.  GET_PREFIX provides /VOLUME/...;
+; ON_LINE provides (unit + name length) and volume names in search order.
+;
+; If the prefix is null, find the first on-line volume with a directory
+; named for the selected CP/M drive (A..P), following ProDOS search order.
+; All MLI scratch space is in 6502 main $0800-$097F; the direct console
+; uses text page 1, and READ_BLOCK overwrites this scratch area later.
+; Returns A=0 on success, else an MLI error or $FD (no matching volume).
+V_FINDUNIT	XOR		A
+			LD		(VRUNIT),A	; Invalidate stale unit on failure
+			LD		HL,VPMLI		; GET_PREFIX -> $0800
+			CALL	PRODOS
+			OR		A
+			RET		NZ
+			LD		A,(VOLBUF)	; Pascal prefix length
+			OR		A
+			JP		Z,V_NOPREFIX
+			LD		B,A
+			LD		HL,VOLBUF+1
+			LD		A,(HL)
+			CP		'/'
+			JP		NZ,V_NOMATCH
+			INC		HL
+			DEC		B
+			LD		C,0
+V_PFXNAME	LD		A,B
+			OR		A
+			JP		Z,V_NOMATCH
+			LD		A,(HL)
+			CP		'/'
+			JP		Z,V_PFXDONE
+			INC		C
+			LD		A,C
+			CP		16		; ProDOS volume name is <= 15 chars
+			JP		NC,V_NOMATCH
+			INC		HL
+			DEC		B
+			JP		V_PFXNAME
+V_PFXDONE	LD		A,C
+			OR		A
+			JP		Z,V_NOMATCH
+			LD		(V_NAMELEN),A
+			LD		A,1
+			LD		(V_HASPFX),A
+			JP		V_ENUM
+V_NOPREFIX	XOR		A
+			LD		(V_HASPFX),A
+
+V_ENUM		LD		HL,VOMLI		; ON_LINE all units -> $0880
+			CALL	PRODOS
+			OR		A
+			RET		NZ
+			LD		IX,VOLBUF+080H
+			LD		B,16		; Up to sixteen 16-byte records
+V_SCAN		LD		A,(IX+0)
+			OR		A		; End of returned list
+			JP		Z,V_NOMATCH
+			AND		0FH
+			JP		Z,V_NEXT	; Device error; no name
+			LD		C,A		; Name length from ON_LINE
+			LD		A,(V_HASPFX)
+			OR		A
+			JP		Z,V_TRYDIR
+			LD		A,(V_NAMELEN)
+			CP		C
+			JP		NZ,V_NEXT
+			PUSH	BC
+			PUSH	IX
+			POP		DE
+			INC		DE		; First character of ON_LINE name
+			LD		HL,VOLBUF+2 ; After leading '/' in prefix
+			LD		B,C
+V_CMPNAME	LD		A,(DE)
+			AND		0DFH		; Case-insensitive ProDOS name
+			LD		C,A
+			LD		A,(HL)
+			AND		0DFH
+			CP		C
+			JP		NZ,V_DIFFER
+			INC		DE
+			INC		HL
+			DJNZ	V_CMPNAME
+			POP		BC
+			JP		V_FOUND
+V_DIFFER	POP		BC
+			JP		V_NEXT
+
+; Null prefix: see whether /VOLUME/<driveletter> is a ProDOS directory.
+; The volume search order from ON_LINE mirrors relative pathname search.
+V_TRYDIR	PUSH	BC
+			LD		A,C
+			ADD		A,3		; '/' + volume + '/' + drive
+			LD		(VOLBUF),A
+			LD		HL,VOLBUF+1
+			LD		(HL),'/'
+			INC		HL
+			PUSH	IX
+			POP		DE
+			INC		DE
+			LD		B,C
+V_MKPATH	LD		A,(DE)
+			LD		(HL),A
+			INC		HL
+			INC		DE
+			DJNZ	V_MKPATH
+			LD		(HL),'/'
+			INC		HL
+			LD		A,(CURDRV)
+			AND		0FH
+			ADD		A,'A'
+			LD		(HL),A
+			LD		HL,VFMLI		; GET_FILE_INFO on absolute path
+			CALL	PRODOS
+			OR		A
+			JP		NZ,V_TRYNEXT
+			LD		A,(VFTYPE)
+			CP		0FH		; $0F is a ProDOS subdirectory
+			JP		NZ,V_TRYNEXT
+			POP		BC
+			JP		V_FOUND
+V_TRYNEXT	POP		BC
+V_NEXT		LD		DE,16
+			ADD		IX,DE
+			DEC		B
+			JP		NZ,V_SCAN
+V_NOMATCH	LD		A,0FDH		; Prefix volume / CP/M dir not found
+			RET
+V_FOUND		LD		A,(IX+0)
+			AND		0F0H		; Strip ON_LINE volume-name length
+			LD		(VRUNIT),A	; ProDOS unit DSSS0000
+			XOR		A
 			RET
 
 ; Software write-protect current disk
@@ -1554,7 +1784,8 @@ DRV_ROVEC	LD		HL,(ROVEC)		; Bit 0 of L is A:, bit 7 of H is P:
 			RET
 
 ; Return pointer to Drive Parameter Block in HL
-DRV_DPB		LD		HL,DPB			; Pointer to drive parameter block
+DRV_DPB		CALL	V_GETFREE		; Set DSM from real volume first
+			LD		HL,DPB			; Pointer to drive parameter block
 			RET
 
 ; Get/set user number
@@ -1590,10 +1821,10 @@ F_READRAND	PUSH	DE				; Copy pointer to FCB ...
 			POP		IX				; ...
 			CALL	IO_BEGIN		; Reopen logical CP/M FCB if needed
 			OR		A
-			JP		Z,F_RRND_GO
+			JP		Z,F_READR_GO
 			LD		L,A				; Invalid/open-error FCB
 			JP		IO_END			; Close transient handle
-F_RRND_GO
+F_READR_GO
 			LD		A,(IX+0EH)		; Obtain file reference num from FCB S2
 			LD		(SMMLIN),A		; Store in parameter list for SET_MARK
 			LD		(FRMLIN),A		; Store in parameter list for READ
@@ -1654,10 +1885,10 @@ F_WRITERAND	PUSH	DE				; Copy pointer to FCB ...
 			POP		IX				; ...
 			CALL	IO_BEGIN		; Reopen logical CP/M FCB if needed
 			OR		A
-			JP		Z,F_WRND_GO
+			JP		Z,F_WRTR_GO
 			LD		L,A				; Invalid/open-error FCB
 			JP		IO_END			; Close transient handle
-F_WRND_GO
+F_WRTR_GO
 			LD		A,(IX+0EH)		; Obtain file reference num from FCB S2
 			LD		(GEMLIN),A		; Store in parameter list for GET_EOF
 			LD		(SEMLIN),A		; Store in parameter list for SET_EOF
@@ -3358,28 +3589,68 @@ DPB			DEFW	32				; # 128 byte records per track (for Disk II)
 			DEFB	4				; Block shift (2048 byte allocation blocks)
 			DEFB	15			; Block mask (2048 byte allocation blocks)
 			DEFB	0				; Extent mask (16K extents)
-			DEFW	511			; # allocation blocks minus one (1 MB)
+DPBDSM		DEFW	511			; 2K DSM set by V_GETFREE (up to 16382)
 			DEFW	255				; # directory entries 
 			DEFB	0				; Directory allocation bitmap byte 1
 			DEFB	0				; Directory allocation bitmap byte 2
 			DEFW	0				; Checksum vector size
 			DEFW	0				; # of reserved tracks
 
- ; Virtual 1 MiB CP/M allocation vector: 512 * 2 KiB blocks / 8 bits.
- ; Bits: 1=occupied, 0=free. Only blocks 9..511 may be free;
- ; block 0 directory and block IDs 1..8 are reserved for synthetic
- ; file allocation entries. This is an *accounting* approximation,
- ; not a persistent or per-file unique CP/M block allocator.
-ALLOCVEC	DEFS	64
-
-; Scratch for ProDOS READ_BLOCK in main-memory text page 2 ($0800).
-; The relocated loader previously uses this as an OPEN buffer, but closes
-; the file before starting the Z80. The custom console uses TEXT PAGE 1.
-; Z80 $F800 is 6502 $0800 in the SoftCard's shared high-memory window.
-; Keep this buffer separate from DIRBUF and the four live ProDOS OPEN buffers.
+; 2048-byte CP/M allocation vector supports up to 16384 x 2 KiB
+; allocation blocks, i.e. ProDOS's 32 MiB maximum. This is synthetic
+; accounting; no claim is made that these are unique physical blocks.
+;
+; Reuse 6502 MAIN $0800-$0FFF (Apple II text page 2 and spare RAM),
+; mapped to Z80 $F800-$FFFF. The 6502 direct console uses text page 1.
+; This avoids sacrificing another 2 KiB of precious Z80 TPA or colliding
+; with the live ProDOS I/O buffers at Z80 $9800-$A7FF.
+;
+; $0800-$09FF is the temporary ProDOS block buffer and GET_PREFIX buffer;
+; ON_LINE uses $0880. Consequently V_GETFREE builds the allocation map
+; ONLY after the final READ_BLOCK completes. A later V_GETFREE refreshes it.
+ALLOCVEC	EQU		0F800H
 VOLBUF		EQU		0F800H
-VLEFT		DEFW	0				; Remaining ProDOS blocks in volume
-VFREE		DEFW	0				; Count of free 512-byte blocks (max 2012)
+VLEFT		DEFW	0				; Volume blocks remaining in scan
+VFREE		DEFW	0				; Number of actual free 512-byte blocks
+VTOTAL		DEFW	0				; ProDOS header total blocks (800K => $0640)
+VNBLOCKS	DEFW	0				; 2K blocks (800K => 400, 32MB => 16383)
+VFEND		DEFW	0				; Bitmap byte for highest CP/M block
+VFMASK		DEFB	0				; Bit mask at VFEND
+VBUDGET	DEFW	0				; Maximum bits available (excl 0..8)
+VERR		DEFB	0				; Last ProDOS error, $FE if header invalid
+
+; GET_PREFIX (ProDOS $C7). Returns Pascal absolute path in $0800.
+VPMLI		DEFB	20H,00H,0BFH
+			DEFB	0C7H
+			DEFW	VPPL+OFFSET
+			DEFB	60H
+VPPL		DEFB	1
+			DEFW	0800H
+
+; ON_LINE (ProDOS $C5), unit=0 enumerates mounted devices.
+; 256-byte list at $0880, well away from the 64-byte prefix at $0800.
+VOMLI		DEFB	20H,00H,0BFH
+			DEFB	0C5H
+			DEFW	VOPL+OFFSET
+			DEFB	60H
+VOPL		DEFB	2
+			DEFB	0			; 0 = enumerate all units
+			DEFW	0880H
+
+; GET_FILE_INFO (ProDOS $C4), only for the no-prefix fallback.
+; The temporary absolute pathname lives at $0800.
+VFMLI		DEFB	20H,00H,0BFH
+			DEFB	0C4H
+			DEFW	VFPL+OFFSET
+			DEFB	60H
+VFPL		DEFB	0AH
+			DEFW	0800H
+			DEFB	0			; Access returned
+VFTYPE		DEFB	0			; File type returned ($0F = DIR)
+			DEFS	13			; Remaining GET_FILE_INFO fields
+
+V_HASPFX	DEFB	0
+V_NAMELEN	DEFB	0
 
 ; ProDOS READ_BLOCK call, read-only, used to inspect volume bitmap.
 VRMLI		DEFB	20H,00H,0BFH	; JSR $BF00
@@ -3387,7 +3658,7 @@ VRMLI		DEFB	20H,00H,0BFH	; JSR $BF00
 			DEFW	VRPL+OFFSET
 			DEFB	60H				; RTS
 VRPL		DEFB	3
-VRUNIT		DEFB	PDUNIT
+VRUNIT		DEFB	0			; Populated by V_FINDUNIT at each free-space query
 			DEFW	0800H			; physical 6502 address (NOT VOLBUF+OFFSET)
 VRBLK		DEFW	0				; Requested ProDOS 512-byte block
 
