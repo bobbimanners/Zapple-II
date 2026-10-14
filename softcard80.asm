@@ -4,7 +4,7 @@
 ; Requires the companion SOFTCARD65 6502 code
 ; Assemble using Udo Munk's Z80asm.
 ; Tabstops every 4 chars.
-; Bobbi 2019
+; Bobbi 2019, 2026
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; References:
 ; 1) BDOS System Calls
@@ -19,10 +19,7 @@
 ;
 ; BDOS TODOs
 ; ----------
-; TODO: PIP has issues with multi file copy, and I think it is because it only
-;		closes the destination files, but not the source files.  Maybe the
-;		solution is to close files after each read/write.  The FCB keeps track
-;		of the position in any case and we always seek, so this should work.
+; TODO: File handling is slow.  Should cache open ProDOS files.
 ; TODO: Need to implement the BIOS entry points and jump table (see MG's Ruby)
 ; TODO: Needs proper boot / warm boot entry points
 ; TODO: Maybe I should eliminate use of "EX AF,AF'" in BDOS since CP/M apps
@@ -38,7 +35,7 @@
 ; Other Random TODO comments in the code
 ; 
 
-BDOSADDR	EQU		08400H			; 
+BDOSADDR	EQU		08200H			; 
 STCKTOP		EQU		097FFH			; Top of Z80 stack (below IOBUFs)
 
 SOFTCARD	EQU		0E400H			; Softcard in slot 4 ($C400)
@@ -846,9 +843,20 @@ DSRET		LD		L,A				; Return code in L too
 ; Returns error codes in A and L:
 ; Returns 0 for success.  The FCB for the file opened is left at DMAADDR (slot 0)
 ; Returns 0FFH if file not found
-F_OPEN		PUSH	DE				; Preserve pointer to FCB
-			CALL	F_SFIRST		; Find first matching directory entry
-			POP		DE				; Restore pointer to FCB
+; Opening a file must NOT replace an ongoing BDOS wildcard directory search.
+; ProDOS OPEN already checks existence; F_SFIRST is not needed here.
+F_OPEN		CALL	_F_OPEN			; Open physical ProDOS file
+			OR		A
+			RET		NZ				; Error (already in A and L)
+			CALL	F_CLOSE			; Release ProDOS handle immediately
+			OR		A
+			RET		NZ
+			PUSH	DE
+			POP		IX
+			LD		(IX+0EH),0FEH	; Logical CP/M open, no host handle
+			XOR		A
+			LD		L,A
+			RET
 
 ; Alternative entrypoint used for opening ProDOS directory files
 ; and used by the CCP to load .COM files.  No directory lookup.
@@ -862,7 +870,7 @@ _F_OPEN		LD		IX,PATHBUF		; Destination buffer
 			XOR		A				; Looking for FRN slot with value 0
 			CALL	GETIOADDR		; Returns FRN slot in A, IOBUF in HL
 			CP		0FFH			; Check for error
-			JP		Z,FOERR			; If no slots available, error out
+			JP		Z,FOFULL		; If no slots available, diagnostic
 
 			LD		(TEMPBYTE),A	; Record the buffer index in local var
 			LD		BC,OFFSET		; Add offset to convert to 6502 address
@@ -909,6 +917,15 @@ _F_OPEN		LD		IX,PATHBUF		; Destination buffer
 			LD		L,A				; Copy to L
 			RET						; Done
 
+; Retain diagnostic on genuine buffer exhaustion while testing.
+FOFULL		PUSH	DE
+			LD		DE,FOFULLMSG
+			CALL	C_WRITESTR
+			POP		DE
+			JP		FOERR
+FOFULLMSG	DEFM	'Zapple-II: NO FREE IOBUF'
+			DEFB	13,'$'
+
 FOERR		LD		A,0FFH			; Error return status
 			LD		L,A				; Copy to L
 			RET						; Done (error)
@@ -921,7 +938,11 @@ F_CLOSE		LD		H,D				; Pointer to FCB ...
 			LD		BC,0EH			; Offset to S2 field (reserved field)
 			ADD		HL,BC			; Compute address
 			LD		A,(HL)			; Obtain file reference num from FCB S2
-			CP		0				; If file reference number is zero ...
+			CP		0FEH			; Virtual CP/M open, no ProDOS ref
+			JP		NZ,FCPHYS
+			LD		(HL),0			; Mark CP/M file closed
+			JP		FCSUCC
+FCPHYS		CP		0				; If file reference number is zero ...
 			JP		Z,FCSUCC		; ... Nothing to do, just return
 			LD		(FCMLIN),A		; Store in parameter list
 			LD		HL,FCMLI		; Pass address of 6502 JSR instruction
@@ -1036,7 +1057,27 @@ FSNS2		LD		A,0FFH			; No match
 ; Delete file
 ; DE is the address of the FCB describing the file to delete
 ; Returns error codes in A and L:
-F_DELETE	PUSH	DE				; Preserve FCB
+; For an exact name, destroy directly; don't clobber the caller's
+; F_SFIRST/F_SNEXT enumeration.  Preserve old logic for wildcards.
+F_DELETE	LD		H,D
+			LD		L,E
+			INC		HL				; Skip FCB drive byte
+			LD		B,11			; 8 + 3 filename characters
+FD_CHKWILD	LD	A,(HL)
+			CP		'?'
+			JR		Z,FD_WILD
+			INC		HL
+			DJNZ	FD_CHKWILD
+			LD		IX,PATHBUF
+			CALL	FCB2PATH
+			LD		HL,FDMLI
+			CALL	PRODOS
+			OR		A
+			JR		Z,FD_OK
+			LD		A,0FFH
+FD_OK		LD		L,A
+			RET
+FD_WILD		PUSH	DE				; Preserve FCB
 			CALL	F_SFIRST		; Search for file, create FCB
 			CP		0FFH			; If not found ...
 			JP		Z,FDS2			; ... Return with error
@@ -1072,12 +1113,84 @@ FDS2		POP		DE				; Restore stack
 			LD		L,A				; Return code in L also
 			RET
 
+; CP/M files are logically open even while their ProDOS handle is closed.
+; We use S2=$FE as a virtual-open marker. _F_OPEN is deliberately used
+; here to avoid disturbing the global directory search in F_SFIRST.
+; The current extent, RC and sequential record are saved because _F_OPEN
+; refreshes the FCB size and resets the sequential record number.
+; Internal directory and CCP loader handles remain physical (S2=FRN).
+IO_BEGIN	XOR		A
+			LD		(IOVIRT),A
+			LD		A,(IX+0EH)
+			CP		0FEH
+			JP		Z,IO_REOPEN
+			OR		A				; Zero means not open
+			JP		Z,IO_BAD
+			XOR		A
+			RET
+IO_BAD		LD		A,9				; Invalid FCB
+			RET
+IO_REOPEN	LD		A,1
+			LD		(IOVIRT),A
+			LD		A,(IX+0FH)
+			PUSH	AF				; RC
+			LD		A,(IX+0CH)
+			PUSH	AF				; Extent
+			LD		A,(IX+20H)
+			PUSH	AF				; Current record
+			PUSH	DE
+			PUSH	IX
+			CALL	_F_OPEN
+			LD		C,A				; Preserve status across POP AFs
+			POP		IX
+			POP		DE
+			POP		AF
+			LD		(IX+20H),A
+			POP		AF
+			LD		(IX+0CH),A
+			POP		AF
+			LD		(IX+0FH),A
+			LD		A,C
+			OR		A
+			RET		Z
+			PUSH	AF				; Failed to open: no close needed
+			XOR		A
+			LD		(IOVIRT),A
+			POP		AF
+			RET
+
+; Preserve BDOS status while releasing the transient ProDOS handle.
+IO_END		PUSH	AF
+			LD		A,(IOVIRT)
+			OR		A
+			JP		Z,IO_DONE
+			PUSH	IX
+			POP		DE
+			CALL	F_CLOSE
+			OR		A
+			JP		NZ,IO_CERR
+			LD		(IX+0EH),0FEH	; Still logically open to CP/M
+IO_DONE		POP		AF
+			LD		L,A
+			RET
+IO_CERR		POP		AF				; Discard saved result
+			LD		A,0FFH
+			LD		L,A
+			RET
+IOVIRT		DEFB	0
+
 ; Read next record
 ; DE is the address of the FCB describing the file from which to read
 ; Returns error codes in A and L:
 ; 0 OK, 1 EOF, 9 invalid FCB, 10 media changed, 0FFH h/w error
 F_READ		PUSH	DE				; Copy pointer to FCB ...
 			POP		IX				; ... into IX
+			CALL	IO_BEGIN		; Reopen logical CP/M FCB if needed
+			OR		A
+			JP		Z,F_READ_GO
+			LD		L,A				; Invalid/open-error FCB
+			JP		IO_END			; Close transient handle
+F_READ_GO
 			LD		A,(IX+0EH)		; Obtain file reference num from FCB S2
 			LD		(SMMLIN),A		; Store in parameter list for SET_MARK
 			LD		(FRMLIN),A		; Store in parameter list for READ
@@ -1121,16 +1234,16 @@ F_READ		PUSH	DE				; Copy pointer to FCB ...
 
 FRS1		XOR		A				; Zero for success
 			LD		L,A				; Return code in L also
-			RET						; Done
+			JP		IO_END			; Close transient handle
 FREOF		LD		A,1				; EOF return code
 			LD		L,A				; Return code in L also
-			RET						; Done (EOF)
+			JP		IO_END			; Close transient handle
 FRBFCB		LD		A,9				; Invalid FCB return code
 			LD		L,A				; Return code in L also
-			RET						; Done (Bad FCB)
+			JP		IO_END			; Close transient handle
 FRERR		LD		A,0FFH			; All other errors are 0FFH
 			LD		L,A				; Return code in L aslo
-			RET						; Done (error)
+			JP		IO_END			; Close transient handle
 
 ; Write next record
 ; DE is the address of the FCB describing the file to which to write
@@ -1138,6 +1251,12 @@ FRERR		LD		A,0FFH			; All other errors are 0FFH
 ; 0 OK, 1 dir full, 2 disk full, 9 invalid FCB, 10 media changed, 0FFH h/w error
 F_WRITE		PUSH	DE				; Copy pointer to FCB ...
 			POP		IX				; ... into IX
+			CALL	IO_BEGIN		; Reopen logical CP/M FCB if needed
+			OR		A
+			JP		Z,F_WRITE_GO
+			LD		L,A				; Invalid/open-error FCB
+			JP		IO_END			; Close transient handle
+F_WRITE_GO
 			LD		A,(IX+0EH)		; Obtain file reference num from FCB S2
 			LD		(SMMLIN),A		; Store in parameter list for SET_MARK
 			LD		(FWMLIN),A		; Store in parameter list for WRITE
@@ -1191,16 +1310,16 @@ F_WRITE		PUSH	DE				; Copy pointer to FCB ...
 
 FWS1		XOR		A				; Zero for success
 			LD		L,A				; Return code in L also
-			RET						; Done
+			JP		IO_END			; Close transient handle
 FWBFCB		LD		A,9				; Invalid FCB return code
 			LD		L,A				; Return code in L also
-			RET						; Done (EOF)
+			JP		IO_END			; Close transient handle
 FWDF		LD		A,2				; Disk full return code
 			LD		L,A				; Return code in L also
-			RET						; Done (Disk Full)
+			JP		IO_END			; Close transient handle
 FWERR		LD		A,0FFH			; All other errors are 0FFH
 			LD		L,A				; Return code in L aslo
-			RET						; Done (error)
+			JP		IO_END			; Close transient handle
 
 ; Create (and open) file
 ; DE is the address of the FCB describing the file to create
@@ -1212,20 +1331,45 @@ F_MAKE		LD		IX,PATHBUF		; Destination buffer
 			CALL	PRODOS			; Invoke ProDOS MLI
 			CP		0				; See if there was an error
 			JP		NZ,FMERR		; Handle error
-			CALL	F_OPEN			; Open the file using same FCB (DE ptr)
-			RET						; Return with status from F_OPEN
-FMERR		LD		A,0FFH			; 0FFH for error
+			CALL	F_OPEN			; Open same FCB without touching search state
+			OR		A
+			RET		Z
+			PUSH	AF				; Diagnostic for post-CREATE OPEN failure
+			PUSH	BC
+			PUSH	DE
+			LD		C,A
+			LD		DE,FMOPENMSG
+			CALL	C_WRITESTR
+			CALL	PRHEX			; Underlying Zapple-II error code
+			POP		DE
+			POP		BC
+			POP		AF
+			RET
+FMERR		PUSH	AF
+			PUSH	BC
+			PUSH	DE
+			LD		C,A
+			LD		DE,FMCRMSG
+			CALL	C_WRITESTR
+			CALL	PRHEX			; Show true ProDOS CREATE error
+			POP		DE
+			POP		BC
+			POP		AF
+			LD		A,0FFH			; 0FFH for error
 			LD		L,A				; Return code in L also
 			RET
+FMCRMSG		DEFM	'Zapple-II CREATE error: '
+			DEFB	'$'
+FMOPENMSG	DEFM	'Zapple-II OPEN-after-CREATE error: '
+			DEFB	'$'
 
 ; Rename file
 ; DE is the address of the FCB describing the file to be renamed. The new name
 ; is stuffed into FCB+16 (where the allocation map usually goes)
 ; Returns error codes in A and L - 0 for success, 0FFH for file not found
-F_RENAME	CALL	F_SFIRST		; Search for file, create FCB
-			CP		0FFH			; If not found ...
-			JP		Z,FRNERR		; ... Return with error
-			LD		IX,PATHBUF		; Destination buffer 1
+; ProDOS RENAME checks that the old file exists.  Doing F_SFIRST here
+; would clobber a wildcard enumeration in progress (notably PIP).
+F_RENAME	LD		IX,PATHBUF		; Destination buffer 1
 			CALL	FCB2PATH		; Populate PATHLEN and PATH for first file
 			LD		IX,PATHBUF2		; Destination buffer 2
 			LD		H,D				; DE -> HL for addition
@@ -1444,6 +1588,12 @@ FUNS1		LD		A,(CURDRV)		; Contains user number & current drive
 ; 6 rec number out of range, 9 invalid FCB, 10 media changed, 0FFH h/w err
 F_READRAND	PUSH	DE				; Copy pointer to FCB ...
 			POP		IX				; ...
+			CALL	IO_BEGIN		; Reopen logical CP/M FCB if needed
+			OR		A
+			JP		Z,F_RRND_GO
+			LD		L,A				; Invalid/open-error FCB
+			JP		IO_END			; Close transient handle
+F_RRND_GO
 			LD		A,(IX+0EH)		; Obtain file reference num from FCB S2
 			LD		(SMMLIN),A		; Store in parameter list for SET_MARK
 			LD		(FRMLIN),A		; Store in parameter list for READ
@@ -1484,16 +1634,16 @@ F_READRAND	PUSH	DE				; Copy pointer to FCB ...
 
 			XOR		A				; Zero for success
 			LD		L,A				; Return code in L also
-			RET						; Done
+			JP		IO_END			; Close transient handle
 FRRRUD		LD		A,1				; Reading unwritten data return code
 			LD		L,A				; Return code in L also
-			RET						; Done (EOF)
+			JP		IO_END			; Close transient handle
 FRRBFCB		LD		A,9				; Invalid FCB return code
 			LD		L,A				; Return code in L also
-			RET						; Done (Bad FCB)
+			JP		IO_END			; Close transient handle
 FRRERR		LD		A,0FFH			; All other errors are 0FFH
 			LD		L,A				; Return code in L aslo
-			RET						; Done (error)
+			JP		IO_END			; Close transient handle
 
 ; Random access write record
 ; DE contains address of FCB describing the file to write
@@ -1502,6 +1652,12 @@ FRRERR		LD		A,0FFH			; All other errors are 0FFH
 ; 6 rec number out of range, 9 invalid FCB, 10 media changed, 0FFH h/w err
 F_WRITERAND	PUSH	DE				; Copy pointer to FCB ...
 			POP		IX				; ...
+			CALL	IO_BEGIN		; Reopen logical CP/M FCB if needed
+			OR		A
+			JP		Z,F_WRND_GO
+			LD		L,A				; Invalid/open-error FCB
+			JP		IO_END			; Close transient handle
+F_WRND_GO
 			LD		A,(IX+0EH)		; Obtain file reference num from FCB S2
 			LD		(GEMLIN),A		; Store in parameter list for GET_EOF
 			LD		(SEMLIN),A		; Store in parameter list for SET_EOF
@@ -1558,16 +1714,16 @@ FWRS1		LD		HL,SMMLI		; Pass address of 6502 JSR instruction
 
 			XOR		A				; Zero for success
 			LD		L,A				; Return code in L also
-			RET						; Done
+			JP		IO_END			; Close transient handle
 FWRBFCB		LD		A,9				; Invalid FCB return code
 			LD		L,A				; Return code in L also
-			RET						; Done (Disk Full)
+			JP		IO_END			; Close transient handle
 FWRDF		LD		A,2				; Disk fill return code
 			LD		L,A				; Return code in L also
-			RET						; Done (Bad FCB)
+			JP		IO_END			; Close transient handle
 FWRERR		LD		A,0FFH			; All other errors are 0FFH
 			LD		L,A				; Return code in L aslo
-			RET						; Done (error)
+			JP		IO_END			; Close transient handle
 
 
 ; Compute file size (BDOS function 35) from the exact ProDOS EOF.
@@ -2775,11 +2931,11 @@ RCL1		CALL	F_READ			; Read records until done
 			CALL	F_CLOSE			; Close the file
 			LD		HL,FILEBUF		; Reset DMAADDR to 0080H
 			LD		(DMAADDR),HL	; ...
-            LD   A,(CURDRV)     ; Save CCP drive/user
-            PUSH AF
+			LD		A,(CURDRV)		; Save CCP drive/user before transient
+			PUSH	AF			; STAT may temporarily select another drive
 			CALL	PROGSTRT		; Run user program at 0100H
-            POP  AF
-            LD   (CURDRV),A     ; Restore CCP drive/user
+			POP		AF			; Restore drive/user on normal return
+			LD		(CURDRV),A		; Restore CCP default drive
 			LD		E,13			; Print carriage return
 			CALL	C_WRITE			; ...
 			LD		HL,FILEBUF		; Reset DMAADDR to 0080H
