@@ -700,8 +700,14 @@ VLOAD LDA $0400,Y ; operand updated by VADDR
 * Keep the original byte under the cursor, including its attributes.
 VGET JSR VPEEK
  STA VUNDER
- AND #$3F ; inverse form of screen character
- JSR VDRAW
+* Apple IIe alternate charset: $60-$7F is inverse lowercase.
+* $40-$5F is MouseText on enhanced IIe, not inverse uppercase.
+* Retain bit 6 only for lowercase; clear it otherwise.
+ AND #$7F
+ CMP #$60
+ BCS :VGLOW
+ AND #$3F
+:VGLOW JSR VDRAW
 :VGWAIT LDA $C000 ; keyboard latch; bit 7 means key ready
  BPL :VGWAIT
  PHA
