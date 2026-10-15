@@ -76,7 +76,7 @@ BP/M includes its own small **Console Command Processor (CCP)**. Commands are ca
 | `TYPE filespec` | Display a text file | `TYPE README.TXT` |
 | `ERA filespec` | Delete file(s); wildcard deletions require confirmation | `ERA *.BAK` |
 | `REN new=old` | Rename a file; destination name comes first | `REN NEW.TXT=OLD.TXT` |
-| `SAVE n filespec` | Save `n` pages of 256 bytes starting at `$0100`; see caveat below | `SAVE 2 SNAP.BIN` |
+| `SAVE n filespec` | Save `n` 256-byte pages of auxiliary TPA memory starting at `$0100` (0–175 pages) | `SAVE 175 SNAP.COM` |
 | `A:` … `P:` | Change the default CP/M drive | `B:` |
 | `TERM SOROC` | Select Soroc IQ-120-style terminal emulation | `TERM SOROC` |
 | `TERM VIDEX` | Select Videx/VideoTerm-style terminal emulation | `TERM VIDEX` |
@@ -87,7 +87,7 @@ BP/M includes its own small **Console Command Processor (CCP)**. Commands are ca
 
 `TERM` is a **built-in command**; a separate `TERM.COM` is no longer needed. The latest 6502 driver is set up to start in **Soroc mode** by default, although you can change modes whenever you like.
 
-**`SAVE` caveat:** This is still the legacy CCP memory-save implementation. In AUX44, the CCP runs in **main RAM** while transient programs run in **auxiliary RAM**, so `SAVE` does **not** currently capture the memory image of the last AUX44 transient. Its existing limit is 128 pages (32 KiB).
+**`SAVE` in AUX44:** `SAVE n filespec` writes the contents of **auxiliary RAM**, where the last `.COM` program ran, beginning at Z80 `$0100`. Each page is 256 bytes; the maximum is **175 pages = 44,800 bytes** (`$0100–$AFFF`). For example, `SAVE 175 SNAP.COM` saves the entire available TPA, and `SAVE 1 FIRST.BIN` saves its first page. `SAVE` does **not** save the resident main-memory BDOS or the auxiliary CP/M page zero. The data is whatever remains in auxiliary memory from the previous transient, including any changes it made. Loading another `.COM` program overwrites that memory; save immediately after the program you want to capture. `SAVE` writes binary data; use a fresh filename, since ProDOS may reject creation if the file already exists.
 
 ### Some things to try
 

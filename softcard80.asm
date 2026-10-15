@@ -663,6 +663,139 @@ AXM2A       XOR     A
             LD      (WRMAIN),A
             RET
 
+; ================================================================
+; AUX44 CCP SAVE: dump transient AUX RAM, not resident MAIN RAM.
+; This routine lives in idle MAIN $7400-$75FF; it borrows the same
+; LC bank2 copy primitive used by the working AUX filesystem gateway.
+; Only MAIN $AUXSTAGE is passed as the ProDOS write DMA buffer.
+; ================================================================
+            ORG     07400H
+SAVEFILE   LD      HL,FILEBUF+2   ; decimal pages (the first argument)
+           LD      B,0
+SVDEC      LD      A,(HL)
+           CP      ' '
+           JR      Z,SVNUM
+           SUB     '0'
+           JP      C,SVBAD
+           CP      10
+           JP      NC,SVBAD
+           LD      C,A
+           LD      A,B
+           CP      18             ; guard 8-bit 10*x+digit overflow
+           JP      NC,SVBAD
+           ADD     A,A
+           LD      D,A
+           ADD     A,A
+           ADD     A,A
+           ADD     A,D
+           ADD     A,C
+           CP      176            ; legal pages: 0 through 175
+           JP      NC,SVBAD
+           LD      B,A
+           INC     HL
+           JR      SVDEC
+SVNUM      LD      A,B
+           LD      (SVPAGES),A
+           LD      DE,FCB2
+           CALL    F_MAKE
+           OR      A
+           JP      NZ,SVIOERR
+           LD      HL,0100H
+           LD      (SVPTR),HL
+           LD      A,(SVPAGES)
+           OR      A
+           JR      Z,SVEMPTY
+           CALL    SVPREP         ; preserve ProDOS's full LC bank2
+SVPAGE     LD      A,(SVPAGES)
+           OR      A
+           JR      Z,SVDONE
+           LD      B,2            ; two 128-byte records per page
+SVRECORD   PUSH    BC
+           CALL    SVCOPY         ; AUX (SVPTR) -> MAIN AUXSTAGE
+           LD      HL,AUXSTAGE
+           LD      (DMAADDR),HL
+           LD      DE,FCB2
+           CALL    F_WRITE        ; normal MAIN ProDOS write
+           POP     BC
+           OR      A
+           JR      NZ,SVFAIL
+           DJNZ    SVRECORD
+           LD      A,(SVPAGES)
+           DEC     A
+           LD      (SVPAGES),A
+           JR      SVPAGE
+SVDONE     LD      DE,FCB2
+           CALL    F_CLOSE
+           LD      (SVSTAT),A
+           CALL    SVREST         ; restore entire 4K LC bank2
+           LD      A,(SVSTAT)
+           OR      A
+           JR      NZ,SVIOERR
+           JR      SVRESET
+SVFAIL     LD      DE,FCB2
+           CALL    F_CLOSE
+           CALL    SVREST         ; must restore LC on write failure too
+           JR      SVIOERR
+SVEMPTY    LD      DE,FCB2       ; SAVE 0: just create empty file
+           CALL    F_CLOSE
+           OR      A
+           JR      NZ,SVIOERR
+SVRESET    LD      HL,FILEBUF
+           LD      (DMAADDR),HL
+           RET
+SVIOERR    LD      DE,REMSG
+           CALL    C_WRITESTR
+           JR      SVRESET
+SVBAD      LD      DE,BFMSG
+           CALL    C_WRITESTR
+           JR      SVRESET
+
+; Save the ProDOS LC bank2 image to otherwise unused MAIN $5000.
+; Preserve ProDOS bank1 for filesystem operations between AUX copies.
+SVPREP     XOR     A
+           LD      (SW80OFF),A
+           LD      (ZPMAIN),A
+           LD      (RDMAIN),A
+           LD      (WRMAIN),A
+           LD      A,(LCB2RW)
+           LD      A,(LCB2RW)
+           LD      HL,LCBASE
+           LD      DE,LCBACK
+           LD      BC,01000H
+           LDIR
+           LD      A,(LCB1RO)
+           RET
+
+; Reinstall the existing LC trampoline before EACH record because
+; ProDOS is entitled to use LC bank2 while F_WRITE runs. LCA2M
+; executes from LC (not swappable MAIN RAM), so AUX read is safe.
+SVCOPY     LD      A,(LCB2RW)
+           LD      A,(LCB2RW)
+           LD      HL,LCIMG
+           LD      DE,LCBASE
+           LD      BC,LCLEN
+           LDIR
+           LD      HL,(SVPTR)
+           LD      DE,AUXSTAGE
+           LD      BC,128
+           CALL    LCA2M         ; BC=0 on return; HL advanced 128
+           LD      (SVPTR),HL
+           LD      A,(LCB1RO)
+           RET
+
+; Put back ProDOS's original 4 KiB LC bank2 after file is closed.
+SVREST     LD      A,(LCB2RW)
+           LD      A,(LCB2RW)
+           LD      HL,LCBACK
+           LD      DE,LCBASE
+           LD      BC,01000H
+           LDIR
+           LD      A,(LCB1RO)
+           RET
+SVPAGES    DEFB    0
+SVPTR      DEFW    0100H
+SVSTAT     DEFB    0
+
 ; CCP's built-in command table and terminal selector live in the unused
 ; MAIN-memory TPA.  $7600-$77FF is free of AXBDOS ($7000-$73xx)
 ; and the permanent AUX bridge staging region ($7800 onward).
@@ -3713,77 +3846,7 @@ TBL1       LD      A,(HL)
            DJNZ    TBL1
            RET
 
-; CP/M SAVE n file: n decimal 256-byte pages starting at TPA $0100.
-; Each page is written as TWO 128-byte BDOS sequential records.
-; Max n=128, saving up to $80FF without touching resident code at $8100.
-; The second parser argument is already an FCB at FCB2.
-SAVEFILE   LD      HL,FILEBUF+2   ; Decimal number begins after first space
-           LD      B,0             ; Accumulated pages
-SVDEC      LD      A,(HL)
-           CP      ' '
-           JR      Z,SVNUMBER
-           SUB     '0'
-           JR      C,SVBAD
-           CP      10
-           JR      NC,SVBAD
-           LD      C,A
-           LD      A,B
-           CP      13            ; 13*10 exceeds 128 even with digit 0
-           JR      NC,SVBAD
-           ADD     A,A
-           LD      D,A             ; 2*previous
-           ADD     A,A
-           ADD     A,A             ; 8*previous
-           ADD     A,D             ; 10*previous
-           ADD     A,C
-           CP      129
-           JR      NC,SVBAD
-           LD      B,A
-           INC     HL
-           JR      SVDEC
-SVNUMBER   LD      A,B
-           LD      (SVPAGES),A
-           LD      DE,FCB2
-           CALL    F_MAKE
-           OR      A
-           JR      NZ,SVIOERR
-           LD      HL,0100H
-           LD      (DMAADDR),HL
-SVPAGE     LD      A,(SVPAGES)
-           OR      A
-           JR      Z,SVCLOSE
-           LD      B,2
-SVRECORD   PUSH    BC
-           LD      DE,FCB2
-           CALL    F_WRITE
-           POP     BC
-           OR      A
-           JR      NZ,SVWRITEERR
-           LD      HL,(DMAADDR)
-           LD      DE,128
-           ADD     HL,DE
-           LD      (DMAADDR),HL
-           DJNZ    SVRECORD
-           LD      A,(SVPAGES)
-           DEC     A
-           LD      (SVPAGES),A
-           JR      SVPAGE
-SVCLOSE    LD      DE,FCB2
-           CALL    F_CLOSE
-           OR      A
-           JR      NZ,SVIOERR
-SVRESET    LD      HL,FILEBUF
-           LD      (DMAADDR),HL
-           RET
-SVWRITEERR LD      DE,FCB2
-           CALL    F_CLOSE        ; Close even on an unsuccessful write
-SVIOERR    LD      DE,REMSG
-           CALL    C_WRITESTR
-           JR      SVRESET
-SVBAD      LD      DE,BFMSG
-           CALL    C_WRITESTR
-           JR      SVRESET
-SVPAGES    DEFB    0
+; AUX44 SAVEFILE/SVPAGES relocated to MAIN $7400; see below.
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Additional private scratch space for BDOS
