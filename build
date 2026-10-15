@@ -11,4 +11,4 @@ merlin32 softcard65.asm && mv softcard65 SOFTCARD65\#ff2000
 cadius replacefile zapple2.po /ZAPPLE2 SOFTCARD65\#ff2000
 cadius replacefile zapple2.po /ZAPPLE2 SOFTCARD80.BIN\#041000
 
-mame -log -debug -w apple2ee -sl4 softcard -sl7 cffa202 -hard1 h1-backup-220908.po  -hard2 zapple2.po
+mame -debug -w apple2ee -sl4 softcard -sl7 cffa202 -hard1 h1-backup-220908.po  -hard2 zapple2.po

@@ -1,289 +1,215 @@
 # Zapple-II
-Tools for building and running Z80 code under ProDOS on an Apple II with a
-Z80 Softcard (or clone)
 
-- Z80 cross assemblers running under ProDOS on the Apple II
-- CP/M BDOS emulation to allow CP/M programs to run under ProDOS
-- Simple CP/M Command Console Processor (CCP)
-- Sample program: Processor Technology's SOL-20 BASIC/5
+**CP/M programs on an Apple IIe Z80 SoftCard, using ProDOS files instead of CP/M disks.**
 
-Aztec C v3.2 can be found [on this website](http://aztecmuseum.ca).
+Zapple-II is a collection of tools and software for running Z80 programs on an Apple II with a Microsoft Z80 SoftCard (or compatible card). Its main component, **BP/M**, is a CP/M 2.2-compatible environment that runs on top of **ProDOS 8**.
 
-# Z80 Cross Assemblers & Tools
-I didn't fancy writing a Z80 assembler from scratch, and I wasn't able to
-find any existing Z80 cross-assemblers for 6502. In order to get something
-up-and-running quickly, I searched for small Z80 assemblers written in C.
+This is not a Z80 CPU emulator: CP/M programs execute on the **real Z80 processor** on the SoftCard. BP/M implements the CP/M **CCP**, **BDOS**, and much of the **BIOS** interface, translating CP/M file operations into ProDOS calls handled by the Apple II's 6502. CP/M drive letters refer to **ProDOS subdirectories**, so there is no need to use CP/M-formatted floppy disks.
 
-## Z80Asm
+The current **AUX44** implementation uses the Apple IIe's auxiliary memory to provide a **44 KB CP/M memory configuration** (43.75 KiB available between `$0100` and `$AFFF`). It supports real-world applications including WordStar, Turbo Pascal, and Microsoft BASIC.
 
-The first suitable candidate I found was `Z80Asm`, which was developed by Udo
-Munk back in the 1988 to 1990 timeframe.  (Hr. Munk is still active and has
-repositories here on GitHub.)  I am using an older version of Z80Asm (v1.1)
-which is written in K&R (pre-ANSI) C, so it was easy to get it to compile on
-Aztec C for the Apple II.
+## Requirements
 
-The program is rather large for Aztec C's compiler, and the resulting binary
-was also too large to run in the available memory.  I made a few minor
-modifications:
+- An **Apple IIe with 128 KB RAM** (or a compatible emulation with auxiliary RAM).
+- A **Microsoft Z80 SoftCard** or compatible Z80 card, currently configured for **slot 4**.
+- **ProDOS 8**, with **BASIC.SYSTEM** if launching from the ProDOS BASIC prompt.
+- A ProDOS volume containing the Zapple-II files and the CP/M drive directories.
 
-- I split the largest source file `z80arfun.c` into eight pieces because
-  Aztec C can't handle files larger than around 500 lines.
-- Slimmed down a few buffers to save some RAM.
-- Reduced the number of supported files from 512 to 10.  
-- I had to compile the code to Aztec C VM code using `cci` rather than to
-  native 6502 code using `cc`.  The natively compiled version creates an
-  executable which is too large to run.
+The AUX44 version requires the auxiliary RAM available on a 128 KB Apple IIe. Development and testing have been carried out in **MAME**; hardware and other emulator configurations may need adjustments.
 
-The resulting assembler runs but it is quite slow due to the use of the Aztec
-VM and can't assemble large programs with lots of symbols without running out
-of memory.  However I have been using it successfully to develop the BDOS
-emulation.
+## Quick start
 
-`Z80Asm` also builds and runs on Linux which allows larger files to be
-assembled and is much faster than running on 6502 at 1Mhz.
+1. Boot **ProDOS 8**. The included `zapple2.po` is a ProDOS disk image; depending on the version of the image, you may need to boot ProDOS from another disk or device first.
+2. Make the Zapple-II volume or directory your current **ProDOS prefix**, so `SOFTCARD65` can find `SOFTCARD80.BIN`.
+3. From **BASIC.SYSTEM**, start the system with:
 
-## Z80as
+   ```text
+   -SOFTCARD65
+   ```
 
-Udo Munk pointed me towards an alternative assembler, `Z80as`, which was
-originally developed by the Mark Williams Company and which ran on PDP-11
-under Coherent.  This assembler has the advantage of small size, and is also
-written in K&R C.
+4. `SOFTCARD65` loads the Z80 code and hands control to the SoftCard. You should see the BP/M startup message followed by a CP/M-style prompt:
 
-`Z80as` compiled 'out-of-the-box' under Aztec C on the Apple II, without any
-modification.
+   ```text
+   BP/M AUX TPA 44K
+   A>
+   ```
 
-This assembler generates Intel HEX files rather than BIN files, so I wrote a
-simple converter called `HEX2BIN`.
+5. Enter CCP commands or launch `.COM` programs by name. The `.COM` extension is optional when starting a program:
 
-`Z80as` also builds and runs on Linux which allows larger files to be
-assembled and is much faster than running on 6502 at 1Mhz.
+   ```text
+   A>DIR
+   A>MBASIC
+   A>WS
+   A>TP
+   ```
 
-## HEX2BIN
+6. To leave BP/M and return to the ProDOS program selector, enter `BYE` and confirm with `Y`:
 
-This is a quick-and-dirty conversion program for converting the HEX files
-generated by `Z80as` into BIN files that can be loaded on the Apple II using
-`BLOAD`.
+   ```text
+   A>BYE
+   Y/N? Y
+   ```
 
-HEX files can have 'holes' in them, and `HEX2BIN` takes care of zero-filling
-the holes.
+**Note:** BASIC.SYSTEM does not accept arbitrary CP/M command arguments after `-SOFTCARD65`. Start BP/M first, then enter commands at its `A>` prompt.
 
-# CP/M BDOS Emulation
+### Drives and files
 
-I have started work on a CP/M BDOS emulation layer.  The plan is to add
-support for all the CP/M 2.2 system calls, which should allow a CP/M program
-to run on the Softcard Z80 CPU and have all the system calls routed to the
-6502 and serviced using the Apple II ROM monitor routines and the ProDOS MLI.
+BP/M maps CP/M drive letters to directories on a **normal ProDOS volume**:
 
-I have most of the calls now and most of them have been tested to some degree
-and aren't *totally* broken.
+| CP/M drive | ProDOS directory | Example file |
+| --- | --- | --- |
+| `A:` | `A/` | `A/WS.COM` |
+| `B:` | `B/` | `B/TEST.TXT` |
+| `C:` | `C/` | `C/MBASIC.COM` |
 
-The directory calls do not return any size information in the FCB yet.  I will
-fix this in due course.  There are doubtless loads of other issues and bugs.
-See `SOFTCARD80.ASM` for TODO comments.
+The mapping supports drive letters `A:` through `P:` when the corresponding directories exist. Relative paths use the active ProDOS volume/prefix; if no prefix is set, BP/M looks for an appropriate volume containing a drive directory.
 
-- BDOS call 00h: `C_TERMCPM` - System reset
-- BDOS call 01h: `C_READ` - Console input
-- BDOS call 02h: `C_WRITE` - Console output
-- BDOS call 06h: `C_RAWIO` - Direct console I/O
-- BDOS call 07h: `GET_IOB` - Get IOBYTE
-- BDOS call 08h: `SET_IOB` - Get IOBYTE
-- BDOS call 09h: `C_WRITESTR` - Console write string
-- BDOS call 0Ah: `C_READSTR` - Read console string
-- BDOS call 0Bh: `C_STAT` - Console status
-- BDOS call 0Ch: `S_BDOSVER` - Return version number
-- BDOS call 0Dh: `DRV_ALLRESET` - Reset disks
-- BDOS call 0Eh: `DRV_SET` - Select disk
-- BDOS call 0FH: `F_OPEN` - Open file
-- BDOS call 10H: `F_CLOSE` - Close file
-- BDOS call 11H: `F_SFIRST` - Search for first match in directory
-- BDOS call 12H: `F_SNEXT` - Search for next match in directory
-- BDOS call 13H: `F_DELETE` - Delete file
-- BDOS call 14h: `F_READ` - Read file sequentially
-- BDOS call 15h: `F_WRITE` - Write file sequentially
-- BDOS call 16H: `F_MAKE` - Create (and open) file
-- BDOS call 17H: `F_RENAME` - Rename file
-- BDOS call 18H: `DRV_LOGVEC`- Return bitmap of logged-in drives
-- BDOS call 19H: `DRV_GET` - Return current drive
-- BDOS call 1AH: `F_DMAOFF` - Set DMA address
-- BDOS call 1BH: `DRV_ALLOCVEC` - Return address of allocation map
-- BDOS call 1CH: `DRV_SETRO` - Software write-protect current drive
-- BDOS call 1DH: `DRV_ROVEC` - Return bitmap of read-only drives
-- BDOS call 1FH: `DRV_DPB` - Get Drive Parameter Block address
-- BDOS call 20H: `F_USERNUM` - Get/set user number
-- BDOS call 21H: `F_READRAND` - Random access read record
-- BDOS call 22H: `F_WRITERAND` - Random access write record
-- BDOS call 23H: `F_SIZE` - Compute file size
-- BDOS call 24H: `F_RANDREC` - Update random access pointer
-- BDOS call 25H: `DRV_RESET` - Selectively reset disk drives
-- BDOS call 28H: `F_WRITEZF` - Random access write record zero-filled
+Files remain ordinary **ProDOS files**. BP/M exposes them through CP/M's 8.3 filename and 128-byte record conventions. Copy programs and their associated data/overlay files into the appropriate ProDOS directory. For example, WordStar uses `WS.COM` together with its `.OVR` files.
 
-There are two parts to the BDOS emulation:
+## CCP commands
 
-- `softcard80.asm` - This is the Z80 code to handle BDOS calls and send them
-  to the 6502 to be processed.  Written in Z80 assembler.  I am currently
-  assembling this using `Z80asm` under Linux (it got too large to assemble
-  with `Z80asm` under ProDOS on the Apple II.
-- `softcard65.asm` - This is the 6502 back end code.  Written in Merlin8 v2.58.
-  Loads at $0900 in 6502 space.  This is less than 100 bytes of code!
+BP/M includes its own small **Console Command Processor (CCP)**. Commands are case-insensitive.
 
-# Sample Programs
+| Command | Description | Example |
+| --- | --- | --- |
+| `DIR [filespec]` | List files on the current drive or matching a filename pattern; four columns | `DIR A:*.COM` |
+| `TYPE filespec` | Display a text file | `TYPE README.TXT` |
+| `ERA filespec` | Delete file(s); wildcard deletions require confirmation | `ERA *.BAK` |
+| `REN new=old` | Rename a file; destination name comes first | `REN NEW.TXT=OLD.TXT` |
+| `SAVE n filespec` | Save `n` pages of 256 bytes starting at `$0100`; see caveat below | `SAVE 2 SNAP.BIN` |
+| `A:` … `P:` | Change the default CP/M drive | `B:` |
+| `TERM SOROC` | Select Soroc IQ-120-style terminal emulation | `TERM SOROC` |
+| `TERM VIDEX` | Select Videx/VideoTerm-style terminal emulation | `TERM VIDEX` |
+| `BYE` | Exit BP/M to ProDOS after confirmation | `BYE` |
+| `program [args]` | Load and run a CP/M `.COM` file, passing its arguments through the CP/M command tail/FCBs | `WS TEST.TXT` |
 
-## BASIC/5
+`DIR` and `ERA` support CP/M-style `?` and `*` filename wildcards. Be careful with `ERA`, especially with wildcard patterns.
 
-This is one of the BASIC interpreters from the Processor Technologies SOL-20
-system.  The source code was provided as an example with z80as.
+`TERM` is a **built-in command**; a separate `TERM.COM` is no longer needed. The latest 6502 driver is set up to start in **Soroc mode** by default, although you can change modes whenever you like.
 
-I assembled this code under `Z80as` on Linux, since it defines too many
-symbols to assemble natively on the Apple II in the available memory.  I plan
-to take a look at the Aztec C build configuration to see if it is possible
-to find more memory for dynamic allocation (ie: `malloc()`).
+**`SAVE` caveat:** This is still the legacy CCP memory-save implementation. In AUX44, the CCP runs in **main RAM** while transient programs run in **auxiliary RAM**, so `SAVE` does **not** currently capture the memory image of the last AUX44 transient. Its existing limit is 128 pages (32 KiB).
 
-It is a 5K BASIC, so it is rather primitive.  However it does have a floating
-point package and trig functions.
+### Some things to try
 
-BASIC/5 only uses three system calls: `C_READ`, `C_WRITE` and `C_STATUS`.
-
-There is currently no support for loading or saving BASIC programs, but I may
-add this later.
-
-The manual for BASIC/5 is included in this GitHub repo, in PDF format.
-
-Interestingly, there was a bug in the original BASIC/5 source that caused it
-to initialize one byte of memory too many, blowing away the first byte of the
-BDOS implementation at the top of memory.  This has been patched by adding a
-`DEC HL` instuction at line 47 (shout-out to Qkumba for finding what the
-issue was!)
-
-BASIC/5 can now be started from the CCP prompt: `B:BASIC5`
-
-## Other CP/M 2.2 Programs that work (to some degree)
-
-- `DDT` debugger
-- `ZSID` v1.4 debugger
-- `DUMP` hex dump utility
-- `PIP` (can copy files using `PIP DEST.COM=SOURCE.COM`)
-- `STAT` (at least `STAT DSK` and `STAT filename` seem to work)
-- `NSWEEP` file manager 
-
-Probably lots of other small, simple programs should also work.
-
-## Programs known not to work yet
-
-Most of these are two big for my current TPA (around 32K).  I need to
-rearrange things to make a bigger TPA, and this will probably involve
-using auxiliary RAM.
-
-- `MBASIC` - I think it tries to patch the BIOS.
-- Wordstar - My eventual goal is to get this to work.
-- Turbo Pascal - My eventual goal is to get this to work.
-
-
-# How to Build the Code
-
-You don't really need to build the code unless you want to make changes.
-Pre-compiled versions of everything are included in this repository.
-
-The 800K ProDOS disk image `zapple2.po` has all the files you should need.
-
-## Building `Z80asm` using Aztec C
-
-- Two scripts are provided to do the build: `compile` and `link`
-- Run the script `compile`.  This takes a long time!
-- Run the script `link`.  This just takes a couple of minutes.
-- `z80asm` executable is created.
-
-Note that `z80asm` can only be run from the Aztec C shell.  It should be
-possible to build it as a normal ProDOS application, but I have not done this
-yet.
- 
-## Building `Z80as` using Aztec C
-
-I didn't provide a script for this.  Just build all the C files in Aztec C
-as follows:
-
-```
-cc as0.c
-cc as1.c
-cc as2.c
-cc as3.c
-cc as4.c
-cc as5.c
-cc as6.c
-ln -o z80as as0.o as1.o as2.o as3.0 as4.0 as5.0 as6.0 -lc
-```
-## Building `HEX2BIN` using Aztec C
-
-- You can just run the script `makeh2b` in Aztec C
-- This just does the following:
-
-```
-cc hex2bin.c
-ln hex2bin.o -lc
+```text
+A>DIR
+A>DIR B:
+A>DIR A:*.COM
+A>TYPE B:NOTES.TXT
+A>B:
+B>DIR
+B>A:
+A>REN NEW.TXT=OLD.TXT
+A>TERM VIDEX
+A>TERM SOROC
+A>WS TEST.TXT
 ```
 
-## Building `SOFTCARD65` using Merlin8 2.58
+Utilities such as `PIP`, `STAT`, `ASM`, `DDT`, and `ZSID` are **external CP/M programs**, not built-in CCP commands. They must be present as `.COM` files on a mapped drive.
 
-- Start Merlin8 (v2.58)
-- Hit 'D' for disk commands, enter `PREFIX /ZAPPLE2`
-- Hit 'L' for load, enter `SOFTCARD65` and hit return.
-- Hit 'E' for edit.
-- Type `ASM` to assemble.
-- Type 'Q' to go to the main menu.
-- Hit 'O' to save the object file `SOFTCARD65` to disk, and hit return.
-- Hit 'Q' to quit to ProDOS.
+## CP/M programs
 
-## Building `SOFTCARD80.BIN` using `Z80asm`
+The following applications and utilities are known to work, or have been used in the course of BP/M development. The exact version and terminal configuration can matter.
 
-- In the Aztec C shell, enter the following commands:
-- `cd /zapple2`
-- `z80asm softcard80.asm` 
+| Program | Purpose / notes |
+| --- | --- |
+| **MBASIC** | Microsoft BASIC interpreter; runs with BP/M's Apple II terminal support. |
+| **ASM** | Digital Research's CP/M 8080 assembler. |
+| **ZSID** | Z80-oriented symbolic debugger. |
+| **DDT** | Digital Research's CP/M debugger. |
+| **TE** | Full-screen text editor; works with the terminal emulation. |
+| **WordStar 3.3** | Full-screen word processor; a generic CP/M release works with Soroc terminal support. Other machine-specific installations may need adjustment. |
+| **Turbo Pascal 3** | Integrated Pascal editor/compiler; tested compiling to memory and generating standalone `.COM` executables that run from the CCP. |
+| **PIP** | CP/M file copier; tested copying entire directories, including large files. |
+| **STAT** | Drive/file status utility. |
+| **DUMP** | Hex dump utility. |
+| **NSWEEP** | Interactive file-management utility. |
+| **BASIC/5** | Processor Technology SOL-20 BASIC/5; example code is included in this repository. |
 
-*Update:* The code has grown too large to build natively on the Apple II. I
-have been using `z80asm` under Linux instead.
+For example, Turbo Pascal 3 can compile a simple Pascal program to `TEST.COM`. The resulting file can then be run directly:
 
-# How to Run The Code
+```text
+A>TEST
+Hello World
+A>
+```
 
-The code assumes a Z80 Softcard (or clone) in slot 4.  This can be changed
-by modifying the `SOFTCARD` address in `SOFTCARD65.S` and `SOFTCARD80.ASM`
-if your card is in a different slot.
+WordStar and Turbo Pascal use full-screen control sequences, so a suitable terminal configuration is important. **Soroc** is the recommended starting point for the tested versions.
 
-To run the code, use `zapple2.po`, which is a ready made 800K disk image.
-You need to boot ProDOS from some other device, because this image is not
-bootable (I should fix that!)
+## How BP/M works
 
-Run `SOFTCARD65` to start everything.  This will relocate itself to high
-memory and then load the Z80 code `SOFTCARD80`.  The system will then
-start the CCP and show the familiar `A>` prompt.
+The implementation has two cooperating pieces:
 
-There are three CP/M 'drives' (actually ProDOS subdirectories) on the diskette
-image: A, B and C.
+- **`SOFTCARD65`** is the 6502-side ProDOS SYS loader and backend. It loads the Z80 image, switches between the 6502 and Z80 as required, performs ProDOS MLI operations, and implements the direct 80-column console driver.
+- **`SOFTCARD80.BIN`** is the Z80-side operating system: CP/M-compatible BDOS/BIOS services, a small CCP, ProDOS file translation, and auxiliary-memory program loading.
 
-The following commands are implemented:
+In the AUX44 configuration, transient `.COM` programs execute in auxiliary memory at `$0100–$AFFF`. Most BP/M resident code stays in main memory. A small **Language Card gateway** switches between the transient's auxiliary-memory context and the resident BDOS/BIOS code, including marshalling file control blocks and DMA buffers across memory banks.
 
-- `DIR`
-- `TYPE`
-- `ERA`
-- `REN`
-- Changing drives using `A:`, `B:`, etc.
-- Launching a `.COM` file (just type the name and any arguments)
+A typical file operation follows this path:
 
-Wildcards using `*` are not yet supported.
+```text
+CP/M application on the Z80 (AUX RAM)
+          |
+          v
+       CP/M BDOS
+          |
+          v
+ AUX / MAIN memory gateway
+          |
+          v
+ 6502 backend -> ProDOS MLI -> ProDOS file
+```
 
-`REN`, `USER` and `SAVE` built-in commands are not supported yet either.
+This approach avoids maintaining a separate CP/M disk filesystem and lets the Z80 programs share ordinary ProDOS storage. There is some overhead: CP/M's 128-byte record operations and cross-processor handoffs can make file I/O slower than native ProDOS software.
 
-## Some things to try
+## Building from source
 
-- `DIR` - show files on current drive
-- `DIR A:` - show files on another drive
-- `DIR ABC?????.TXT` - show matching files using `?` wildcards
-- `TYPE TEST.TXT` - view a text file
-- `A:PIP B:MY.TXT=A:TEST.TXT` copy `TEST.TXT` from A: to B:, renaming it as `MY.TXT`
-- `ERA MY.TXT` erase file `MY.TXT`
-- `REN B:NEWNAME.TXT=OLDNAME.TXT`
-- `STAT DRV` - show info on the virtual drive
-- `DDT MYPROG.COM` - debug `MYPROG.COM` using DDT (8800 debugger)
-- `ZSID MYPROG.COM` - debug `MYPROG.COM` using ZSID (Z80 debugger)
-- `DUMP MYPROG.COM` - hex dump of file
-- `NSWEEP` - simple interactive file manager
-- `BASIC5` - Processor Technology SOL-20 BASIC/5
+Prebuilt binaries and the disk image are provided in the repository. **Ensure your disk image contains the current AUX44 binaries** if you want the 44 KB configuration; older images/builds may contain an earlier version of BP/M.
 
+The main development sources are:
+
+- `SOFTCARD80.ASM` — Z80 BDOS, BIOS, CCP and auxiliary-memory support.
+- `SOFTCARD65.S` — 6502 ProDOS loader and terminal/backend driver.
+- `z80asm/` — Udo Munk's Z80 assembler (also builds on Linux).
+- `z80as/` — alternative Mark Williams Z80 cross-assembler sources/tools.
+- `zapple2.po` — ProDOS disk image.
+
+### Z80 side
+
+The Z80 code is assembled using **Udo Munk's Z80asm**, version 1.1. Under Linux, from the source directory, the basic invocation is:
+
+```sh
+z80asm softcard80.asm
+```
+
+Place the resulting Z80 binary on the ProDOS volume as **`SOFTCARD80.BIN`** (with the appropriate ProDOS binary file type/load address). The SoftCard configuration assumes that image is loaded into the Apple II's memory at `$1000`.
+
+Be aware that this older assembler treats only the first **eight characters of symbol names** as significant. The Z80 sources therefore avoid long, colliding labels.
+
+### 6502 side
+
+The 6502 code is assembled with **Merlin 8** (the original project uses Merlin 8 v2.58). The resulting **SYS** program is `SOFTCARD65`. Preserve its ProDOS file type when moving it to a disk image; it must be launchable by BASIC.SYSTEM's `-SOFTCARD65` command.
+
+The 6502 and Z80 sources both assume **SoftCard slot 4**. A different slot requires corresponding changes to the SoftCard address constants, and an appropriate rebuild.
+
+The repository also contains the older Z80 assembler toolchain and the Processor Technology BASIC/5 example. See their source directories for further detail.
+
+## Status and limitations
+
+BP/M is a working **CP/M 2.2-compatible environment**, not a byte-for-byte reproduction of Digital Research CP/M. In particular:
+
+- There is **no conventional CP/M disk image or sector-level disk BIOS**; BDOS file calls are translated to ProDOS operations. Programs that bypass BDOS to access disk sectors may not work.
+- Disk metadata, allocation vectors, and file attributes are synthetic approximations where CP/M and ProDOS differ.
+- File-name rules and some less-common BDOS/BIOS operations are not fully implemented.
+- File I/O works, but it can be **slow**, especially for programs that make many small record transfers.
+- Terminal compatibility depends on the installed application's expected control sequences.
+- The 44 KB memory configuration requires auxiliary RAM and is distinct from earlier 32 KB releases.
+
+Successful application startup is not a substitute for checking important output files. Keep backups when testing programs that make extensive or random-access changes to data.
+
+## Background
+
+Zapple-II started as an experiment in running Z80 code under ProDOS, with 6502-hosted assemblers and a small CP/M BDOS compatibility layer. Over time it has grown into **BP/M**, a usable ProDOS-backed CP/M environment with its own CCP, auxiliary-memory TPA, terminal drivers, and support for substantial CP/M applications.
+
+**Source:** [github.com/bobbimanners/Zapple-II](https://github.com/bobbimanners/Zapple-II)  
+**License:** [BSD 2-Clause](LICENSE)
