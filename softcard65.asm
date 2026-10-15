@@ -310,7 +310,7 @@ HANDLR LDA CMD
 * Two output personalities share the same screen primitives:
 *   Videx VideoTerm: $1E, column+$20, row+$20
 *   Soroc IQ-120:    ESC '=', row+$20, column+$20
-* VMODE 0=Videx (default), 1=Soroc; set using B80C vector.
+* VMODE 0=Videx, 1=Soroc (default); set using B80C vector.
 * Cursor address parameters are consumed even when malformed.
 * Cooked CR implies newline (existing CCP convention); cooked CR+LF
 * advances once. Raw BIOS CR only returns to column 0; LF goes down.
@@ -318,8 +318,9 @@ HANDLR LDA CMD
 ***************************************************
 
 VINIT
+ LDA #1
+ STA VMODE ; Default to Soroc
  LDA #0
- STA VMODE ; Default to Videx
  STA VSTATE ; Parser idle
  STA VCRP ; No pending CR/LF pair
  STA $C000 ; 80STORE off
@@ -791,7 +792,7 @@ VCOL DB 0
 VROW DB 0
 VTCNT DB 0
 VUNDER DB 0
-VMODE DB 0 ; 0 Videx, 1 Soroc
+VMODE DB 1 ; 0 Videx, 1 Soroc (default)
 VSTATE DB 0 ; 0 idle, 1 ESC, 2 coord1, 3 coord2
 VCOORD DB 0
 VCRP DB 0 ; Suppress second half of CR/LF pair
