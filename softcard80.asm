@@ -180,6 +180,8 @@ B_DRV_RESET		EQU		25H			; Selectively reset disk drives
             ORG     07000H
 
 AXBDOS      LD      A,C
+            CP      0F0H          ; BP/M private: set terminal (E=0/1)
+            JP      Z,AXTMODE
             OR      A
             JP      Z,AUXBDOS0
             CP      1
@@ -262,6 +264,33 @@ AXBAD       LD      A,2
             LD      A,0FFH
             LD      L,A
             RET
+; TERM.COM must not switch to the 6502 directly from AUX RAM:
+; the 6502 console lives at MAIN $B800. This dispatcher is called by
+; LCGATE with MAIN RAM selected, and the original LC/stack are restored
+; automatically on return. Private BDOS $F0: E=0 Videx / E=1 Soroc.
+AXTMODE     LD      A,E
+            CP      2
+            JR      NC,AXTMERR
+            LD      (AREG),A
+            LD      HL,0B80CH     ; 6502 VSETMODE public entry
+            LD      (ADDR),HL
+            LD      A,1
+            LD      (CMD),A
+            LD      (SOFTCARD),A  ; invoke 6502 with MAIN selected
+            ; VSETMODE updates the Microsoft BASIC table in MAIN $0396.
+            ; BASIC now executes in AUX and reads AUX $0396 instead.
+            ; Mirror its nine bytes (Z80 $F396-$F39E) to AUX too.
+            LD      HL,0F396H
+            LD      DE,0F396H
+            LD      BC,9
+            CALL    AXM2A
+            XOR     A
+            LD      L,A
+            RET
+AXTMERR     LD      A,0FFH
+            LD      L,A
+            RET
+
 ; Reject FCBs extending past the AUX RAM $AFFF boundary.
 AXCKFCB     LD      A,D
             CP      0AFH
@@ -4143,6 +4172,14 @@ AUXLDONE   LD      DE,PATHBUF2
             LD      BC,3
             LDIR               ; patch BDOS JP; preserve IOBYTE/CURDRV
             LD      (WRMAIN),A
+
+            ; The Microsoft Apple CP/M BASIC terminal table also lives
+            ; in $0396-$039E, which RAMRD maps to AUX during execution.
+            ; Keep it in sync with the MAIN copy from VINIT/VSETMODE.
+            LD      HL,0F396H
+            LD      DE,0F396H
+            LD      BC,9
+            CALL    AXM2A
 
             LD      A,(CURDRV)
             PUSH    AF
