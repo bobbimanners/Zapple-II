@@ -663,6 +663,68 @@ AXM2A       XOR     A
             LD      (WRMAIN),A
             RET
 
+; CCP's built-in command table and terminal selector live in the unused
+; MAIN-memory TPA.  $7600-$77FF is free of AXBDOS ($7000-$73xx)
+; and the permanent AUX bridge staging region ($7800 onward).
+            ORG     07600H
+BITABLE    DEFM    'DIR  '
+           DEFB    081H
+           DEFW    DIRECT
+           DEFM    'ERA  '
+           DEFB    1
+           DEFW    ERASE
+           DEFM    'REN  '
+           DEFB    1
+           DEFW    RENAME
+           DEFM    'TYPE '
+           DEFB    1
+           DEFW    BITYPE
+           DEFM    'SAVE '
+           DEFB    2
+           DEFW    BISAVE
+           DEFM    'BYE  '
+           DEFB    0
+           DEFW    CCPBYE
+           DEFM    'TERM '
+           DEFB    1
+           DEFW    CCPTERM
+
+; Native CCP terminal selector.  This code runs with MAIN RAM visible,
+; unlike the old AUX .COM, so it calls the 6502 VSETMODE vector directly.
+; The next AUXRUN already mirrors MAIN $0396-$039E to AUX for MBASIC.
+CCPTERM    LD      HL,FILEBUF+2  ; first argument, after leading space
+           LD      DE,TMVIDEX
+           CALL    TMCHK
+           JR      Z,TMVID
+           LD      HL,FILEBUF+2
+           LD      DE,TMSOROC
+           CALL    TMCHK
+           JP      NZ,CCPBAD      ; reject bad / abbreviated mode names
+           LD      A,1           ; Soroc
+           JR      TMSET
+TMVID      XOR     A             ; Videx
+TMSET      LD      (AREG),A
+           LD      HL,0B80CH     ; 6502 VSETMODE, already in MAIN
+           LD      (ADDR),HL
+           LD      A,1
+           LD      (CMD),A
+           LD      (SOFTCARD),A
+           RET
+; Check five letters and the delimiting space, against a literal.
+; The CCP parser guarantees a trailing space after the argument.
+TMCHK      LD      B,5
+TMCHL      LD      A,(DE)
+           CP      (HL)
+           RET     NZ
+           INC     DE
+           INC     HL
+           DJNZ    TMCHL
+           LD      A,(HL)
+           CP      ' '
+           RET
+TMVIDEX    DEFM    'VIDEX'
+TMSOROC    DEFM    'SOROC'
+
 ; Permanent scratch: main TPA is unused by auxiliary transients.
             ORG     07800H
 AXDMAP      DEFW    0080H
@@ -2996,6 +3058,7 @@ PHOUT		LD		E,A
 ; - SAVE         - Save 256-byte pages of TPA (SAVE 7 FOO.COM)
 ; - TYPE         - Show text file on console (TYPE TEST.TXT)
 ; - BYE          - Confirm and exit to the ProDOS selector
+; - TERM VIDEX/SOROC - Set terminal personality (no .COM needed)
 ; - FILENAME.COM - Load and run FILENAME.COM at 0100H
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -3251,26 +3314,9 @@ EPPFULL    POP     AF
            RET
 
 ; Built-ins are matched against the first five bytes of the parsed
-; command FCB. Each fixed-size entry is name[5], nargs[1], handler[2].
+; command FCB. Table at MAIN $7600: name[5], nargs[1], handler[2].
 ; Bit 7 of nargs permits zero arguments as well as one (DIR).
-BITABLE    DEFM    'DIR  '
-           DEFB    081H
-           DEFW    DIRECT
-           DEFM    'ERA  '
-           DEFB    1
-           DEFW    ERASE
-           DEFM    'REN  '
-           DEFB    1
-           DEFW    RENAME
-           DEFM    'TYPE '
-           DEFB    1
-           DEFW    BITYPE
-           DEFM    'SAVE '
-           DEFB    2
-           DEFW    BISAVE
-           DEFM    'BYE  '
-           DEFB    0
-           DEFW    CCPBYE
+; BITABLE now resides at MAIN $7600, with CCPTERM and its strings.
 
 ; The CCP parser normalizes arguments as " arg1 arg2 ", always
 ; separating words by ONE space and retaining the leading/trailing space.
@@ -3327,7 +3373,7 @@ BISAVE     LD      HL,FCB2NAM
 ; Single table-driven dispatcher instead of six repeated string
 ; comparisons. A handler is entered with a synthetic return address.
 BUILTIN    LD      HL,BITABLE
-           LD      C,6
+           LD      C,7
 BISCAN     LD      DE,PATHBUF2+1
            LD      B,5
 BICMP      LD      A,(DE)
@@ -4075,7 +4121,7 @@ SEARCH_EOF	LD		DE,DFCB
 ; LC entry points are absolute RUNTIME addresses, not source image labels.
 LCBASE      EQU     0B000H
 LCBACK      EQU     05000H  ; MAIN 4 KiB snapshot of LC bank2
-LC_BDOS     EQU     LCBASE+033H
+LC_BDOS     EQU     LCBASE      ; BDOS below BIOS; safe TPA stack top
 SW80OFF     EQU     0E000H
 RDMAIN      EQU     0E002H
 RDAUX       EQU     0E003H
@@ -4216,8 +4262,10 @@ AUXBDOS0    LD      A,1
             XOR     A
             LD      L,A
             RET
-ABDVER   LD      A,022H       ; CP/M 2.2
-            LD      L,A
+; CP/M BDOS 12 returns HL=0022h and B=H=00h, A=L=22h.
+ABDVER      LD      HL,0022H
+            LD      A,L
+            LD      B,H
             RET
 AUXBDOS2    PUSH    DE
             CALL    C_WRITE
@@ -4226,7 +4274,13 @@ AUXBDOS2    PUSH    DE
             LD      L,A
             RET
 AUXBDOS6    JP      C_RAWIO
-ABDSTAT   JP      C_STAT
+; CP/M BDOS 11 must report 00h or FFh, not the raw 6502 00h/01h.
+ABDSTAT     CALL    C_STAT
+            OR      A
+            RET     Z
+            LD      A,0FFH
+            LD      L,A
+            RET
 AUXBDOS9    PUSH    BC
             PUSH    DE
             PUSH    HL
@@ -4247,18 +4301,19 @@ AB9DONE     POP     HL
             LD      L,A
             RET
 
-; Auxiliary page zero: WBOOT -> LC B003, BDOS -> LC B033.
+; Auxiliary page zero: WBOOT -> LC B006, BDOS -> LC B000.
 ; Bytes 0003/0004 are *not* installed: keep main IOBYTE/CURDRV.
 ; The remaining page-zero bytes are cloned from MAIN by AUXRUNCOM.
-AUXPZERO DEFB    0C3H,003H,0B0H,0,0,0C3H,033H,0B0H
+AUXPZERO DEFB    0C3H,006H,0B0H,0,0,0C3H,000H,0B0H
 AUXDEST      DEFW    0100H
 AUXEXCD DEFB    0
 
 ; Image copied into LC *bank 2* at B000. Only the first page is used.
 ; The BIOS slots are retained in the standard 17 x 3 byte sequence.
 LCIMG
-            JP      LCNOP      ; BOOT
-            JP      LCFIN    ; WBOOT; restores MAIN CCP
+            JP      LCGATE    ; B000: public BDOS entry, safe stack top
+            JP      LCNOP      ; B003: BIOS BOOT
+            JP      LCFIN     ; B006: BIOS WBOOT; restores MAIN CCP
             JP      LCBCST     ; CONST: A=FF if key waiting
             JP      LCBCIN     ; CONIN: un-cooked, A=7-bit ASCII
             JP      LCBCOUT    ; CONOUT: character in C
@@ -4274,7 +4329,6 @@ LCIMG
             JP      LCBERR     ; WRITE: error
             JP      LCBZERO    ; LISTST: printer not ready
             JP      LCBTRAN    ; SECTRAN: identity translation
-            JP      LCGATE      ; B033: public BDOS entry
 LIENT
             LD      (LCMSP),SP
             LD      SP,0B000H   ; CP/M stack at top of AUX TPA
