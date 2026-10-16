@@ -1393,9 +1393,10 @@ BDOSWARM	DI					; Make sure interrupts are off
 			LD		(FRN3),A		; ...
 			LD		(FRN4),A		; Reserved unused slot (legacy)
 			LD		HL,FILEBUF		; Initialize DMAADDR to 0080H
-			LD		(DMAADDR),HL	; ...
-			LD		HL,0000H		; Initialize LOGVEC & ROVEC to 0000H
+			LD		(DMAADDR),HL		; ...
+			LD		HL,0001H		; Drive A: logged in initially
 			LD		(LOGVEC),HL		; ...
+			LD		HL,0000H		; No drives write protected
 			LD		(ROVEC),HL		; ...
 			JP		CCP				; Start the CCP
 
@@ -1701,6 +1702,23 @@ DRV_SET		LD		A,E				; Prepare to compare disk number
 			AND		0F0H			; Mask out old drive number
 			OR		B				; Replace with new drive number
 			LD		(CURDRV),A		; Store the requested drive number
+
+			; Mark this drive in the 16-bit BDOS login vector.
+			; B is drive number 0..15 (A:..P:).
+			LD		HL,0001H		; Bit 0 means drive A:
+			LD		A,B
+			OR		A
+			JR		Z,DSMARK
+DSMSHIFT	ADD		HL,HL			; Shift mask left one drive
+			DEC		A
+			JR		NZ,DSMSHIFT
+DSMARK		LD		A,(LOGVEC)
+			OR		L
+			LD		(LOGVEC),A
+			LD		A,(LOGVEC+1)
+			OR		H
+			LD		(LOGVEC+1),A
+
 			XOR		A				; A=0: Return code meaning success
 			JR		DSRET			; 
 DSERR		LD		A,0FFH			; Return code for error
