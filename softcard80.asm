@@ -24,12 +24,10 @@
 ;       closing/reopening every time.
 ; TODO: Sector-level BIOS calls.
 ; TODO: Implement missing BDOS system calls:
-;        - F_ATTRIB (needs to support wildcards, leave FCB at DMAADDR)
 ;        - RS232 (A_READ, A_WRITE)
 ;        - Printer (LWRITE)
 ; TODO: IOBYTE doesn't do anything
 ; TODO: User number doesn't do anything
-; TODO: Software R/O disk setting is not respected
 ; Other Random TODO comments in the code
 ; 
 
@@ -212,6 +210,8 @@ AXBDOS      LD      A,C
             JP      Z,AXDPB
             CP      37
             JP      Z,AXDRST
+            CP      30
+            JP      Z,AXFSEL      ; BDOS SET FILE ATTRIBUTES needs AUX FCB
             CP      0F1H
             JP      Z,AXBICON
             CP      0F2H
@@ -583,6 +583,8 @@ AXNOTDEL    LD      A,(LCB1RO)
             JP      Z,AXMAKE
             CP      23
             JP      Z,AXREN
+            CP      30
+            JP      Z,AXATTR
             CP      33
             JP      Z,AXRRD
             CP      34
@@ -609,6 +611,8 @@ AXWR        CALL    F_WRITE
 AXMAKE      CALL    F_MAKE
             JR      AXFEND
 AXREN       CALL    F_RENAME
+            JR      AXFEND
+AXATTR      CALL    F_ATTRIB
             JR      AXFEND
 AXRRD       CALL    F_READRAND
             JR      AXFEND
@@ -877,6 +881,57 @@ TMCHL      LD      A,(DE)
            RET
 TMVIDEX    DEFM    'VIDEX'
 TMSOROC    DEFM    'SOROC'
+
+; BDOS 30: Set CP/M file R/O attribute in ProDOS access byte.
+; STAT enumerates wildcards and passes each resolved FCB individually.
+; Leave FCB and DMA unchanged, preserve file type and modification date.
+F_ATTRIB	CALL	DCHKRO
+			JP		NZ,RODENY
+			PUSH	DE
+			POP		IX
+			LD		A,(IX+09H)	; first extension byte's high bit
+			AND		080H
+			LD		(ATTR_RO),A
+			LD		HL,1
+			ADD		HL,DE
+			LD		B,11
+FA_VALID	LD		A,(HL)
+			AND		07FH
+			CP		'?'
+			JR		Z,FA_ERROR
+			INC		HL
+			DJNZ	FA_VALID
+			LD		IX,PATHBUF
+			CALL	FCB2PATH
+			LD		HL,GFIMLI
+			CALL	PRODOS		; GET_FILE_INFO (param count 10)
+			OR		A
+			JR		NZ,FA_ERROR
+			LD		A,(ATTR_RO)
+			OR		A
+			LD		A,(GFIMLIAC)
+			JR		Z,FA_RW
+			AND		03DH		; disable destroy/rename/write ($C2)
+			JR		FA_CHG
+FA_RW		OR		0C2H		; enable destroy/rename/write
+FA_CHG	LD		(GFIMLIAC),A
+			LD		A,7
+			LD		(GFIMLIPL),A
+			LD		HL,SFIMLI
+			CALL	PRODOS		; SET_FILE_INFO reuses parameter block
+			PUSH	AF
+			LD		A,10
+			LD		(GFIMLIPL),A	; restore for next GET
+			POP		AF
+			OR		A
+			JR		NZ,FA_ERROR
+			LD		L,A
+			RET
+FA_ERROR	LD		A,0FFH
+			LD		L,A
+			RET
+ATTR_RO		DEFB	0
+
 
 ; Permanent scratch: main TPA is unused by auxiliary transients.
             ORG     07800H
@@ -1481,7 +1536,7 @@ BDOSVEC		DEFW	C_TERMCPM		; C=00H
 			DEFW	DRV_AVEC		; C=1BH
 			DEFW	DRV_SETRO		; C=1CH
 			DEFW	DRV_ROVEC		; C=1DH
-			DEFW	UNIMP			; C=1EH  (F_ATTRIB)
+			DEFW	F_ATTRIB		; C=1EH  (F_ATTRIB)
 			DEFW	DRV_DPB			; C=1FH
 			DEFW	F_USERNUM		; C=20H
 			DEFW	F_READRAND		; C=21H
@@ -1682,7 +1737,9 @@ S_BDOSVER	LD		B,0				; System is 8080 CP/M
 
 ; Reset disks
 ; Makes A: drive the default
-DRV_ALLRST	LD		A,(CURDRV)		; Contains both user & current drive
+DRV_ALLRST	LD		HL,0000H		; Reset clears the software R/O vector
+			LD		(ROVEC),HL
+			LD		A,(CURDRV)		; Contains both user & current drive
 			AND		0F0H			; Set drive to 0, meaning A:
 			LD		(CURDRV),A		; Store in CURDRV
 			LD		BC,FILEBUF		; FILEBUF is at 0080H
@@ -1956,7 +2013,9 @@ FSNS2		JP		SEARCH_EOF		; Release directory FRN on end-of-search
 ; Returns error codes in A and L:
 ; For an exact name, destroy directly; don't clobber the caller's
 ; F_SFIRST/F_SNEXT enumeration.  Preserve old logic for wildcards.
-F_DELETE	LD		H,D
+F_DELETE	CALL	DCHKRO
+			JP		NZ,RODENY
+			LD		H,D
 			LD		L,E
 			INC		HL				; Skip FCB drive byte
 			LD		B,11			; 8 + 3 filename characters
@@ -2137,7 +2196,9 @@ FRERR		LD		A,0FFH			; All other errors are 0FFH
 ; DE is the address of the FCB describing the file to which to write
 ; Returns error codes in A and L:
 ; 0 OK, 1 dir full, 2 disk full, 9 invalid FCB, 10 media changed, 0FFH h/w error
-F_WRITE		PUSH	DE				; Copy pointer to FCB ...
+F_WRITE		CALL	DCHKRO
+			JP		NZ,RODENY
+			PUSH	DE				; Copy pointer to FCB ...
 			POP		IX				; ... into IX
 			CALL	IO_BEGIN		; Reopen logical CP/M FCB if needed
 			OR		A
@@ -2205,7 +2266,9 @@ FWERR		LD		A,0FFH			; All other errors are 0FFH
 ; DE is the address of the FCB describing the file to create
 ; Returns error codes in A and L:
 ; 0 for success, 0FFH if file could not be created
-F_MAKE		LD		IX,PATHBUF		; Destination buffer
+F_MAKE		CALL	DCHKRO
+			JP		NZ,RODENY
+			LD		IX,PATHBUF		; Destination buffer
 			CALL	FCB2PATH		; Populate PATHLEN and PATH
 			LD		HL,FMMLI		; Pass address of 6502 JSR instruction
 			CALL	PRODOS			; Invoke ProDOS MLI
@@ -2249,7 +2312,16 @@ FMOPENMSG	DEFM	'Zapple-II OPEN-after-CREATE error: '
 ; Returns error codes in A and L - 0 for success, 0FFH for file not found
 ; ProDOS RENAME checks that the old file exists.  Doing F_SFIRST here
 ; would clobber a wildcard enumeration in progress (notably PIP).
-F_RENAME	LD		IX,PATHBUF		; Destination buffer 1
+F_RENAME	CALL	DCHKRO		; Check source FCB drive
+			JP		NZ,RODENY
+			PUSH	DE
+			LD		HL,16
+			ADD		HL,DE
+			EX		DE,HL
+			CALL	DCHKRO		; Check destination FCB drive
+			POP		DE
+			JP		NZ,RODENY
+			LD		IX,PATHBUF		; Destination buffer 1
 			CALL	FCB2PATH		; Populate PATHLEN and PATH for first file
 			LD		IX,PATHBUF2		; Destination buffer 2
 			LD		H,D				; DE -> HL for addition
@@ -2643,28 +2715,59 @@ V_FOUND     LD      A,(IX+0)
             XOR     A
             RET
 
-; Software write-protect current disk
-DRV_SETRO	LD		B,80H			; Set MS-bit in B, will rotate this below
-			LD		A,(CURDRV)		; Current drive (0 A:, 1 B: ...)
-			AND		0FH				; Mask out user number
-			INC		A				; It is easier if A: is 1, B is 2 etc.
-			CP		9				; See if it in LS-byte or MS-byte of ROVEC
-			JR		NC,DSRMSB		; If A>8 then drive bit in in MS-byte
-DSRL1		RL		B				; 
-			DEC		A				;
-			JR		NZ,DSRL1		;
-			LD		A,(ROVEC)		; Fetch the LS-byte of ROVEC
-			OR		B				; Set the bit using OR
-			LD		(ROVEC),A		; Store LS-byte back to ROVEC
-			RET						; We're done
-DSRMSB		LD		C,8				; Subtract 8 from the drive number
-			SUB		C				; A = A-8
-DSRL2		RL		B				;
-			DEC		A				;
-			JR		NZ,DSRL2		;
-			LD		A,(ROVEC+1)		; Fetch the MS-byte of ROVEC
-			OR		B				; Set the bit using OR
-			LD		(ROVEC+1),A		; Store MS-byte back to ROVEC
+; Software R/O for current drive: BDOS 28, drive 0 -> bit 0, etc.
+DRV_SETRO	LD		A,(CURDRV)
+			AND		0FH
+			LD		B,A
+			LD		HL,0001H
+			LD		A,B
+			OR		A
+			JR		Z,DSR_SET
+DSR_LOOP	ADD		HL,HL
+			DEC		A
+			JR		NZ,DSR_LOOP
+DSR_SET		LD		A,(ROVEC)
+			OR		L
+			LD		(ROVEC),A
+			LD		A,(ROVEC+1)
+			OR		H
+			LD		(ROVEC+1),A
+			XOR		A
+			LD		L,A
+			RET
+
+; Return Z iff the FCB's effective drive is writable. Preserve DE, HL, BC.
+; FCB drive=0 means CURDRV; 1..16 mean explicitly A:..P:.
+DCHKRO	PUSH	BC
+			PUSH	HL
+			LD		A,(DE)
+			OR		A
+			JR		NZ,DCR_EXPL
+			LD		A,(CURDRV)
+			AND		0FH
+			JR		DCR_IDX
+DCR_EXPL	DEC		A
+DCR_IDX	CP		16
+			JR		NC,DCR_BAD
+			LD		B,A
+			LD		HL,(ROVEC)
+			LD		A,B
+			OR		A
+			JR		Z,DCR_BIT
+DCR_SHF	SRL		H
+			RR		L
+			DEC		A
+			JR		NZ,DCR_SHF
+DCR_BIT		LD		A,L
+			AND		01H
+			JR		DCR_DONE
+DCR_BAD		LD		A,1
+			OR		A
+DCR_DONE	POP		HL
+			POP		BC
+			RET
+RODENY	LD		A,0FFH
+			LD		L,A
 			RET
 
 ; Return bitmap of read-only drives in HL
@@ -2762,7 +2865,9 @@ FRRERR		LD		A,0FFH			; All other errors are 0FFH
 ; Return code in A and L:
 ; 0 success, 1 reading unwritten data, 4 reading unwritten extent,
 ; 6 rec number out of range, 9 invalid FCB, 10 media changed, 0FFH h/w err
-F_WRITERAND	PUSH	DE				; Copy pointer to FCB ...
+F_WRITERAND	CALL	DCHKRO
+			JP		NZ,RODENY
+			PUSH	DE				; Copy pointer to FCB ...
 			POP		IX				; ...
 			CALL	IO_BEGIN		; Reopen logical CP/M FCB if needed
 			OR		A
@@ -2942,12 +3047,20 @@ F_RANDREC	PUSH	DE				; Copy pointer to FCB ...
 ; DE contains bitmap of drives to reset (bit 0 of E if A:, bit 7 of D is P:)
 ; Returns A=00H if okay, A=FFH if error
 ; Resetting means removing the read-only status
-DRV_RESET	LD		A,(ROVEC)		; Do the LSB ...
-			XOR		E				; ... with E
-			LD		(ROVEC),A		;
-			LD		A,(ROVEC+1)		; Then the MSB ...
-			XOR		D				; ... with D
-			LD		(ROVEC+1),A		;
+DRV_RESET	LD		A,E
+			CPL
+			LD		B,A
+			LD		A,(ROVEC)
+			AND		B
+			LD		(ROVEC),A
+			LD		A,D
+			CPL
+			LD		B,A
+			LD		A,(ROVEC+1)
+			AND		B
+			LD		(ROVEC+1),A
+			XOR		A
+			LD		L,A
 			RET
 
 ; Make a ProDOS MLI call
@@ -2989,6 +3102,7 @@ F2PS1		ADD		A,'A'-1			; Convert to drive letter
 			INC		HL				; HL points to filename in FCB
 
 			LD		A,(HL)			; First character of filename
+			AND		07FH
 			CP		' '				; Is it space? ie: no file specified
 			JP		Z,F2PS7			; Don't handle filename or extension
 
@@ -2997,6 +3111,7 @@ F2PL1		; Handle the filename - up to 8 characters
 			CP		10				; 2 for drive/slash, plus 8
 			JR		Z,F2PS3			; No need to save A in alternate AF
 			LD		A,(HL)			; Obtain filename character
+			AND		07FH
 			CP		' '				; End of filename?
 			JR		Z,F2PS3
 			LD		(IX+0),A		; Copy to PATH buffer
@@ -3007,6 +3122,7 @@ F2PL1		; Handle the filename - up to 8 characters
 
 F2PS3		; Eat any space characters at end of filename
 F2PL2		LD		A,(HL)			; Read next character from FCB
+			AND		07FH
 			CP		' '				; Is it space?
 			JR		NZ,F2PS4		; If not, we are done eating!
 			INC		HL				; Otherwise advance to next char
@@ -3023,6 +3139,7 @@ F2PL3		LD		A,B				; Number of extension chars copied
 			CP		3				; Maximum of three
 			JR		Z,F2PS7
 			LD		A,(HL)			; Obtain extension character
+			AND		07FH
 			CP		' '				; End of extension?
 			JR		Z,F2PS7
 			CP		'$'				; ProDOS filename translation
@@ -3164,6 +3281,23 @@ N2FS6		POP		HL				; Source ProDOS file entry
 			LD		A,C
 			OR		A
 			RET		Z				; FCB for parsing only; don't touch allocation bytes
+
+			; ProDOS dir entry +$1E is access; bit 1 permits writing.
+			; Reflect a locked file in the high bit of FCB+9 (T1').
+			PUSH	HL
+			LD		DE,01EH
+			ADD		HL,DE
+			LD		A,(HL)
+			AND		02H
+			JR		NZ,N2FADON
+			LD		HL,(DMAADDR)
+			LD		DE,9
+			ADD		HL,DE
+			LD		A,(HL)
+			OR		080H
+			LD		(HL),A
+N2FADON
+			POP		HL
 
 			; ProDOS file entry EOF is a 24-bit little-endian byte count
 			; at offsets 21..23. blocks_used includes sapling/tree
@@ -3330,9 +3464,13 @@ MATCHFCB	INC		DE			; Skip drive byte
 			INC		HL
 			LD		B,11			; 8.3 filename bytes
 MFL1		LD		A,(DE)
+			AND		07FH			; Ignore CP/M attribute high bits
 			CP		'?'			; Wildcard matches any byte
 			JR		Z,MFS1
-			CP		(HL)
+			LD		C,A
+			LD		A,(HL)
+			AND		07FH
+			CP		C
 			JR		NZ,MFS2
 MFS1		INC		DE
 			INC		HL
@@ -4312,6 +4450,13 @@ GFIMLIMD	DEFW	0000H			; ProDOS PL: Modification date
 GFIMLIMT	DEFW	0000H			; ProDOS PL: Modification time
 GFIMLICD	DEFW	0000H			; ProDOS PL: Create date
 GFIMLICT	DEFW	0000H			; ProDOS PL: Create time
+
+; ProDOS $C3 SET_FILE_INFO uses the same fields as GET_FILE_INFO
+; through modification time. F_ATTRIB sets count=7 temporarily.
+SFIMLI		DEFB	20H,00H,0BFH
+			DEFB	0C3H
+			DEFW	GFIMLIPL+OFFSET
+			DEFB	60H
 
 ; Parameter list for ProDOS OPEN call
 FOMLI		DEFB	20H,00H,0BFH	; JSR $BF00 in 6502 code		
