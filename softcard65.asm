@@ -314,6 +314,7 @@ HANDLR LDA CMD
 * Cursor address parameters are consumed even when malformed.
 * Cooked CR implies newline (existing CCP convention); cooked CR+LF
 * advances once. Raw BIOS CR only returns to column 0; LF goes down.
+* Soroc ESC '(' / ESC ')' select inverse/normal video (SoftCard).
 * Soroc protected fields, graphics and auxiliary port are not emulated.
 ***************************************************
 
@@ -323,6 +324,7 @@ VINIT
  LDA #0
  STA VSTATE ; Parser idle
  STA VCRP ; No pending CR/LF pair
+ STA VATTR ; Reset inverse video
  STA $C000 ; 80STORE off
  STA $C002 ; RAMRD main
  STA $C004 ; RAMWRT main
@@ -344,6 +346,7 @@ VSETMODE CMP #2
  LDA #0
  STA VSTATE
  STA VCRP
+ STA VATTR ; Reset inverse video on terminal change
  JMP VMBASIC ; Keep MBASIC's terminal control table in sync
 
 * Apple CP/M Microsoft BASIC-80 5.2 expects BIOS video control bytes
@@ -524,10 +527,12 @@ VESCCMD LDY #0
  BNE :E1
  JMP VCLEAR
 :E1 CMP #'A'
- BEQ VRIGHT
- CMP #'B'
- BEQ VBACK
- CMP #'C'
+ BNE :E1A
+ JMP VRIGHT
+:E1A CMP #'B'
+ BNE :E1B
+ JMP VBACK
+:E1B CMP #'C'
  BNE :LONG13
  JMP VDOWN
 :LONG13
@@ -537,11 +542,23 @@ VESCCMD LDY #0
  BNE :E2
  JMP VEOL
 :E2 CMP #'F'
- BNE VDONE
- JMP VEOP
-:SORE CMP #'='
- BEQ VPOS
- CMP #'*'
+ BEQ :E2F
+ JMP VDONE
+:E2F JMP VEOP
+:SORE CMP #'(' ; Microsoft SoftCard Soroc: inverse ON
+ BNE :SINV1
+ LDA #1
+ STA VATTR
+ RTS
+:SINV1 CMP #')' ; Inverse OFF
+ BNE :SINV2
+ LDA #0
+ STA VATTR
+ RTS
+:SINV2 CMP #'='
+ BNE :SINV3
+ JMP VPOS
+:SINV3 CMP #'*'
  BNE :S1
  JMP VCLEAR
 :S1 CMP #'+'
@@ -608,8 +625,16 @@ VTAB LDA VCOL
  BNE :VT1
  RTS
 
-VPRINT ORA #$80
- JSR VDRAW
+* Apple IIe ALTCHARSET inverse uses $00-$3F and $60-$7F.
+* $40-$5F is MouseText, so fold uppercase into $00-$1F.
+VPRINT LDX VATTR
+ BEQ :VNORM
+ CMP #$60
+ BCS :VSHOW
+ AND #$3F
+ JMP :VSHOW
+:VNORM ORA #$80
+:VSHOW JSR VDRAW
  INC VCOL
  LDA VCOL
  CMP #80
@@ -701,14 +726,20 @@ VLOAD LDA $0400,Y ; operand updated by VADDR
 * Keep the original byte under the cursor, including its attributes.
 VGET JSR VPEEK
  STA VUNDER
-* Apple IIe alternate charset: $60-$7F is inverse lowercase.
-* $40-$5F is MouseText on enhanced IIe, not inverse uppercase.
-* Retain bit 6 only for lowercase; clear it otherwise.
- AND #$7F
+* Toggle the underlying screen character's inverse/normal video.
+* Keep existing attributes intact when the key is returned.
+ BMI :VGNORM ; Normal byte ($80-$FF): make inverse
+ CMP #$20
+ BCC :VGUP ; Inverse uppercase -> normal uppercase
+ ORA #$80 ; Inverse punctuation/lowercase -> normal
+ BNE :VGSHOW
+:VGUP ORA #$C0
+ BNE :VGSHOW
+:VGNORM AND #$7F
  CMP #$60
- BCS :VGLOW
- AND #$3F
-:VGLOW JSR VDRAW
+ BCS :VGSHOW
+ AND #$3F ; Avoid MouseText when inverting uppercase
+:VGSHOW JSR VDRAW
 :VGWAIT LDA $C000 ; keyboard latch; bit 7 means key ready
  BPL :VGWAIT
  PHA
@@ -796,6 +827,7 @@ VMODE DB 1 ; 0 Videx, 1 Soroc (default)
 VSTATE DB 0 ; 0 idle, 1 ESC, 2 coord1, 3 coord2
 VCOORD DB 0
 VCRP DB 0 ; Suppress second half of CR/LF pair
+VATTR DB 0 ; Soroc ESC '(' inverse on, ESC ')' normal
 
 * Loader diagnostics without ROM I/O.
 CROUT LDA #$0D
