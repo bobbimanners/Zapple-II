@@ -172,7 +172,7 @@ B_DRV_RESET		EQU		25H			; Selectively reset disk drives
 
 
 ; ================================================================
-; AUX44 PHASE 2: MAIN-bank FCB/DMA gateway in otherwise idle MAIN TPA.
+; AUX56 PHASE 2: MAIN-bank FCB/DMA gateway in otherwise idle MAIN TPA.
 ; The executable TPA is in AUX $0100-$AFFF, so MAIN $7000 is free.
 ; All caller pointers refer to AUX unless explicitly translated.
 ; MAIN $7800-$7BFF holds permanent staging and ProDOS-safe scratch.
@@ -291,9 +291,9 @@ AXTMERR     LD      A,0FFH
             LD      L,A
             RET
 
-; Reject FCBs extending past the AUX RAM $AFFF boundary.
+; Require the full 36-byte FCB to lie below LC BIOS at $DF00.
 AXCKFCB     LD      A,D
-            CP      0AFH
+            CP      0DEH
             JR      C,AXCKOK
             JR      NZ,AXCKBAD
             LD      A,E
@@ -303,10 +303,10 @@ AXCKOK      XOR     A
             RET
 AXCKBAD     LD      A,1
             RET
-; An entire DMA record must be mapped within AUX $0000-$AFFF.
+; An entire 128-byte record must fit below $DF00.
 AXCKDMA     LD      HL,(AXDMAP)
             LD      A,H
-            CP      0AFH
+            CP      0DEH
             JR      C,AXCKOK
             JR      NZ,AXCKBAD
             LD      A,L
@@ -387,28 +387,23 @@ AXRESET     LD      A,(LCB1RO)
             LD      L,A
             RET
 
-; Return bank-visible pointers, not MAIN kernel pointers.
-; Save/restore the original 4 KiB LC bank2 at each transient entry/exit.
-; While an AUX program is active, B100 holds the 15-byte DPB and
-; B800-BFFF holds the 2048-byte virtual CP/M allocation vector.
+; Return pointers to storage outside the contiguous CP/M TPA.
+; $F300 maps to AUX Apple $0300, $F800 to AUX Apple $0800-$0FFF.
+; The caller may freely read these while LC bank2 remains mapped.
 AXDPB       LD      A,(LCB1RO)
             CALL    DRV_DPB
-            LD      DE,0B100H
+            LD      DE,0F300H
             LD      BC,15
-            LD      A,(LCB2RW)
-            LD      A,(LCB2RW)
-            LDIR
-            LD      HL,0B100H
+            CALL    AXM2A
+            LD      HL,0F300H
             XOR     A
             RET
 AXAVEC      LD      A,(LCB1RO)
             CALL    DRV_AVEC
-            LD      DE,0B800H
+            LD      DE,0F800H
             LD      BC,0800H
-            LD      A,(LCB2RW)
-            LD      A,(LCB2RW)
-            LDIR
-            LD      HL,0B800H
+            CALL    AXM2A
+            LD      HL,0F800H
             XOR     A
             RET
 
@@ -417,12 +412,8 @@ AXAVEC      LD      A,(LCB1RO)
 ; 260-byte MAIN staging area avoids banked reads during terminal I/O.
 AXLINE      LD      (AXLIP),DE
             LD      A,D
-            CP      0AEH
-            JR      C,AXLVALID
-            JP      NZ,AXBAD
-            LD      A,E
-            CP      0FFH
-            JP      Z,AXBAD
+            CP      0DDH
+            JP      NC,AXBAD      ; conservative 260-byte bound
 AXLVALID    EX      DE,HL
             LD      DE,AXLBUF
             LD      BC,1
@@ -657,14 +648,20 @@ AXFRET      LD      A,(AXSTAT)
 
 ; MAIN to AUX copy. With RAMRD=MAIN the code remains executable while
 ; RAMWRT=AUX, but NO CALLs/PUSHes may occur until RAMWRT is reset.
-AXM2A       XOR     A
+AXM2A       LD      A,(LCB2RW)
+            LD      A,(LCB2RW)
+            XOR     A
+            LD      (ZPAUX),A       ; AUX LC bank2 for high addresses
             LD      (WRAUX),A
             LDIR
             LD      (WRMAIN),A
+            LD      (ZPMAIN),A
+            LD      A,(LCB1RO)
+            XOR     A
             RET
 
 ; ================================================================
-; AUX44 CCP SAVE: dump transient AUX RAM, not resident MAIN RAM.
+; AUX56 CCP SAVE: dump transient AUX RAM, not resident MAIN RAM.
 ; This routine lives in idle MAIN $7400-$75FF; it borrows the same
 ; LC bank2 copy primitive used by the working AUX filesystem gateway.
 ; Only MAIN $AUXSTAGE is passed as the ProDOS write DMA buffer.
@@ -750,8 +747,8 @@ SVBAD      LD      DE,BFMSG
            CALL    C_WRITESTR
            JR      SVRESET
 
-; Save the ProDOS LC bank2 image to otherwise unused MAIN $5000.
-; Preserve ProDOS bank1 for filesystem operations between AUX copies.
+; SAVE writes its helper to MAIN LC common $FFxx, so preserve ALL 12K
+; of MAIN LC bank 2/common at MAIN $4000-$6FFF, not just the 4K bank.
 SVPREP     XOR     A
            LD      (SW80OFF),A
            LD      (ZPMAIN),A
@@ -759,9 +756,9 @@ SVPREP     XOR     A
            LD      (WRMAIN),A
            LD      A,(LCB2RW)
            LD      A,(LCB2RW)
-           LD      HL,LCBASE
-           LD      DE,LCBACK
-           LD      BC,01000H
+           LD      HL,0B000H
+           LD      DE,04000H
+           LD      BC,03000H
            LDIR
            LD      A,(LCB1RO)
            RET
@@ -783,12 +780,12 @@ SVCOPY     LD      A,(LCB2RW)
            LD      A,(LCB1RO)
            RET
 
-; Put back ProDOS's original 4 KiB LC bank2 after file is closed.
+; Put back ProDOS's original MAIN LC bank 2/common 12 KiB after close.
 SVREST     LD      A,(LCB2RW)
            LD      A,(LCB2RW)
-           LD      HL,LCBACK
-           LD      DE,LCBASE
-           LD      BC,01000H
+           LD      HL,04000H
+           LD      DE,0B000H
+           LD      BC,03000H
            LDIR
            LD      A,(LCB1RO)
            RET
@@ -869,6 +866,327 @@ AXSRCH      DEFS    36
 AXDATA      DEFS    128
 AXLIP       DEFW    0
 AXLBUF      DEFS    260
+
+ ; MAIN-to-AUX-LC resident transition helper, entirely in ordinary MAIN RAM.
+ ; ALTZP can switch without changing the instruction fetch at $7Axx.
+            ORG     07A00H
+AXSTART     LD      (AXMSP),SP    ; called with MAIN RAM and main LC
+            XOR     A
+            LD      (AXQUIT),A
+            INC     A
+            LD      (AXMODE),A
+            LD      A,(LCB2RW)
+            LD      A,(LCB2RW)
+            XOR     A
+            LD      (ZPAUX),A
+            JP      LCREN         ; enter the AUX LC DF00h gateway
+AXGATE      LD      (AXASP),SP    ; user's stack may itself be in AUX LC
+            LD      SP,(AXMSP)    ; restore main resident stack
+            XOR     A
+            LD      (ZPMAIN),A    ; restore ProDOS's ZP and LC
+            LD      A,(LCB1RO)
+            CALL    AUXBDOS
+            LD      (AXRES),A
+            LD      (AXRHL),HL
+            LD      A,(AXQUIT)
+            OR      A
+            JR      NZ,AXFIN
+            LD      A,(LCB2RW)
+            LD      A,(LCB2RW)
+            XOR     A
+            LD      (ZPAUX),A    ; executable LC image now AUX
+            LD      SP,(AXASP)
+            LD      HL,(AXRHL)
+            LD      A,(AXRES)
+            JP      LCRES         ; LC shim restores RAMRD/RAMWRT AUX
+AXFIN       XOR     A
+            LD      (ZPMAIN),A
+            LD      A,(LCB1RO)
+            LD      SP,(AXMSP)
+            XOR     A
+            LD      (AXMODE),A
+            RET
+; AXMODE is only 1 during AUX transient. SAVE executes outside it,
+; with its temporary LC shim installed into MAIN LC instead of AUX LC.
+LCPEEK      LD      A,(LCB2RW)
+            LD      A,(LCB2RW)
+            LD      A,(AXMODE)
+            OR      A
+            JR      Z,LPLOCAL
+            LD      (ZPAUX),A
+LPLOCAL     CALL    LCPEE0
+            PUSH    AF
+            XOR     A
+            LD      (ZPMAIN),A
+            LD      A,(LCB1RO)
+            POP     AF
+            RET
+LCA2M       LD      A,(LCB2RW)
+            LD      A,(LCB2RW)
+            LD      A,(AXMODE)
+            OR      A
+            JR      Z,LMLOCAL
+            LD      (ZPAUX),A
+LMLOCAL     CALL    LCA2MR
+            XOR     A
+            LD      (ZPMAIN),A
+            LD      A,(LCB1RO)
+            RET
+AXMSP       DEFW    0
+AXASP       DEFW    0
+AXRES       DEFB    0
+AXRHL       DEFW    0
+AXQUIT      DEFB    0
+AXMODE      DEFB    0
+
+
+            ORG     07C00H
+
+; LC entry points are absolute RUNTIME addresses, not source image labels.
+LCBASE      EQU     0DF00H
+LCBACK      EQU     03000H  ; MAIN $3000-$3FFF: saved MAIN LC bank2
+LC_BDOS     EQU     LCBASE      ; BDOS at DF00, TPA ends DEFF
+SW80OFF     EQU     0E000H
+RDMAIN      EQU     0E002H
+RDAUX       EQU     0E003H
+WRMAIN      EQU     0E004H
+WRAUX       EQU     0E005H
+ZPMAIN      EQU     0E008H
+ZPAUX       EQU     0E009H
+LCB2RW      EQU     0E083H
+LCB1RO      EQU     0E088H
+
+; Read records using an ordinary MAIN buffer, copy them to AUX.
+; F_READ owns the file handle/FCB and is called BEFORE LC installation:
+; ProDOS MLI must run with its normal language-card mapping.
+AUXRUN      LD      DE,PATHBUF2
+            LD      HL,PATHBUF2
+            LD      (DMAADDR),HL
+            CALL    _F_OPEN
+            OR      A
+            JP      NZ,RCOERR
+            ; Before loading a COM, preserve existing MAIN and AUX LC.
+            ; MAIN 4K in $3000, AUX 12K in MAIN $4000-$6FFF.
+            CALL    AXSNAP
+            LD      HL,0100H
+            LD      (AUXDEST),HL
+AUXLOAD     LD      HL,AUXSTAGE
+            LD      (DMAADDR),HL
+            LD      DE,PATHBUF2
+            CALL    F_READ
+            OR      A
+            JR      Z,AUXREC
+            CP      1
+            JR      Z,AUXLDONE
+            JP      AUXRERR
+AUXREC      LD      HL,(AUXDEST)
+            LD      DE,LCBASE
+            OR      A
+            SBC     HL,DE
+            JP      NC,AUX2BIG
+            LD      HL,(AUXDEST)
+            LD      DE,0B000H
+            OR      A
+            SBC     HL,DE
+            JR      NC,AUXLCREC  ; destination in AUX LC bank2
+            LD      HL,AUXSTAGE
+            LD      DE,(AUXDEST)
+            LD      BC,0080H
+            XOR     A
+            LD      (WRAUX),A
+            LDIR
+            LD      (WRMAIN),A
+            JR      AUXADV
+AUXLCREC    LD      A,(LCB2RW)
+            LD      A,(LCB2RW)
+            XOR     A
+            LD      (ZPAUX),A
+            LD      HL,AUXSTAGE
+            LD      DE,(AUXDEST)
+            LD      BC,0080H
+            LDIR              ; MAIN src -> AUX LC destination
+            LD      (ZPMAIN),A
+            LD      A,(LCB1RO)
+AUXADV      LD      HL,(AUXDEST)
+            LD      DE,0080H
+            ADD     HL,DE
+            LD      (AUXDEST),HL
+            JP      AUXLOAD
+AUXRERR     LD      DE,PATHBUF2
+            CALL    F_CLOSE
+            CALL    AXREST
+            JP      RCLERR
+AUX2BIG     LD      DE,PATHBUF2
+            CALL    F_CLOSE
+            CALL    AXREST
+            JP      AUXSIZEERR
+AUXLDONE    LD      DE,PATHBUF2
+            CALL    F_CLOSE
+            OR      A
+            JP      NZ,AUXRERR0
+            LD      HL,FILEBUF
+            LD      (DMAADDR),HL
+            LD      HL,0080H
+            LD      (AXDMAP),HL
+            ; Replace top 256 bytes of AUX LC with the new LC gateway.
+            LD      A,(LCB2RW)
+            LD      A,(LCB2RW)
+            XOR     A
+            LD      (ZPAUX),A
+            LD      HL,LCIMG
+            LD      DE,LCBASE
+            LD      BC,LCLEN
+            LDIR
+            LD      (ZPMAIN),A
+            LD      A,(LCB1RO)
+            ; The helper can now fetch AUX RAM safely from AUX LC.
+            LD      A,1
+            LD      (AXMODE),A
+            LD      HL,0F800H
+            LD      DE,02000H
+            LD      BC,0800H
+            CALL    LCA2M
+            LD      HL,0F300H
+            LD      DE,02800H
+            LD      BC,16
+            CALL    LCA2M
+            ; Clone CP/M page zero and patch public DF00 gateway vectors.
+            LD      HL,0000H
+            LD      DE,0000H
+            LD      BC,0100H
+            XOR     A
+            LD      (WRAUX),A
+            LDIR
+            LD      HL,AUXPZERO
+            LD      DE,0000H
+            LD      BC,3
+            LDIR
+            LD      HL,AUXPZERO+5
+            LD      DE,0005H
+            LD      BC,3
+            LDIR
+            LD      (WRMAIN),A
+            ; Refresh Apple CP/M BASIC's terminal table in AUX $0396.
+            LD      HL,0F396H
+            LD      DE,0F396H
+            LD      BC,9
+            CALL    AXM2A
+            LD      A,(CURDRV)
+            PUSH    AF
+            CALL    AXSTART
+            POP     AF
+            LD      (CURDRV),A
+            LD      A,(AXQUIT)
+            LD      (AUXEXCD),A
+            ; Restore AUX low metadata (virtual DPB/ALV are not persistent).
+            LD      HL,02000H
+            LD      DE,0F800H
+            LD      BC,0800H
+            CALL    AXM2A
+            LD      HL,02800H
+            LD      DE,0F300H
+            LD      BC,16
+            CALL    AXM2A
+            CALL    AXREST
+            LD      HL,FILEBUF
+            LD      (DMAADDR),HL
+            LD      A,(AUXEXCD)
+            CP      2
+            JR      NZ,AUXEXOK
+            LD      DE,AUXBADMSG
+            CALL    C_WRITESTR
+AUXEXOK     LD      E,13
+            CALL    C_WRITE
+            RET
+AUXRERR0    CALL    AXREST
+            JP      RCLERR
+
+; Save both physical LC images before any AUX LC .COM loading. LC bank2
+; at B000-BFFF and common RAM C000-DFFF. Ordinary MAIN TPA is free.
+AXSNAP      DI
+            XOR     A
+            LD      (SW80OFF),A
+            LD      (ZPMAIN),A
+            LD      (RDMAIN),A
+            LD      (WRMAIN),A
+            LD      A,(LCB2RW)
+            LD      A,(LCB2RW)
+            LD      HL,0B000H
+            LD      DE,LCBACK
+            LD      BC,01000H
+            LDIR
+            XOR     A
+            LD      (ZPAUX),A
+            LD      HL,0B000H
+            LD      DE,04000H
+            LD      BC,03000H
+            LDIR
+            LD      (ZPMAIN),A
+            LD      A,(LCB1RO)
+            RET
+; Restore AUX LC first, then original MAIN LC bank2. Uses MAIN
+; conventional memory for instruction fetch throughout.
+AXREST      LD      A,(LCB2RW)
+            LD      A,(LCB2RW)
+            XOR     A
+            LD      (ZPAUX),A
+            LD      HL,04000H
+            LD      DE,0B000H
+            LD      BC,03000H
+            LDIR
+            LD      (ZPMAIN),A
+            LD      A,(LCB2RW)
+            LD      A,(LCB2RW)
+            LD      HL,LCBACK
+            LD      DE,0B000H
+            LD      BC,01000H
+            LDIR
+            LD      A,(LCB1RO)
+            RET
+
+AUXBDOS     JP      AXBDOS
+AUXBDOS0    LD      A,1
+            LD      (AXQUIT),A
+            XOR     A
+            LD      L,A
+            RET
+ABDVER      LD      HL,0022H
+            LD      A,L
+            LD      B,H
+            RET
+AUXBDOS2    PUSH    DE
+            CALL    C_WRITE
+            POP     DE
+            LD      A,E
+            LD      L,A
+            RET
+AUXBDOS6    JP      C_RAWIO
+ABDSTAT     CALL    C_STAT
+            OR      A
+            RET     Z
+            LD      A,0FFH
+            LD      L,A
+            RET
+AUXBDOS9    PUSH    BC
+            PUSH    DE
+            PUSH    HL
+            EX      DE,HL
+AB9NEXT     CALL    LCPEEK
+            CP      '$'
+            JR      Z,AB9DONE
+            PUSH    HL
+            LD      E,A
+            CALL    C_WRITE
+            POP     HL
+            INC     HL
+            JR      AB9NEXT
+AB9DONE     POP     HL
+            POP     DE
+            POP     BC
+            XOR     A
+            LD      L,A
+            RET
+
 
 			ORG		BDOSADDR
 
@@ -975,6 +1293,10 @@ BIOSSECTRAN	LD		H,B			; identity mapping
 ; Subsequent RST 0 / JP 0000H runs an ordinary warm boot.
 BDOSINIT	DI
 			LD		SP,STCKTOP		; Valid stack for BPMSIGN
+			; Cold start: the backing ProDOS unit has not been resolved yet.
+			; WBOOT deliberately preserves the cached unit.
+			XOR		A
+			LD		(VUCVALID),A
 			LD		HL,BIOSWBOOT
 			LD		(0001H),HL		; 0000H -> BIOS WBOOT JP (CP/M ABI)
 			CALL	BPMSIGN			; Print TPA banner exactly once
@@ -1015,13 +1337,13 @@ BDOSWARM	DI					; Make sure interrupts are off
 			LD		(ROVEC),HL		; ...
 			JP		CCP				; Start the CCP
 
-; The TPA is 0100H..BDOSADDR-1. Derive KiB from BDOSADDR at
+; The TPA is AUX 0100H..DEFFH. Derive KiB from its top at
 ; assembly time, then turn it into decimal at run time. 10 right shifts
 ; convert a byte count to KiB; valid for any sensible BDOS placement.
 ; We print two digits (CP/M's TPA cannot exceed 63 KiB).
 BPMSIGN		LD		DE,BPMSG
 			CALL	C_WRITESTR
-			LD		HL,0B000H
+			LD		HL,0DF00H
 			LD		B,10
 BPMSHIFT	SRL		H
 			RR		L
@@ -2098,17 +2420,23 @@ V_READ		LD		HL,VRMLI
 			OR		A
 			RET
 
-; Find the ProDOS unit containing the CP/M drive directories.
-; Zapple-II uses relative paths such as "A/FILE.COM", so a nonempty
-; ProDOS prefix identifies the volume.  GET_PREFIX provides /VOLUME/...;
-; ON_LINE provides (unit + name length) and volume names in search order.
-;
-; If the prefix is null, find the first on-line volume with a directory
-; named for the selected CP/M drive (A..P), following ProDOS search order.
+; Find and cache the one physical ProDOS unit hosting Zapple-II.
+; CP/M A:..P: are subdirectories of the SAME ProDOS volume, so changing
+; CP/M drive must not trigger an expensive ON_LINE enumeration.
+; A nonempty GET_PREFIX identifies the volume; if it is empty, search
+; for the first online volume containing the selected drive directory.
+; Only this FIRST discovery uses GET_PREFIX and ON_LINE (unit=0).
+; VUCVALID is cleared by BDOSINIT on cold start, not by WBOOT.
+; Free-space bitmap reads in V_GETFREE are still done on every request.
 ; All MLI scratch space is in 6502 main $0800-$097F; the direct console
 ; uses text page 1, and READ_BLOCK overwrites this scratch area later.
 ; Returns A=0 on success, else an MLI error or $FD (no matching volume).
-V_FINDUNIT	XOR		A
+V_FINDUNIT  LD      A,(VUCVALID)
+            OR      A
+            JR      Z,VUCDISC
+            XOR     A               ; VRUNIT still holds our ProDOS unit
+            RET
+VUCDISC    XOR     A
 			LD		(VRUNIT),A	; Invalidate stale unit on failure
 			LD		HL,VPMLI		; GET_PREFIX -> $0800
 			CALL	PRODOS
@@ -2227,11 +2555,13 @@ V_NEXT		LD		DE,16
 			JP		NZ,V_SCAN
 V_NOMATCH	LD		A,0FDH		; Prefix volume / CP/M dir not found
 			RET
-V_FOUND		LD		A,(IX+0)
-			AND		0F0H		; Strip ON_LINE volume-name length
-			LD		(VRUNIT),A	; ProDOS unit DSSS0000
-			XOR		A
-			RET
+V_FOUND     LD      A,(IX+0)
+            AND     0F0H            ; ProDOS unit DSSS0000
+            LD      (VRUNIT),A
+            LD      A,1
+            LD      (VUCVALID),A    ; Keep it for ALL logical drives
+            XOR     A
+            RET
 
 ; Software write-protect current disk
 DRV_SETRO	LD		B,80H			; Set MS-bit in B, will rotate this below
@@ -3846,7 +4176,7 @@ TBL1       LD      A,(HL)
            DJNZ    TBL1
            RET
 
-; AUX44 SAVEFILE/SVPAGES relocated to MAIN $7400; see below.
+; AUX56 SAVEFILE/SVPAGES relocated to MAIN $7400; see below.
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Additional private scratch space for BDOS
@@ -4067,8 +4397,10 @@ VFPL		DEFB	0AH
 VFTYPE		DEFB	0			; File type returned ($0F = DIR)
 			DEFS	13			; Remaining GET_FILE_INFO fields
 
-V_HASPFX	DEFB	0
-V_NAMELEN	DEFB	0
+V_HASPFX   DEFB    0
+V_NAMELEN  DEFB    0
+; The unit in VRUNIT belongs to the one ProDOS volume backing BP/M.
+VUCVALID   DEFB    0
 
 ; ProDOS READ_BLOCK call, read-only, used to inspect volume bitmap.
 VRMLI		DEFB	20H,00H,0BFH	; JSR $BF00
@@ -4076,7 +4408,7 @@ VRMLI		DEFB	20H,00H,0BFH	; JSR $BF00
 			DEFW	VRPL+OFFSET
 			DEFB	60H				; RTS
 VRPL		DEFB	3
-VRUNIT		DEFB	0			; Populated by V_FINDUNIT at each free-space query
+VRUNIT		DEFB	0			; Discovered once; reused for all CP/M drives
 			DEFW	0800H			; physical 6502 address (NOT VOLBUF+OFFSET)
 VRBLK		DEFW	0				; Requested ProDOS 512-byte block
 
@@ -4174,274 +4506,66 @@ SEARCH_EOF	LD		DE,DFCB
 
 
 ; =====================================================================
-; AUX44 PHASE 1: restricted ordinary .COM loader / LC bank gateway.
+; AUX56 PHASE 1: restricted ordinary .COM loader / LC bank gateway.
 ; This is deliberately isolated from the working main-bank filesystem.
 ; Full aux FCB/DMA pointer translation is NOT implemented.
 ; Code and scratch storage reside in the spare $A000-$A3FF main bank.
 ; =====================================================================
+
             ORG     0A080H
+; Auxiliary page zero: WBOOT -> LC DF06, BDOS -> LC DF00.
+AUXPZERO    DEFB    0C3H,006H,0DFH,0,0,0C3H,000H,0DFH
+AUXDEST     DEFW    0100H
+AUXEXCD     DEFB    0
 
-; LC entry points are absolute RUNTIME addresses, not source image labels.
-LCBASE      EQU     0B000H
-LCBACK      EQU     05000H  ; MAIN 4 KiB snapshot of LC bank2
-LC_BDOS     EQU     LCBASE      ; BDOS below BIOS; safe TPA stack top
-SW80OFF     EQU     0E000H
-RDMAIN      EQU     0E002H
-RDAUX       EQU     0E003H
-WRMAIN      EQU     0E004H
-WRAUX       EQU     0E005H
-ZPMAIN      EQU     0E008H
-LCB2RW      EQU     0E083H
-LCB1RO      EQU     0E088H
-
-; Read records using an ordinary MAIN buffer, copy them to AUX.
-; F_READ owns the file handle/FCB and is called BEFORE LC installation:
-; ProDOS MLI must run with its normal language-card mapping.
-AUXRUN   LD      DE,PATHBUF2
-            LD      HL,PATHBUF2
-            LD      (DMAADDR),HL
-            CALL    _F_OPEN
-            OR      A
-            JP      NZ,RCOERR
-            LD      HL,0100H
-            LD      (AUXDEST),HL
-AUXLOAD     LD      HL,AUXSTAGE
-            LD      (DMAADDR),HL
-            LD      DE,PATHBUF2
-            CALL    F_READ
-            OR      A
-            JR      Z,AUXREC
-            CP      1
-            JR      Z,AUXLDONE
-            JR      AUXRERR
-AUXREC      LD      HL,(AUXDEST)
-            LD      DE,0B000H
-            OR      A
-            SBC     HL,DE          ; Have we already filled the TPA?
-            JR      NC,AUX2BIG
-            LD      HL,AUXSTAGE
-            LD      DE,(AUXDEST)
-            LD      BC,0080H
-            XOR     A
-            LD      (WRAUX),A      ; read MAIN staging, write AUX
-            LDIR
-            LD      (WRMAIN),A     ; restore before CALL or stack access
-            LD      (AUXDEST),DE
-            JR      AUXLOAD
-AUXRERR  LD      DE,PATHBUF2
-            CALL    F_CLOSE
-            JP      RCLERR
-AUX2BIG   LD      DE,PATHBUF2
-            CALL    F_CLOSE
-            JP      AUXSIZEERR
-
-AUXLDONE   LD      DE,PATHBUF2
-            CALL    F_CLOSE
-            OR      A
-            JP      NZ,RCLERR
-            LD      HL,FILEBUF
-            LD      (DMAADDR),HL
-            LD      HL,0080H
-            LD      (AXDMAP),HL
-
-            ; ProDOS can use LC bank2 beyond its first page. Preserve
-            ; ALL 4 KiB before placing the virtual DPB/ALV there.
-            ; Main $5000-$5FFF is unused while AUX programs execute.
-            DI
-            XOR     A
-            LD      (SW80OFF),A
-            LD      (ZPMAIN),A
-            LD      (RDMAIN),A
-            LD      (WRMAIN),A
-            LD      A,(LCB2RW)     ; two accesses enable LC bank2 writes
-            LD      A,(LCB2RW)
-            LD      HL,LCBASE
-            LD      DE,LCBACK
-            LD      BC,01000H
-            LDIR
-            LD      HL,LCIMG
-            LD      DE,LCBASE
-            LD      BC,LCLEN
-            LDIR
-
-            ; Clone main CP/M page zero (including both FCBs and command
-            ; tail) into AUX. Override only the CP/M public JP vectors.
-            LD      HL,0000H
-            LD      DE,0000H
-            LD      BC,0100H
-            XOR     A
-            LD      (WRAUX),A
-            LDIR
-            LD      HL,AUXPZERO
-            LD      DE,0000H
-            LD      BC,3
-            LDIR               ; patch WBOOT JP only
-            LD      HL,AUXPZERO+5
-            LD      DE,0005H
-            LD      BC,3
-            LDIR               ; patch BDOS JP; preserve IOBYTE/CURDRV
-            LD      (WRMAIN),A
-
-            ; The Microsoft Apple CP/M BASIC terminal table also lives
-            ; in $0396-$039E, which RAMRD maps to AUX during execution.
-            ; Keep it in sync with the MAIN copy from VINIT/VSETMODE.
-            LD      HL,0F396H
-            LD      DE,0F396H
-            LD      BC,9
-            CALL    AXM2A
-
-            LD      A,(CURDRV)
-            PUSH    AF
-            CALL    LCREN      ; MAIN -> AUX -> MAIN, restores MAIN SP
-            POP     AF
-            LD      (CURDRV),A
-            LD      A,(LCQUIT)
-            LD      (AUXEXCD),A
-
-            ; Restore ProDOS's LC bank2 image and normal bank1 mapping
-            ; BEFORE CCP output or another ProDOS MLI call.
-            LD      HL,LCBACK
-            LD      DE,LCBASE
-            LD      BC,01000H
-            LDIR
-            LD      A,(LCB1RO)
-            LD      HL,FILEBUF
-            LD      (DMAADDR),HL
-            LD      A,(AUXEXCD)
-            CP      2
-            JR      NZ,AUXEXOK
-            LD      DE,AUXBADMSG
-            CALL    C_WRITESTR
-AUXEXOK  LD      E,13
-            CALL    C_WRITE
-            RET
-
-; Console-only BDOS implementation called with MAIN selected and MAIN SP.
-; For string output, characters live in AUX, so fetch them through LC_PEEK.
-; Main-bank BDOS 9 cannot consume an AUX string pointer directly.
-AUXBDOS     JP      AXBDOS
-AUXBDOS0    LD      A,1
-            LD      (LCQUIT),A
-            XOR     A
-            LD      L,A
-            RET
-; CP/M BDOS 12 returns HL=0022h and B=H=00h, A=L=22h.
-ABDVER      LD      HL,0022H
-            LD      A,L
-            LD      B,H
-            RET
-AUXBDOS2    PUSH    DE
-            CALL    C_WRITE
-            POP     DE
-            LD      A,E
-            LD      L,A
-            RET
-AUXBDOS6    JP      C_RAWIO
-; CP/M BDOS 11 must report 00h or FFh, not the raw 6502 00h/01h.
-ABDSTAT     CALL    C_STAT
-            OR      A
-            RET     Z
-            LD      A,0FFH
-            LD      L,A
-            RET
-AUXBDOS9    PUSH    BC
-            PUSH    DE
-            PUSH    HL
-            EX      DE,HL        ; HL -> AUX string
-AB9NEXT     CALL    LCPEEK
-            CP      '$'
-            JR      Z,AB9DONE
-            PUSH    HL
-            LD      E,A
-            CALL    C_WRITE
-            POP     HL
-            INC     HL
-            JR      AB9NEXT
-AB9DONE     POP     HL
-            POP     DE
-            POP     BC
-            XOR     A
-            LD      L,A
-            RET
-
-; Auxiliary page zero: WBOOT -> LC B006, BDOS -> LC B000.
-; Bytes 0003/0004 are *not* installed: keep main IOBYTE/CURDRV.
-; The remaining page-zero bytes are cloned from MAIN by AUXRUNCOM.
-AUXPZERO DEFB    0C3H,006H,0B0H,0,0,0C3H,000H,0B0H
-AUXDEST      DEFW    0100H
-AUXEXCD DEFB    0
-
-; Image copied into LC *bank 2* at B000. Only the first page is used.
-; The BIOS slots are retained in the standard 17 x 3 byte sequence.
+; AUX LC bank2 image at DF00. The BDOS vector is first for stack safety.
 LCIMG
-            JP      LCGATE    ; B000: public BDOS entry, safe stack top
-            JP      LCNOP      ; B003: BIOS BOOT
-            JP      LCFIN     ; B006: BIOS WBOOT; restores MAIN CCP
-            JP      LCBCST     ; CONST: A=FF if key waiting
-            JP      LCBCIN     ; CONIN: un-cooked, A=7-bit ASCII
-            JP      LCBCOUT    ; CONOUT: character in C
-            JP      LCNOP      ; LIST
-            JP      LCNOP      ; PUNCH
-            JP      LCBRDR     ; READER: EOF (^Z)
-            JP      LCNOP      ; HOME
-            JP      LCBNULL    ; SELDSK: no disk sector BIOS
-            JP      LCNOP      ; SETTRK
-            JP      LCNOP      ; SETSEC
-            JP      LCNOP      ; SETDMA
-            JP      LCBERR     ; READ: error, not fake success
-            JP      LCBERR     ; WRITE: error
-            JP      LCBZERO    ; LISTST: printer not ready
-            JP      LCBTRAN    ; SECTRAN: identity translation
-LIENT
-            LD      (LCMSP),SP
-            LD      SP,0B000H   ; CP/M stack at top of AUX TPA
-            XOR     A
-            LD      (LCQUIT),A
-            LD      (WRAUX),A
-            LD      (RDAUX),A
-            CALL    0100H       ; AUX program RET -> here in LC
+            JP      LCGATE
+            JP      LCNOP
             JP      LCFIN
-LIGATE
-            LD      (LCASP),SP
-            XOR     A
-            LD      (RDMAIN),A
-            LD      (WRMAIN),A
-            LD      SP,(LCMSP)
-            CALL    AUXBDOS
-            LD      (LCRES),A
-            LD      (LCRHL),HL
-            LD      A,(LCQUIT)
-            OR      A
-            JP      NZ,LCFIN
-            XOR     A
+            JP      LCBCST
+            JP      LCBCIN
+            JP      LCBCOUT
+            JP      LCNOP
+            JP      LCNOP
+            JP      LCBRDR
+            JP      LCNOP
+            JP      LCBNULL
+            JP      LCNOP
+            JP      LCNOP
+            JP      LCNOP
+            JP      LCBERR
+            JP      LCBERR
+            JP      LCBZERO
+            JP      LCBTRAN
+LIENT       XOR     A
+            LD      SP,LCBASE
             LD      (WRAUX),A
             LD      (RDAUX),A
-            LD      SP,(LCASP)
-            LD      HL,(LCRHL)
-            LD      A,(LCRES)
-            RET
-LIFIN
-            XOR     A
-            LD      (RDMAIN),A
+            CALL    0100H
+            JP      LCFIN
+LIGATE      XOR     A
             LD      (WRMAIN),A
-            LD      SP,(LCMSP)
+            LD      (RDMAIN),A
+            JP      AXGATE
+LIFIN       XOR     A
+            LD      (WRMAIN),A
+            LD      (RDMAIN),A
+            JP      AXFIN
+LIRES       LD      (WRAUX),A
+            LD      (RDAUX),A
             RET
-LIPEEK
-            XOR     A
+LIPEEK      XOR     A
             LD      (RDAUX),A
             LD      A,(HL)
             LD      (RDMAIN),A
             RET
-; Copy AUX (HL) -> MAIN (DE), BC bytes, with RAMRD switching
-; safely in LC (ordinary MAIN instruction fetches would disappear).
 LIA2M       XOR     A
             LD      (RDAUX),A
             LDIR
             LD      (RDMAIN),A
             RET
-LINOP RET
-; BIOS console entry points must preserve BC, DE and HL; only A returns.
-; The private MAIN dispatcher sees function IDs $F1/$F2/$F3 in C.
+LINOP       RET
 LIBCST      PUSH    BC
             PUSH    DE
             PUSH    HL
@@ -4481,39 +4605,32 @@ LIBZERO     XOR     A
 LIBTRAN     LD      H,B
             LD      L,C
             RET
-LIMSP DEFW    0
-LIASP  DEFW    0
-LIRES DEFB    0
-LIRHL DEFW    0
-LIQUIT   DEFB    0
 LIEND
 
-; LC runtime addresses calculated after image layout is known.
-LCREN    EQU     LCBASE+(LIENT-LCIMG)
-LCGATE     EQU     LCBASE+(LIGATE-LCIMG)
-LCFIN   EQU     LCBASE+(LIFIN-LCIMG)
-LCPEEK     EQU     LCBASE+(LIPEEK-LCIMG)
-LCA2M      EQU     LCBASE+(LIA2M-LCIMG)
-LCNOP     EQU     LCBASE+(LINOP-LCIMG)
-LCBCST    EQU     LCBASE+(LIBCST-LCIMG)
-LCBCIN    EQU     LCBASE+(LIBCIN-LCIMG)
-LCBCOUT   EQU     LCBASE+(LIBCOUT-LCIMG)
-LCBRDR    EQU     LCBASE+(LIBRDR-LCIMG)
-LCBNULL   EQU     LCBASE+(LIBNULL-LCIMG)
-LCBERR    EQU     LCBASE+(LIBERR-LCIMG)
-LCBZERO   EQU     LCBASE+(LIBZERO-LCIMG)
-LCBTRAN   EQU     LCBASE+(LIBTRAN-LCIMG)
-LCMSP   EQU     LCBASE+(LIMSP-LCIMG)
-LCASP    EQU     LCBASE+(LIASP-LCIMG)
-LCRES   EQU     LCBASE+(LIRES-LCIMG)
-LCRHL   EQU     LCBASE+(LIRHL-LCIMG)
-LCQUIT     EQU     LCBASE+(LIQUIT-LCIMG)
-LCLEN     EQU     LIEND-LCIMG
+; LC runtime addresses; only eight-character distinct symbol prefixes.
+LCREN       EQU     LCBASE+(LIENT-LCIMG)
+LCGATE      EQU     LCBASE+(LIGATE-LCIMG)
+LCFIN       EQU     LCBASE+(LIFIN-LCIMG)
+LCRES       EQU     LCBASE+(LIRES-LCIMG)
+LCPEE0      EQU     LCBASE+(LIPEEK-LCIMG)
+LCA2MR      EQU     LCBASE+(LIA2M-LCIMG)
+LCNOP       EQU     LCBASE+(LINOP-LCIMG)
+LCBCST      EQU     LCBASE+(LIBCST-LCIMG)
+LCBCIN      EQU     LCBASE+(LIBCIN-LCIMG)
+LCBCOUT     EQU     LCBASE+(LIBCOUT-LCIMG)
+LCBRDR      EQU     LCBASE+(LIBRDR-LCIMG)
+LCBNULL     EQU     LCBASE+(LIBNULL-LCIMG)
+LCBERR      EQU     LCBASE+(LIBERR-LCIMG)
+LCBZERO     EQU     LCBASE+(LIBZERO-LCIMG)
+LCBTRAN     EQU     LCBASE+(LIBTRAN-LCIMG)
+LCQUIT      EQU     AXQUIT
+LCLEN       EQU     LIEND-LCIMG
 
-
-
-; Scratch: one record for F_READ. MAIN $5000 holds saved LC bank2.
+; MAIN staging buffer for 128-byte ProDOS record reads.
 AUXSTAGE    DEFS    128
+
+
+
 
 			ORG		0A400H
 ; Dedicated stack: the live directory buffer ends at ~$97F2.

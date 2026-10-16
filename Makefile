@@ -61,7 +61,7 @@ disk: $(DISK_IMAGE)
 
 $(DISK_IMAGE): $(PRODOS65) $(PRODOS80)
 	echo 'Creating $@ with Cadius...'
-	$(CADIUS) createvolume "$@" "$(DISK_VOLUME)" 32MB
+	$(CADIUS) createvolume "$@" "$(DISK_VOLUME)" 800KB
 	$(CADIUS) createfolder "$@" "/$(DISK_VOLUME)/A"
 	$(CADIUS) createfolder "$@" "/$(DISK_VOLUME)/B"
 	$(CADIUS) createfolder "$@" "/$(DISK_VOLUME)/C"
@@ -86,7 +86,7 @@ mame: debug
 
 # Never delete the source files, ProDOS image, or hard-disk images.
 clean:
-	rm -f "$(PRODOS65)" "$(PRODOS80)" "$(RAW65)" "$(RAW80)"
+	rm -f "$(PRODOS65)" "$(PRODOS80)" "$(RAW65)" "$(RAW80)" _FileInformation.txt
 
 help:
 	@printf '%s\n' \

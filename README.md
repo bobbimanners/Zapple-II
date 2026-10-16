@@ -1,215 +1,78 @@
-# Zapple-II
+# BP/M AUX56 — first integrated experimental build
 
-**CP/M programs on an Apple IIe Z80 SoftCard, using ProDOS files instead of CP/M disks.**
+**Status: experimental Z80 source; static layout checks passed. Not assembled with Udo Munk Z80asm or tested in MAME/hardware.** Back up the working AUX44 build and your ProDOS disk image before trying this. No SOFTCARD65 changes are required (continue using the existing Soroc-default, cursor-fixed driver).
 
-Zapple-II is a collection of tools and software for running Z80 programs on an Apple II with a Microsoft Z80 SoftCard (or compatible card). Its main component, **BP/M**, is a CP/M 2.2-compatible environment that runs on top of **ProDOS 8**.
+This is a **first integration attempt** after the independently tested LC2.COM experiment. Its aim is a larger ordinary CP/M 2.2 transient program area without moving the ProDOS-backed BDOS or CCP out of main memory.
 
-This is not a Z80 CPU emulator: CP/M programs execute on the **real Z80 processor** on the SoftCard. BP/M implements the CP/M **CCP**, **BDOS**, and much of the **BIOS** interface, translating CP/M file operations into ProDOS calls handled by the Apple II's 6502. CP/M drive letters refer to **ProDOS subdirectories**, so there is no need to use CP/M-formatted floppy disks.
+## TPA and gateway
 
-The current **AUX44** implementation uses the Apple IIe's auxiliary memory to provide a **44 KB CP/M memory configuration** (43.75 KiB available between `$0100` and `$AFFF`). It supports real-world applications including WordStar, Turbo Pascal, and Microsoft BASIC.
+| Z80 logical address | Physical storage | Use |
+|---|---|---|
+| `$0000–$00FF` | AUX ordinary RAM | CP/M page zero, FCBs, DMA |
+| `$0100–$AFFF` | AUX ordinary RAM | Original 44K address window |
+| `$B000–$DEFF` | AUX Language Card, bank 2/common | Additional 11.75 KiB |
+| `$DF00–$DFFF` | AUX Language Card, bank 2/common | BDOS entry, BIOS table, switching code |
+| `$E000–$EFFF` | Apple II I/O / slot space | Not usable RAM |
+| `$F300` | AUX ordinary Apple `$0300` | Synthetic 15-byte CP/M DPB |
+| `$F800–$FFFF` | AUX ordinary Apple `$0800–$0FFF` | Synthetic 2K allocation vector |
 
-## Requirements
+The TPA is `$0100–$DEFF` inclusive: **56,832 bytes (55.5 KiB)**. The sign-on banner reports 55K because it truncates to whole KiB.
 
-- An **Apple IIe with 128 KB RAM** (or a compatible emulation with auxiliary RAM).
-- A **Microsoft Z80 SoftCard** or compatible Z80 card, currently configured for **slot 4**.
-- **ProDOS 8**, with **BASIC.SYSTEM** if launching from the ProDOS BASIC prompt.
-- A ProDOS volume containing the Zapple-II files and the CP/M drive directories.
+## How the new gateway works
 
-The AUX44 version requires the auxiliary RAM available on a 128 KB Apple IIe. Development and testing have been carried out in **MAME**; hardware and other emulator configurations may need adjustments.
+The user's `.COM` executes with normal RAMRD/RAMWRT=AUX, ALTZP=AUX, and Language Card bank 2 active. Its `CALL 0005H` goes to the public BDOS entry at `$DF00` in AUX LC. The LC gateway sets ordinary RAM mapping to MAIN and jumps to `AXGATE` in **ordinary MAIN RAM at `$7A00`**. That bridge saves the auxiliary SP, selects MAIN ALTZP, restores the resident main SP, and invokes the existing BDOS dispatcher.
 
-## Quick start
+After the call, it restores the AUX LC bank 2/ALTZP, original SP and returned A/HL, then jumps to a small **AUX LC** return stub. Only that LC stub selects ordinary RAMRD/RAMWRT back to AUX before `RET` to the transient. This avoids switching instruction fetches out from under running code.
 
-1. Boot **ProDOS 8**. The included `zapple2.po` is a ProDOS disk image; depending on the version of the image, you may need to boot ProDOS from another disk or device first.
-2. Make the Zapple-II volume or directory your current **ProDOS prefix**, so `SOFTCARD65` can find `SOFTCARD80.BIN`.
-3. From **BASIC.SYSTEM**, start the system with:
+Main-memory wrappers around auxiliary reads copy FCBs, data records and strings whether the buffers fall in conventional auxiliary RAM or the auxiliary LC range. The synthetic DPB and allocation vector can no longer live at B100/B800, since those addresses are now in the TPA.
 
-   ```text
-   -SOFTCARD65
-   ```
+## Memory preservation
 
-4. `SOFTCARD65` loads the Z80 code and hands control to the SoftCard. You should see the BP/M startup message followed by a CP/M-style prompt:
+During an AUX56 program the kernel uses spare **MAIN ordinary RAM** for snapshots:
 
-   ```text
-   BP/M AUX TPA 44K
-   A>
-   ```
+| MAIN Z80 region | Saved state |
+|---|---|
+| `$2000–$27FF` | AUX `$F800–$FFFF` metadata area |
+| `$2800–$280F` | AUX `$F300–$F30F` metadata area |
+| `$3000–$3FFF` | Complete 4K MAIN LC bank 2 |
+| `$4000–$6FFF` | Complete 12K AUX LC bank 2 + common area (also reused for 12K MAIN LC preservation during CCP `SAVE`) |
 
-5. Enter CCP commands or launch `.COM` programs by name. The `.COM` extension is optional when starting a program:
+These are restored after the transient returns, including on handled loader errors. The **other** 4K LC bank is not modified. The persistent main resident BDOS and ProDOS I/O buffers remain in their previous locations.
 
-   ```text
-   A>DIR
-   A>MBASIC
-   A>WS
-   A>TP
-   ```
+**Important:** If a resident `/RAM` driver or other ProDOS component actively uses AUX LC while the program runs, accesses during BDOS calls could interfere. Test without `/RAM` and other auxiliary-memory resident drivers. Copy-on-entry/restore-on-exit alone does **not** provide concurrent ownership of AUX LC.
 
-6. To leave BP/M and return to the ProDOS program selector, enter `BYE` and confirm with `Y`:
+## Building
 
-   ```text
-   A>BYE
-   Y/N? Y
-   ```
+Replace your `softcard80.asm` with the supplied `softcard80-aux56.asm`, retain the existing SOFTCARD65, assemble using your normal Udo Munk Z80asm build, and put the updated Z80 image on a **backed-up** ProDOS test image. Alternatively, review `bpm-aux56.patch` against `softcard80-aux44-save44-plus-bdos.asm` (your AUX44 SAVE fix plus BDOS 11/12 fixes). The patch is for human review if your local source has diverged.
 
-**Note:** BASIC.SYSTEM does not accept arbitrary CP/M command arguments after `-SOFTCARD65`. Start BP/M first, then enter commands at its `A>` prompt.
+`python3 test_hi56_layout.py` checks HI56 payload placement across the B000 boundary.
 
-### Drives and files
+`python3 check_aux56.py` does a heuristic **static** check for segment capacities, first-eight-character label collisions, the embedded gateway size and relative jumps. It is **not** a substitute for a real assembler or MAME test.
 
-BP/M maps CP/M drive letters to directories on a **normal ProDOS volume**:
+## Test sequence
 
-| CP/M drive | ProDOS directory | Example file |
-| --- | --- | --- |
-| `A:` | `A/` | `A/WS.COM` |
-| `B:` | `B/` | `B/TEST.TXT` |
-| `C:` | `C/` | `C/MBASIC.COM` |
+Please **cold-boot** after installing the new binary. Start small:
 
-The mapping supports drive letters `A:` through `P:` when the corresponding directories exist. Relative paths use the active ProDOS volume/prefix; if no prefix is set, BP/M looks for an appropriate volume containing a drive directory.
-
-Files remain ordinary **ProDOS files**. BP/M exposes them through CP/M's 8.3 filename and 128-byte record conventions. Copy programs and their associated data/overlay files into the appropriate ProDOS directory. For example, WordStar uses `WS.COM` together with its `.OVR` files.
-
-## CCP commands
-
-BP/M includes its own small **Console Command Processor (CCP)**. Commands are case-insensitive.
-
-| Command | Description | Example |
-| --- | --- | --- |
-| `DIR [filespec]` | List files on the current drive or matching a filename pattern; four columns | `DIR A:*.COM` |
-| `TYPE filespec` | Display a text file | `TYPE README.TXT` |
-| `ERA filespec` | Delete file(s); wildcard deletions require confirmation | `ERA *.BAK` |
-| `REN new=old` | Rename a file; destination name comes first | `REN NEW.TXT=OLD.TXT` |
-| `SAVE n filespec` | Save `n` 256-byte pages of auxiliary TPA memory starting at `$0100` (0–175 pages) | `SAVE 175 SNAP.COM` |
-| `A:` … `P:` | Change the default CP/M drive | `B:` |
-| `TERM SOROC` | Select Soroc IQ-120-style terminal emulation | `TERM SOROC` |
-| `TERM VIDEX` | Select Videx/VideoTerm-style terminal emulation | `TERM VIDEX` |
-| `BYE` | Exit BP/M to ProDOS after confirmation | `BYE` |
-| `program [args]` | Load and run a CP/M `.COM` file, passing its arguments through the CP/M command tail/FCBs | `WS TEST.TXT` |
-
-`DIR` and `ERA` support CP/M-style `?` and `*` filename wildcards. Be careful with `ERA`, especially with wildcard patterns.
-
-`TERM` is a **built-in command**; a separate `TERM.COM` is no longer needed. The latest 6502 driver is set up to start in **Soroc mode** by default, although you can change modes whenever you like.
-
-**`SAVE` in AUX44:** `SAVE n filespec` writes the contents of **auxiliary RAM**, where the last `.COM` program ran, beginning at Z80 `$0100`. Each page is 256 bytes; the maximum is **175 pages = 44,800 bytes** (`$0100–$AFFF`). For example, `SAVE 175 SNAP.COM` saves the entire available TPA, and `SAVE 1 FIRST.BIN` saves its first page. `SAVE` does **not** save the resident main-memory BDOS or the auxiliary CP/M page zero. The data is whatever remains in auxiliary memory from the previous transient, including any changes it made. Loading another `.COM` program overwrites that memory; save immediately after the program you want to capture. `SAVE` writes binary data; use a fresh filename, since ProDOS may reject creation if the file already exists.
-
-### Some things to try
-
-```text
-A>DIR
-A>DIR B:
-A>DIR A:*.COM
-A>TYPE B:NOTES.TXT
-A>B:
-B>DIR
-B>A:
-A>REN NEW.TXT=OLD.TXT
-A>TERM VIDEX
-A>TERM SOROC
-A>WS TEST.TXT
+```
+A>HELLO44
+A>WBOOT44
+A>HI9000
+A>HI56
 ```
 
-Utilities such as `PIP`, `STAT`, `ASM`, `DDT`, and `ZSID` are **external CP/M programs**, not built-in CCP commands. They must be present as `.COM` files on a mapped drive.
+The new `HI56.COM` is about 47 KiB on disk, jumps from `$0100` to Z80 `$B900` in **AUX Language Card RAM**, and prints through ordinary BDOS function 9:
 
-## CP/M programs
-
-The following applications and utilities are known to work, or have been used in the course of BP/M development. The exact version and terminal configuration can matter.
-
-| Program | Purpose / notes |
-| --- | --- |
-| **MBASIC** | Microsoft BASIC interpreter; runs with BP/M's Apple II terminal support. |
-| **ASM** | Digital Research's CP/M 8080 assembler. |
-| **ZSID** | Z80-oriented symbolic debugger. |
-| **DDT** | Digital Research's CP/M debugger. |
-| **TE** | Full-screen text editor; works with the terminal emulation. |
-| **WordStar 3.3** | Full-screen word processor; a generic CP/M release works with Soroc terminal support. Other machine-specific installations may need adjustment. |
-| **Turbo Pascal 3** | Integrated Pascal editor/compiler; tested compiling to memory and generating standalone `.COM` executables that run from the CCP. |
-| **PIP** | CP/M file copier; tested copying entire directories, including large files. |
-| **STAT** | Drive/file status utility. |
-| **DUMP** | Hex dump utility. |
-| **NSWEEP** | Interactive file-management utility. |
-| **BASIC/5** | Processor Technology SOL-20 BASIC/5; example code is included in this repository. |
-
-For example, Turbo Pascal 3 can compile a simple Pascal program to `TEST.COM`. The resulting file can then be run directly:
-
-```text
-A>TEST
-Hello World
-A>
+```
+HI56: executing from AUX LC at B900h; BDOS 9 PASS
 ```
 
-WordStar and Turbo Pascal use full-screen control sequences, so a suitable terminal configuration is important. **Soroc** is the recommended starting point for the tested versions.
+Only if that succeeds should you try existing programs such as `AUXSRCH`, `AUXFS`, `TE`, `PIP`, `MBASIC`, `STAT`, WordStar and Turbo Pascal. Large file operations and the terminal should be exercised again after the memory-system changes.
 
-## How BP/M works
+If the machine freezes or prints garbage, **reset the emulator** before further testing. A crash during ALTZP/LC transitions can leave ProDOS with the wrong memory configuration.
 
-The implementation has two cooperating pieces:
+## Deferred work / caveats
 
-- **`SOFTCARD65`** is the 6502-side ProDOS SYS loader and backend. It loads the Z80 image, switches between the 6502 and Z80 as required, performs ProDOS MLI operations, and implements the direct 80-column console driver.
-- **`SOFTCARD80.BIN`** is the Z80-side operating system: CP/M-compatible BDOS/BIOS services, a small CCP, ProDOS file translation, and auxiliary-memory program loading.
-
-In the AUX44 configuration, transient `.COM` programs execute in auxiliary memory at `$0100–$AFFF`. Most BP/M resident code stays in main memory. A small **Language Card gateway** switches between the transient's auxiliary-memory context and the resident BDOS/BIOS code, including marshalling file control blocks and DMA buffers across memory banks.
-
-A typical file operation follows this path:
-
-```text
-CP/M application on the Z80 (AUX RAM)
-          |
-          v
-       CP/M BDOS
-          |
-          v
- AUX / MAIN memory gateway
-          |
-          v
- 6502 backend -> ProDOS MLI -> ProDOS file
-```
-
-This approach avoids maintaining a separate CP/M disk filesystem and lets the Z80 programs share ordinary ProDOS storage. There is some overhead: CP/M's 128-byte record operations and cross-processor handoffs can make file I/O slower than native ProDOS software.
-
-## Building from source
-
-Prebuilt binaries and the disk image are provided in the repository. **Ensure your disk image contains the current AUX44 binaries** if you want the 44 KB configuration; older images/builds may contain an earlier version of BP/M.
-
-The main development sources are:
-
-- `SOFTCARD80.ASM` — Z80 BDOS, BIOS, CCP and auxiliary-memory support.
-- `SOFTCARD65.S` — 6502 ProDOS loader and terminal/backend driver.
-- `z80asm/` — Udo Munk's Z80 assembler (also builds on Linux).
-- `z80as/` — alternative Mark Williams Z80 cross-assembler sources/tools.
-- `zapple2.po` — ProDOS disk image.
-
-### Z80 side
-
-The Z80 code is assembled using **Udo Munk's Z80asm**, version 1.1. Under Linux, from the source directory, the basic invocation is:
-
-```sh
-z80asm softcard80.asm
-```
-
-Place the resulting Z80 binary on the ProDOS volume as **`SOFTCARD80.BIN`** (with the appropriate ProDOS binary file type/load address). The SoftCard configuration assumes that image is loaded into the Apple II's memory at `$1000`.
-
-Be aware that this older assembler treats only the first **eight characters of symbol names** as significant. The Z80 sources therefore avoid long, colliding labels.
-
-### 6502 side
-
-The 6502 code is assembled with **Merlin 8** (the original project uses Merlin 8 v2.58). The resulting **SYS** program is `SOFTCARD65`. Preserve its ProDOS file type when moving it to a disk image; it must be launchable by BASIC.SYSTEM's `-SOFTCARD65` command.
-
-The 6502 and Z80 sources both assume **SoftCard slot 4**. A different slot requires corresponding changes to the SoftCard address constants, and an appropriate rebuild.
-
-The repository also contains the older Z80 assembler toolchain and the Processor Technology BASIC/5 example. See their source directories for further detail.
-
-## Status and limitations
-
-BP/M is a working **CP/M 2.2-compatible environment**, not a byte-for-byte reproduction of Digital Research CP/M. In particular:
-
-- There is **no conventional CP/M disk image or sector-level disk BIOS**; BDOS file calls are translated to ProDOS operations. Programs that bypass BDOS to access disk sectors may not work.
-- Disk metadata, allocation vectors, and file attributes are synthetic approximations where CP/M and ProDOS differ.
-- File-name rules and some less-common BDOS/BIOS operations are not fully implemented.
-- File I/O works, but it can be **slow**, especially for programs that make many small record transfers.
-- Terminal compatibility depends on the installed application's expected control sequences.
-- The 44 KB memory configuration requires auxiliary RAM and is distinct from earlier 32 KB releases.
-
-Successful application startup is not a substitute for checking important output files. Keep backups when testing programs that make extensive or random-access changes to data.
-
-## Background
-
-Zapple-II started as an experiment in running Z80 code under ProDOS, with 6502-hosted assemblers and a small CP/M BDOS compatibility layer. Over time it has grown into **BP/M**, a usable ProDOS-backed CP/M environment with its own CCP, auxiliary-memory TPA, terminal drivers, and support for substantial CP/M applications.
-
-**Source:** [github.com/bobbimanners/Zapple-II](https://github.com/bobbimanners/Zapple-II)  
-**License:** [BSD 2-Clause](LICENSE)
+* **`SAVE` is deliberately still limited to 175 pages** (44K ordinary AUX region). The AUX LC is restored after programs exit, so the classic `SAVE` command cannot yet retrieve transient LC contents. A full 55.5 KiB SAVE requires a separate persistent snapshot design.
+* `BYE` and all existing interactive CCP commands should remain unchanged, but they require regression testing.
+* This is source only, with a new diagnostic COM; do **not** call it a verified working AUX56 release before assembly and real MAME testing.
+* No sector-level CP/M BIOS disk services have been added; file I/O remains through the existing ProDOS-backed BDOS.
