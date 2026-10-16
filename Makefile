@@ -71,6 +71,9 @@ $(DISK_IMAGE): $(PRODOS65) $(PRODOS80)
 	cd cpm-apps/Utils && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/B" .
 	cd cpm-apps/TP3 && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/B" .
 	cd cpm-apps/WS3 && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/B" .
+	cd cpm-apps/Supercalc && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/C" .
+	cd cpm-apps/dBase-II && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/D" .
+	cd cpm-apps/Fortran-80 && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/E" .
 	$(CADIUS) addfile "$@" "/$(DISK_VOLUME)" "$(PRODOS65)"
 	$(CADIUS) addfile "$@" "/$(DISK_VOLUME)" "$(PRODOS80)"
 

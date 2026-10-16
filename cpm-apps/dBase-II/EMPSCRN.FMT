@@ -1,0 +1,16 @@
+* EMPSCRN.FMT
+@ 2,20 SAY 'Employee Entry Screen'
+@  4,10 SAY "Employee number"
+@  4,26 SAY emp:nmbr
+@  5,10 SAY "First      " GET first PICTURE '!XXXXXXXXX'
+@  6,10 SAY "Last       " GET last PICTURE '!XXXXXXXXX'
+@  7,10 SAY "Address    " GET addr
+@  8,10 SAY "City       " GET city
+@  9,10 SAY "zip code   " GET zip:code PICTURE '99999-9999'
+@ 10,10 SAY "Phone      " GET phone PICTURE '999-9999'
+@ 12,10 SAY 'Soc. Sec. no  ' GET ssn PICT '999-99-9999'
+@ 14,10 SAY "Hire date     " GET hiredate PICTURE '99/99/99'
+@ 16,10 SAY "Classification" GET class PICT '!!!'
+@ 17,10 SAY "Department    " GET dept PICT '!!!'
+@ 18,10 SAY "Staring pay rate" GET start:pay PICTURE '9999.999'
+

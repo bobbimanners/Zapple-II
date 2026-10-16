@@ -629,8 +629,16 @@ AXFEND      LD      (AXSTAT),A
 ; Copy caller FCB back, including updated extent/record/file-open marker.
             LD      HL,AXFCB
             LD      DE,(AXFCBP)
+            ; Sequential BDOS calls use only the 33-byte FCB.
+            ; Copying 36 bytes would overwrite the next FCB in F80,
+            ; which stores its source, listing and object FCBs adjacent.
+            ; Random-record functions (33,34,35,36,40) need 36 bytes.
+            LD      BC,33
+            LD      A,(AXFN)
+            CP      33
+            JR      C,AXFCPY
             LD      BC,36
-            CALL    AXM2A
+AXFCPY      CALL    AXM2A
 ; A successful read transfers the 128-byte MAIN DMA result to AUX.
             LD      A,(AXSTAT)
             OR      A
@@ -1835,7 +1843,7 @@ F_OPEN		CALL	_F_OPEN			; Open physical ProDOS file
 			RET		NZ
 			PUSH	DE
 			POP		IX
-			LD		(IX+0EH),0FEH	; Logical CP/M open, no host handle
+			LD		(IX+0EH),07EH	; Virtual-open marker (bit 7 clear for dBASE II)
 			XOR		A
 			LD		L,A
 			RET
@@ -1941,9 +1949,11 @@ F_CLOSE		LD		H,D				; Pointer to FCB ...
 			LD		BC,0EH			; Offset to S2 field (reserved field)
 			ADD		HL,BC			; Compute address
 			LD		A,(HL)			; Obtain file reference num from FCB S2
-			CP		0FEH			; Virtual CP/M open, no ProDOS ref
+			CP		07EH			; Virtual CP/M open marker
+			JR		Z,FCVIRT
+			CP		0FEH			; Accept old high-bit-set marker too
 			JR		NZ,FCPHYS
-			LD		(HL),0			; Mark CP/M file closed
+FCVIRT		LD		(HL),0			; Mark CP/M file closed
 			JP		FCSUCC
 FCPHYS		CP		0				; If file reference number is zero ...
 			JR		Z,FCSUCC		; ... Nothing to do, just return
@@ -2129,7 +2139,9 @@ FDWRET		POP		AF
 IO_BEGIN	XOR		A
 			LD		(IOVIRT),A
 			LD		A,(IX+0EH)
-			CP		0FEH
+			CP		07EH			; dBASE II clears S2 bit 7
+			JR		Z,IO_REOPEN
+			CP		0FEH			; Also recognize legacy marker
 			JR		Z,IO_REOPEN
 			OR		A				; Zero means not open
 			JR		Z,IO_BAD
@@ -2176,7 +2188,7 @@ IO_END		PUSH	AF
 			CALL	F_CLOSE
 			OR		A
 			JR		NZ,IO_CERR
-			LD		(IX+0EH),0FEH	; Still logically open to CP/M
+			LD		(IX+0EH),07EH	; Still logically open to CP/M
 IO_DONE		POP		AF
 			LD		L,A
 			RET

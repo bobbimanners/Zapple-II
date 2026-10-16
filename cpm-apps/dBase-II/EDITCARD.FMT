@@ -1,0 +1,26 @@
+* EDITCARD.FMT
+@  1,10 SAY "Tickle File Control Screen"
+@  3, 0 SAY "Contact " GET contact
+@  4, 0 SAY "Company " GET company
+@  5, 0 SAY "Address " GET address
+@  6, 0 SAY "City    " GET city
+@  7, 0 SAY "State   " GET state
+@  7,16 SAY "Zip " GET zip PICT '99999-9999'
+@  8, 0 SAY "Phone   " GET phone PICT '999/999-9999'
+@  3,54 SAY "Your Initials  "
+@  3,69 GET initials PICT '!!!'
+@  4,54 SAY "Entry Date"
+@  4,67 GET e:date PICT '99/99/99'
+@  5,54 SAY "Tickle Date"
+@  5,67 GET tkl:date PICT '99/99/99'
+@  6,54 SAY 'Keyword  ' GET keyword
+@ 10, 2 SAY "Comment   " GET line1
+@ 11,12 GET line2
+@ 14, 0 SAY "--------------------------------------------------"
+@ 14,50 SAY "------------------------------"
+@ 15,08 SAY "     ^ ^E  fields               ^R  back cards(records)"
+@ 16,08 SAY "^S < @ > ^D characters          ^C  forward cards"
+@ 17,08 SAY "     v ^X  fields           ^ - Press 'CONTROL' key and CHARACTER"
+@ 19, 3 SAY "Press cntrl Y to Erase a field"
+@ 20, 9 SAY "cntrl W to exit EDIT mode"
+ARD FROM YOU LETTER'                             JIM          IMPLEMENT                      /  /  03/21/89'HOW TO MAKE RUNTIME WORK FOR YOU'                               JIM          JACK FOR REVIEW                /  /  03/17/83GET COPY OF IDEA SUBMISSION AGREEMENT FROM JUDY HEMERYCK         SUZANNE      TO JIM                         /  /  03/15/83CALL PEOPLE ABOUT SALES INQUIRIES AND FOLLOW-UP                  SUZANNE      TO JIM                         /  /  03/16/83CALL DEVELOPERS WITH PROBL

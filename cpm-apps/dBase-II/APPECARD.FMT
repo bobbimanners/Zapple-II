@@ -1,0 +1,24 @@
+* APPECARD.cmd
+@  1,10 SAY "Append Cards to Tickle File"
+@  3, 0 SAY "Contact " GET contact
+@  4, 0 SAY "Company " GET company
+@  5, 0 SAY "Address " GET address
+@  6, 0 SAY "City    " GET city
+@  7, 0 SAY "State   " GET state
+@  7,16 SAY "Zip " GET zip PICT '99999-9999'
+@  8, 0 SAY "Phone   " GET phone PICT '999/999-9999'
+@  3,54 SAY "Your Initials  " GET initials PICT '!!!'
+@  4,54 SAY "Entry Date"
+@  4,67 GET e:date PICT '99/99/99'
+@  5,54 SAY "Tickle Date"
+@  5,67 GET tkl:date PICT '99/99/99'
+@  6,54 SAY 'Keyword  ' GET keyword
+@ 10, 2 SAY "Comment   " GET line1
+@ 11,12 GET line2
+
+@ 14, 0 SAY "--------------------------------------------------"
+@ 14,50 SAY "------------------------------"
+@ 15, 2 SAY "To exit APPEND press RETURN when cursor is positio"
+@ 15,52 SAY "ned on Contact field."
+
+
