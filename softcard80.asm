@@ -3071,6 +3071,8 @@ N2FL1		INC		HL				; Advance source pointer
 			CP		8+3				; If 8+3 chars have been written ...
 			JP		Z,N2FS6			; We are done
 			LD		A,(HL)			; Read character
+			CP		':'				; See if it is a colon - terminates filename
+			JR		Z,N2FS6			; Prepare to copy the extension
 			CP		'.'				; See if it is a period
 			JR		Z,N2FS2			; Prepare to copy the extension
 			CP		'*'				; See if it is an asterix
@@ -3736,10 +3738,7 @@ DRVLETTER	INC		HL				; Advance to second char
 			RET
 DLS1		DEC		HL				; Put HL back to the beginning
 			DEC		HL				; ...
-			LD		A,(CURDRV)		; Get drive and user number
-			AND		0FH				; Mask out user number
-			INC		A				; FCB drive numbers are 1-based
-			LD		B,A				; Always use default drive
+			LD		B,0				; Use default drive
 			RET
 
 ; Handle the end of command/argument tokens. State B is 0..6:
