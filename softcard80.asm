@@ -661,9 +661,9 @@ AXM2A       LD      A,(LCB2RW)
             RET
 
 ; ================================================================
-; AUX56 CCP SAVE: dump transient AUX RAM, not resident MAIN RAM.
-; This routine lives in idle MAIN $7400-$75FF; it borrows the same
-; LC bank2 copy primitive used by the working AUX filesystem gateway.
+; AUX56 CCP SAVE: dump full $0100-$DEFF transient image.
+; Low memory is read from ordinary AUX RAM via the LC trampoline.
+; High memory is read from the post-execution AUX LC snapshot in MAIN.
 ; Only MAIN $AUXSTAGE is passed as the ProDOS write DMA buffer.
 ; ================================================================
             ORG     07400H
@@ -678,7 +678,7 @@ SVDEC      LD      A,(HL)
            JP      NC,SVBAD
            LD      C,A
            LD      A,B
-           CP      18             ; guard 8-bit 10*x+digit overflow
+           CP      23             ; max previous value 22: 22*10+9<256
            JP      NC,SVBAD
            ADD     A,A
            LD      D,A
@@ -686,14 +686,19 @@ SVDEC      LD      A,(HL)
            ADD     A,A
            ADD     A,D
            ADD     A,C
-           CP      176            ; legal pages: 0 through 175
+           CP      223            ; legal pages: 0 through 222
            JP      NC,SVBAD
            LD      B,A
            INC     HL
            JR      SVDEC
 SVNUM      LD      A,B
            LD      (SVPAGES),A
-           LD      DE,FCB2
+           CP      176            ; higher pages need post-transient LC image
+           JR      C,SVMAKE
+           LD      A,(SVVALID)
+           OR      A
+           JP      Z,SVBAD        ; no valid high-memory image yet
+SVMAKE     LD      DE,FCB2
            CALL    F_MAKE
            OR      A
            JP      NZ,SVIOERR
@@ -702,13 +707,13 @@ SVNUM      LD      A,B
            LD      A,(SVPAGES)
            OR      A
            JR      Z,SVEMPTY
-           CALL    SVPREP         ; preserve ProDOS's full LC bank2
+           CALL    SVPREP         ; preserve ProDOS's full MAIN LC bank2
 SVPAGE     LD      A,(SVPAGES)
            OR      A
            JR      Z,SVDONE
            LD      B,2            ; two 128-byte records per page
 SVRECORD   PUSH    BC
-           CALL    SVCOPY         ; AUX (SVPTR) -> MAIN AUXSTAGE
+           CALL    SVCOPY         ; ordinary AUX or preserved AUX LC
            LD      HL,AUXSTAGE
            LD      (DMAADDR),HL
            LD      DE,FCB2
@@ -724,7 +729,7 @@ SVRECORD   PUSH    BC
 SVDONE     LD      DE,FCB2
            CALL    F_CLOSE
            LD      (SVSTAT),A
-           CALL    SVREST         ; restore entire 4K LC bank2
+           CALL    SVREST         ; restore full MAIN LC bank2/common
            LD      A,(SVSTAT)
            OR      A
            JR      NZ,SVIOERR
@@ -747,8 +752,9 @@ SVBAD      LD      DE,BFMSG
            CALL    C_WRITESTR
            JR      SVRESET
 
-; SAVE writes its helper to MAIN LC common $FFxx, so preserve ALL 12K
-; of MAIN LC bank 2/common at MAIN $4000-$6FFF, not just the 4K bank.
+; SAVE needs both the last transient's LC image (MAIN $4000-$6FFF)
+; and ProDOS's own MAIN LC preserved across F_WRITE. Save the latter
+; to MAIN $1000-$3FFF, which is no longer needed after the transient.
 SVPREP     XOR     A
            LD      (SW80OFF),A
            LD      (ZPMAIN),A
@@ -757,16 +763,22 @@ SVPREP     XOR     A
            LD      A,(LCB2RW)
            LD      A,(LCB2RW)
            LD      HL,0B000H
-           LD      DE,04000H
+           LD      DE,01000H
            LD      BC,03000H
            LDIR
            LD      A,(LCB1RO)
            RET
 
-; Reinstall the existing LC trampoline before EACH record because
-; ProDOS is entitled to use LC bank2 while F_WRITE runs. LCA2M
-; executes from LC (not swappable MAIN RAM), so AUX read is safe.
-SVCOPY     LD      A,(LCB2RW)
+; Before $B000, read ordinary AUX RAM using the MAIN LC trampoline.
+; From $B000 onward, the program's former AUX LC contents live in MAIN
+; $4000-$6FFF: the AUX LC itself was restored for ProDOS at program exit.
+; Copy 128 bytes from the correct source without modifying the image.
+SVCOPY     LD      HL,(SVPTR)
+           LD      DE,0B000H
+           XOR     A
+           SBC     HL,DE
+           JR      NC,SVHIGH
+           LD      A,(LCB2RW)
            LD      A,(LCB2RW)
            LD      HL,LCIMG
            LD      DE,LCBASE
@@ -779,11 +791,21 @@ SVCOPY     LD      A,(LCB2RW)
            LD      (SVPTR),HL
            LD      A,(LCB1RO)
            RET
+SVHIGH     LD      DE,04000H    ; HL = SVPTR - $B000
+           ADD     HL,DE        ; MAIN $4000 + (SVPTR - $B000)
+           LD      DE,AUXSTAGE
+           LD      BC,128
+           LDIR                  ; MAIN -> MAIN, no LC switches
+           LD      HL,(SVPTR)
+           LD      DE,128
+           ADD     HL,DE
+           LD      (SVPTR),HL
+           RET
 
-; Put back ProDOS's original MAIN LC bank 2/common 12 KiB after close.
+; Put back ProDOS's original MAIN LC bank 2/common after closing file.
 SVREST     LD      A,(LCB2RW)
            LD      A,(LCB2RW)
-           LD      HL,04000H
+           LD      HL,01000H
            LD      DE,0B000H
            LD      BC,03000H
            LDIR
@@ -792,6 +814,7 @@ SVREST     LD      A,(LCB2RW)
 SVPAGES    DEFB    0
 SVPTR      DEFW    0100H
 SVSTAT     DEFB    0
+SVVALID    DEFB    0      ; latest completed AUX LC image in MAIN $4000
 
 ; CCP's built-in command table and terminal selector live in the unused
 ; MAIN-memory TPA.  $7600-$77FF is free of AXBDOS ($7000-$73xx)
@@ -965,8 +988,10 @@ AUXRUN      LD      DE,PATHBUF2
             CALL    _F_OPEN
             OR      A
             JP      NZ,RCOERR
-            ; Before loading a COM, preserve existing MAIN and AUX LC.
-            ; MAIN 4K in $3000, AUX 12K in MAIN $4000-$6FFF.
+            ; Loading overwrites the previous transient's LC snapshot.
+            XOR     A
+            LD      (SVVALID),A
+            ; MAIN 4K in $3000, original AUX 12K in MAIN $4000-$6FFF.
             CALL    AXSNAP
             LD      HL,0100H
             LD      (AUXDEST),HL
@@ -1087,7 +1112,12 @@ AUXLDONE    LD      DE,PATHBUF2
             LD      DE,0F300H
             LD      BC,16
             CALL    AXM2A
-            CALL    AXREST
+            ; Exchange the just-executed AUX LC image with its original
+            ; contents.  AUX LC is restored; MAIN $4000-$6FFF now holds
+            ; the guest image for a subsequent CCP SAVE 176..222.
+            CALL    AXKEEP
+            LD      A,1
+            LD      (SVVALID),A
             LD      HL,FILEBUF
             LD      (DMAADDR),HL
             LD      A,(AUXEXCD)
@@ -1135,7 +1165,38 @@ AXREST      LD      A,(LCB2RW)
             LD      BC,03000H
             LDIR
             LD      (ZPMAIN),A
+            JP      AXMAINLC
+
+; A completed transient's AUX LC image must survive after ProDOS's AUX LC
+; is restored.  Swap the 12K LC and MAIN backup in place.  This turns
+; MAIN $4000-$6FFF into a stable, post-execution AUX LC snapshot.
+; This code executes only in ordinary MAIN RAM, with MAIN RAMRD/RAMWRT.
+AXKEEP      LD      A,(LCB2RW)
             LD      A,(LCB2RW)
+            XOR     A
+            LD      (ZPAUX),A
+            LD      HL,04000H
+            LD      DE,0B000H
+            LD      BC,03000H
+AXKLOOP     LD      A,(HL)        ; original AUX LC byte
+            LD      (AXKTEMP),A
+            LD      A,(DE)        ; transient's AUX LC byte
+            LD      (HL),A        ; persist transient into MAIN
+            LD      A,(AXKTEMP)
+            LD      (DE),A        ; restore original AUX LC
+            INC     HL
+            INC     DE
+            DEC     BC
+            LD      A,B
+            OR      C
+            JR      NZ,AXKLOOP
+            XOR     A
+            LD      (ZPMAIN),A
+            JP      AXMAINLC
+AXKTEMP     DEFB    0
+
+; Restore original 4K MAIN LC bank2 after both kinds of AUX exit.
+AXMAINLC    LD      A,(LCB2RW)
             LD      A,(LCB2RW)
             LD      HL,LCBACK
             LD      DE,0B000H
@@ -1297,6 +1358,7 @@ BDOSINIT	DI
 			; WBOOT deliberately preserves the cached unit.
 			XOR		A
 			LD		(VUCVALID),A
+			LD		(SVVALID),A		; no completed AUX LC snapshot yet
 			LD		HL,BIOSWBOOT
 			LD		(0001H),HL		; 0000H -> BIOS WBOOT JP (CP/M ABI)
 			CALL	BPMSIGN			; Print TPA banner exactly once
