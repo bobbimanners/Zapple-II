@@ -923,6 +923,8 @@ FA_CHG	LD		(GFIMLIAC),A
 			LD		A,10
 			LD		(GFIMLIPL),A	; restore for next GET
 			POP		AF
+			CP		04EH
+			JP		Z,ROFILE
 			OR		A
 			JR		NZ,FA_ERROR
 			LD		L,A
@@ -931,6 +933,41 @@ FA_ERROR	LD		A,0FFH
 			LD		L,A
 			RET
 ATTR_RO		DEFB	0
+
+; CP/M 2.2 distinguishes file R/O from software drive R/O.
+; Errors still return FF to the caller; they do NOT force a warm boot.
+ROFILE		LD		DE,ROFTEXT
+			JR		ROPRINT
+RODISK		LD		DE,RODTEXT
+ROPRINT	PUSH	DE
+			LD		A,1
+			LD		(ROERROR),A
+			LD		DE,ROPTEXT
+			CALL	C_WRITESTR
+			LD		A,(RODRIVE)
+			ADD		A,'A'
+			LD		E,A
+			CALL	C_WRITE
+			POP		DE
+			CALL	C_WRITESTR
+			LD		E,13
+			CALL	C_WRITE
+			LD		A,(AXMODE)	; .COM running in AUX?
+			OR		A
+			JR		Z,ROPRET
+			LD		A,1
+			LD		(AXQUIT),A	; Abort transient through normal AUX gateway
+ROPRET		LD		A,0FFH
+			LD		L,A
+			RET
+RODRIVE	DEFB	0
+ROERROR	DEFB	0
+ROPTEXT	DEFM	'BDOS Err on '
+			DEFB	'$'
+ROFTEXT	DEFM	': File R/O'
+			DEFB	'$'
+RODTEXT	DEFM	': R/O'
+			DEFB	'$'
 
 
 ; Permanent scratch: main TPA is unused by auxiliary transients.
@@ -1668,52 +1705,53 @@ C_READSTR	LD		H,D				; HL will be the working pointer
 			POP		IX				; ...
 			XOR		A				; Set number of chars read to zero
 			LD		(IX+1),A		; ...
-CRSL1		PUSH	HL				; Preserve HL
-			CALL	C_READ			; Read a character into A
-			POP		HL				; Restore HL
-			CP		13				; Carriage return ^M pressed?
-			RET		Z				; If so, we are done
-			CP		10				; Line feed ^J pressed?
-			RET		Z				; If so, we are done
-			CP		8				; Backspace ^H pressed?
-			JP		Z,CRSS2			; Handle backspace
-			CP		7FH				; Delete key pressed?
-			JR		Z,CRSS1			; Handle delete
-			CP		26				; ^X pressed?
-			JP		Z,CRSS3			; Handle ^X
-			LD		B,A				; Stash character in B
-			LD		A,(IX+0)		; Buffer capacity -> A
-			SUB		(IX+1)			; Subtract characters read
-			CP		0				; If no space left ...
-			RET		Z				;  ... we are done
-			LD		(HL),B			; Write character to buffer
-			INC		HL				; Advance to next character
-			INC		(IX+1)			; Increment character count
-			JR		CRSL1			; Loop
-			RET						;
-CRSS1		PUSH	HL
-			LD		E,8				; Print two backspaces (^H)
-			CALL	C_WRITE			; ...
-			CALL	C_WRITE			; ...
-			LD		E,' '			; Print two spaces to erase chars
-			CALL	C_WRITE			; ...
-			CALL	C_WRITE			; ...
-			LD		E,8				; Print two backspaces (^H)
-			CALL	C_WRITE			; ...
-			CALL	C_WRITE			; ...
+; The console input routine must NOT echo before we know whether
+; editing is legal. In particular, backspace on an empty line must not
+; move the cursor into the CCP's A> prompt.  Both ^H and DEL erase one.
+CRSL1		PUSH	HL
+			CALL	BIOSCONIN		; Raw key, no premature echo
 			POP		HL
-CRSS2		PUSH	HL
-			LD		E,' '			; Print space to erase character
-			CALL	C_WRITE			; ...
-			LD		E,8				; Print backspace (^H)
-			CALL	C_WRITE			; ...
-			LD		A,(IX+1)		; Get character count
-			CP		0				; See if it is zero
+			CP		3				; Preserve CP/M Ctrl-C abort
+			JP		Z,BDOSWARM
+			CP		13
+			JR		Z,CRSEND
+			CP		10
+			JR		Z,CRSEND
+			CP		8
+			JR		Z,CRSS2
+			CP		7FH
+			JR		Z,CRSS2
+			CP		26
+			JR		Z,CRSS3
+			LD		B,A
+			LD		A,(IX+0)		; Buffer capacity
+			SUB		(IX+1)
+			RET		Z				; Full: accept/echo nothing else
+			LD		(HL),B
+			INC		HL
+			INC		(IX+1)
+			LD		E,B
+			PUSH	HL
+			CALL	C_WRITE			; Echo accepted character
 			POP		HL
-			JP		Z,CRSL1			; If so, back to top of loop
-			DEC		HL				; Delete previously-entered character
-			DEC		(IX+1)			; Decrement character count
-			JP		CRSL1			; Back to top of loop
+			JR		CRSL1
+CRSEND		LD		E,A				; Echo line terminator
+			CALL	C_WRITE
+			RET
+CRSS2		LD		A,(IX+1)		; Nothing to erase?
+			OR		A
+			JP		Z,CRSL1			; Do not touch prompt or cursor
+			DEC		HL
+			DEC		(IX+1)
+			PUSH	HL
+			LD		E,8				; Back up, erase, back up
+			CALL	C_WRITE
+			LD		E,' '
+			CALL	C_WRITE
+			LD		E,8
+			CALL	C_WRITE
+			POP		HL
+			JP		CRSL1
 CRSS3		LD		A,0				; Set character count to zero to ...
 			LD		(IX+1),A		; ... cancel the entire entry
 			LD		E,13			; Print a carriage return
@@ -2028,6 +2066,8 @@ FD_CHKWILD	LD	A,(HL)
 			CALL	FCB2PATH
 			LD		HL,FDMLI
 			CALL	PRODOS
+			CP		04EH			; ProDOS access denied, not missing
+			JP		Z,ROFILE
 			OR		A
 			JR		Z,FD_OK
 			LD		A,0FFH
@@ -2050,7 +2090,12 @@ FDL1		LD		DE,DFCB
 			CALL	FCB2PATH
 			LD		HL,FDMLI
 			CALL	PRODOS			; ProDOS DESTROY
-			OR		A
+			CP		04EH
+			JR		NZ,FDWCHK
+			LD		A,1
+			LD		(ROERROR),A	; Delay report until search is closed
+			JR		FDS2
+FDWCHK		OR		A
 			JR		NZ,FDS2
 			POP		DE				; Restore original wildcard
 			PUSH	DE
@@ -2066,6 +2111,13 @@ FDSDONE		PUSH	AF				; Preserve deletion status
 			POP		AF
 			POP		DE				; Balance saved wildcard FCB
 			LD		L,A
+			PUSH	AF
+			LD		A,(ROERROR)
+			OR		A
+			JR		Z,FDWRET
+			POP		AF
+			JP		ROFILE
+FDWRET		POP		AF
 			RET
 
 ; CP/M files are logically open even while their ProDOS handle is closed.
@@ -2238,6 +2290,8 @@ F_WRITE_GO
 
 			LD		HL,FWMLI		; Pass address of 6502 JSR instruction
 			CALL	PRODOS			; Invoke ProDOS MLI - WRITE
+			CP		04EH			; No write permission
+			JP		Z,FWRO
 			CP		43H				; See if it is a bad reference number
 			JR		Z,FWBFCB		; If so, return invalid FCB code (9)
 			CP		48H				; See if it was an overrun error
@@ -2261,6 +2315,9 @@ FWDF		LD		A,2				; Disk full return code
 			JP		IO_END			; Close transient handle
 FWERR		LD		A,0FFH			; All other errors are 0FFH
 			JP		IO_END			; Close transient handle
+FWRO		LD		A,0FFH
+			CALL	IO_END			; Release ProDOS handle first
+			JP		ROFILE
 
 ; Create (and open) file
 ; DE is the address of the FCB describing the file to create
@@ -2288,7 +2345,9 @@ F_MAKE		CALL	DCHKRO
 			POP		BC
 			POP		AF
 			RET
-FMERR		PUSH	AF
+FMERR		CP		04EH
+			JP		Z,ROFILE
+			PUSH	AF
 			PUSH	BC
 			PUSH	DE
 			LD		C,A
@@ -2338,7 +2397,9 @@ F_RENAME	CALL	DCHKRO		; Check source FCB drive
 			XOR		A				; Success
 			LD		L,A				; Return code in L also
 			RET
-FRNERR		LD		A,0FFH			; 0FFH for error
+FRNERR		CP		04EH
+			JP		Z,ROFILE
+			LD		A,0FFH			; 0FFH for error
 			LD		L,A				; Return code in L also
 			RET
 
@@ -2738,37 +2799,6 @@ DSR_SET		LD		A,(ROVEC)
 
 ; Return Z iff the FCB's effective drive is writable. Preserve DE, HL, BC.
 ; FCB drive=0 means CURDRV; 1..16 mean explicitly A:..P:.
-DCHKRO	PUSH	BC
-			PUSH	HL
-			LD		A,(DE)
-			OR		A
-			JR		NZ,DCR_EXPL
-			LD		A,(CURDRV)
-			AND		0FH
-			JR		DCR_IDX
-DCR_EXPL	DEC		A
-DCR_IDX	CP		16
-			JR		NC,DCR_BAD
-			LD		B,A
-			LD		HL,(ROVEC)
-			LD		A,B
-			OR		A
-			JR		Z,DCR_BIT
-DCR_SHF	SRL		H
-			RR		L
-			DEC		A
-			JR		NZ,DCR_SHF
-DCR_BIT		LD		A,L
-			AND		01H
-			JR		DCR_DONE
-DCR_BAD		LD		A,1
-			OR		A
-DCR_DONE	POP		HL
-			POP		BC
-			RET
-RODENY	LD		A,0FFH
-			LD		L,A
-			RET
 
 ; Return bitmap of read-only drives in HL
 DRV_ROVEC	LD		HL,(ROVEC)		; Bit 0 of L is A:, bit 7 of H is P:
@@ -2945,8 +2975,13 @@ FWRBFCB		LD		A,9				; Invalid FCB return code
 			JP		IO_END			; Close transient handle
 FWRDF		LD		A,2				; Disk fill return code
 			JP		IO_END			; Close transient handle
-FWRERR		LD		A,0FFH			; All other errors are 0FFH
+FWRERR		CP		04EH
+			JR		Z,FWRRO
+			LD		A,0FFH			; All other errors are 0FFH
 			JP		IO_END			; Close transient handle
+FWRRO		LD		A,0FFH
+			CALL	IO_END
+			JP		ROFILE
 
 
 ; Compute file size (BDOS function 35) from the exact ProDOS EOF.
@@ -4263,6 +4298,9 @@ ERADO      LD      HL,FILEBUF
            CALL    F_DELETE
            OR      A
            RET     Z
+           LD      A,(ROERROR)  ; BDOS already printed R/O reason
+           OR      A
+           RET     NZ
            LD      DE,NFMSG
            JP      C_WRITESTR
 
@@ -4342,7 +4380,10 @@ RENS3		LD		A,B				; Get overall char count into A
 			RET						;
 
 RENS4      JP      CCPBAD
-RENS5		LD		DE,RNEMSG		; 'Rename error' message
+RENS5		LD		A,(ROERROR)
+			OR		A
+			RET		NZ				; BDOS already printed R/O reason
+			LD		DE,RNEMSG		; 'Rename error' message
 			CALL	C_WRITESTR		; ...
 			RET
 
@@ -4852,6 +4893,42 @@ LCLEN       EQU     LIEND-LCIMG
 
 ; MAIN staging buffer for 128-byte ProDOS record reads.
 AUXSTAGE    DEFS    128
+
+; Drive read-only check/reporter is an independent helper. Move it out
+; of resident $8100-$97FF, which must not overlap IOBUF1 at $9800.
+; Its callers use CALL DCHKRO / JP RODENY; all JR targets stay local.
+DCHKRO	PUSH	BC
+			PUSH	HL
+			XOR		A
+			LD		(ROERROR),A	; Clear stale error from previous call
+			LD		A,(DE)
+			OR		A
+			JR		NZ,DCR_EXPL
+			LD		A,(CURDRV)
+			AND		0FH
+			JR		DCR_IDX
+DCR_EXPL	DEC		A
+DCR_IDX	CP		16
+			JR		NC,DCR_BAD
+			LD		(RODRIVE),A	; Actual effective drive for message
+			LD		B,A
+			LD		HL,(ROVEC)
+			LD		A,B
+			OR		A
+			JR		Z,DCR_BIT
+DCR_SHF	SRL		H
+			RR		L
+			DEC		A
+			JR		NZ,DCR_SHF
+DCR_BIT		LD		A,L
+			AND		01H
+			JR		DCR_DONE
+DCR_BAD		LD		A,1
+			OR		A
+DCR_DONE	POP		HL
+			POP		BC
+			RET
+RODENY	JP		RODISK		; CP/M: BDOS Err on d: R/O
 
 
 
