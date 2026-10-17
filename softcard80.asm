@@ -847,6 +847,12 @@ BITABLE    DEFM    'DIR  '
            DEFM    'TERM '
            DEFB    1
            DEFW    CCPTERM
+           DEFM    'CACHE'
+           DEFB    081H             ; zero or one argument (RESET)
+           DEFW    CCPCACHE
+           DEFM    'CLS  '
+           DEFB    0
+           DEFW    CCPCLS
 
 ; Native CCP terminal selector.  This code runs with MAIN RAM visible,
 ; unlike the old AUX .COM, so it calls the 6502 VSETMODE vector directly.
@@ -1059,6 +1065,69 @@ AXRHL       DEFW    0
 AXQUIT      DEFB    0
 AXMODE      DEFB    0
 
+; Two CCP commands live in otherwise unused MAIN $7B00-$7BFF.
+; CLS invokes the new 6502 $B812 entry, so it works in either mode.
+            ORG     07B00H
+CCPCLS      LD      HL,0B812H
+            LD      (ADDR),HL
+            LD      A,1
+            LD      (CMD),A
+            LD      (SOFTCARD),A
+            RET
+
+; CACHE prints three wrapping 16-bit hexadecimal counters. "CACHE RESET"
+; clears them first, without closing cached files or affecting LRU order.
+CCPCACHE    LD      A,(FILEBUF)
+            OR      A
+            JR      Z,CCSHOW
+            CP      7               ; normalized tail is " RESET "
+            JP      NZ,CCPBAD
+            LD      HL,FILEBUF+2
+            LD      DE,CCRESET
+            LD      B,5
+CCCRLP      LD      A,(DE)
+            CP      (HL)
+            JP      NZ,CCPBAD
+            INC     DE
+            INC     HL
+            DJNZ    CCCRLP
+            CALL    CACHERST
+CCSHOW      LD      DE,CCOPENMSG
+            CALL    C_WRITESTR
+            LD      HL,COPENS
+            CALL    CCHEX16
+            LD      DE,CCHITMSG
+            CALL    C_WRITESTR
+            LD      HL,CHITS
+            CALL    CCHEX16
+            LD      DE,CCEVMSG
+            CALL    C_WRITESTR
+            LD      HL,CEVICTS
+            CALL    CCHEX16
+            LD      E,13
+            JP      C_WRITE
+; Print four uppercase hex digits (high byte then low byte).
+CCHEX16     LD      A,(HL)
+            PUSH    AF
+            INC     HL
+            LD      A,(HL)
+            CALL    CCHEX8
+            POP     AF
+CCHEX8      PUSH    AF
+            RRCA
+            RRCA
+            RRCA
+            RRCA
+            CALL    PHNYB
+            POP     AF
+            JP      PHNYB
+CCRESET     DEFM    'RESET'
+CCOPENMSG   DEFM    'Cache (hex): opens='
+            DEFB    '$'
+CCHITMSG    DEFM    ' hits='
+            DEFB    '$'
+CCEVMSG     DEFM    ' evictions='
+            DEFB    '$'
 
             ORG     07C00H
 
@@ -1457,6 +1526,7 @@ BDOSINIT	DI
 			XOR		A
 			LD		(VUCVALID),A
 			LD		(SVVALID),A		; no completed AUX LC snapshot yet
+			CALL	CACHERST		; zero cache counters on cold start only
 			LD		HL,BIOSWBOOT
 			LD		(0001H),HL		; 0000H -> BIOS WBOOT JP (CP/M ABI)
 			CALL	BPMSIGN			; Print TPA banner exactly once
@@ -2965,6 +3035,10 @@ F_SIZE		PUSH	DE				; Keep FCB pointer across ProDOS calls
 			OR		A
 			JR		Z,FS_TEMP
 			LD		(CMRU),A
+			PUSH	AF
+			LD		HL,CHITS
+			CALL	CINC16
+			POP		AF
 			CALL	CACHEREF
 			LD		(GEMLIN),A
 			LD		HL,GEMLI
@@ -3751,6 +3825,8 @@ PHOUT		LD		E,A
 ; - TYPE         - Show text file on console (TYPE TEST.TXT)
 ; - BYE          - Confirm and exit to the ProDOS selector
 ; - TERM VIDEX/SOROC - Set terminal personality (no .COM needed)
+; - CACHE        - Show ProDOS handle-cache counters (CACHE RESET to zero)
+; - CLS          - Reset video state, clear screen and home cursor
 ; - FILENAME.COM - Load and run FILENAME.COM at 0100H
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -4062,7 +4138,7 @@ BISAVE     LD      HL,FCB2NAM
 ; Single table-driven dispatcher instead of six repeated string
 ; comparisons. A handler is entered with a synthetic return address.
 BUILTIN    LD      HL,BITABLE
-           LD      C,7
+           LD      C,9
 BISCAN     LD      DE,PATHBUF2+1
            LD      B,5
 BICMP      LD      A,(DE)
@@ -4959,6 +5035,10 @@ CR_ONE      LD      A,(FRN1)
 
 ; A=slot; register a successful _F_OPEN's pathname as cached.
 CACHEPUT    LD      (CSLOT),A
+            PUSH    AF
+            LD      HL,COPENS
+            CALL    CINC16
+            POP     AF
             LD      HL,PATHBUF
             LD      DE,CNAME1
             CP      1
@@ -5030,6 +5110,8 @@ CACHEFREE   XOR     A
             CALL    CACHEEV
             OR      A
             JR      NZ,CE_FAIL
+            LD      HL,CEVICTS
+            CALL    CINC16
             XOR     A
             JP      GETIOADDR
 
@@ -5086,6 +5168,10 @@ IO_CACHE	LD		A,1
 			OR		A
 			JR		Z,IO_REOPEN
 			LD		(CMRU),A	; LRU bookkeeping on cache hit
+			PUSH	AF
+			LD		HL,CHITS
+			CALL	CINC16
+			POP		AF
 			CALL	CACHEREF
 			LD		(IX+0EH),A
 			XOR		A
@@ -5134,6 +5220,22 @@ IO_DONE		POP		AF
 			LD		L,A
 			RET
 IOVIRT		DEFB	0
+
+; Increment wrapping 16-bit counter at HL. No file handles are touched.
+CINC16      INC     (HL)
+            RET     NZ
+            INC     HL
+            INC     (HL)
+            RET
+; Reset counters only on cold start or via the explicit CACHE RESET.
+CACHERST    LD      HL,0
+            LD      (COPENS),HL
+            LD      (CHITS),HL
+            LD      (CEVICTS),HL
+            RET
+COPENS      DEFW    0
+CHITS       DEFW    0
+CEVICTS     DEFW    0
 
 			ORG		0A400H
 ; Dedicated stack: the live directory buffer ends at ~$97F2.

@@ -74,6 +74,7 @@ RELOC_ST
  JMP VBELL
  JMP VSETMODE ; B80C: A=0 Videx, A=1 Soroc (does not clear)
  JMP VRAWPUT  ; B80F: raw BIOS/BDOS function 6 output
+ JMP VCLS     ; B812: CLS reset terminal, clear and home
 
 ENTRY JSR VINIT ; Initialize video hardware and clear screen
  JSR PRWELC ; Print welcome message
@@ -317,6 +318,23 @@ HANDLR LDA CMD
 * Soroc ESC '(' / ESC ')' select inverse/normal video (SoftCard).
 * Soroc protected fields, graphics and auxiliary port are not emulated.
 ***************************************************
+
+* CLS restores a known text-screen state but preserves Soroc/Videx mode.
+* Called from the MAIN-memory CCP via the public B812 vector.
+VCLS
+ LDA #0
+ STA VSTATE   ; abandon incomplete escape/coordinate sequence
+ STA VCRP     ; clear pending cooked CR/LF state
+ STA VATTR    ; normal video regardless of selected personality
+ STA $C000   ; 80STORE off
+ STA $C002   ; MAIN reads
+ STA $C004   ; MAIN writes
+ BIT $C054   ; PAGE1
+ BIT $C051   ; TEXT on
+ BIT $C052   ; full-screen
+ STA $C00D   ; 80COL on
+ STA $C00F   ; alternate/lowercase character set
+ JMP VCLEAR  ; clears both banks and puts cursor at 0,0
 
 VINIT
  LDA #1
