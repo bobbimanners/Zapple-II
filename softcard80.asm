@@ -14,21 +14,15 @@
 ;    http://www.easy68k.com/paulrsm/6502/PDOS8TRM.HTM
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-;
-; TODO: Look further down for CCP TODOs!!!!!!!
-;
 ; BDOS TODOs
 ; ----------
-; TODO: Exploit aux memory to gain a larger TPA (48K instead of 32K)
 ; TODO: Prodos file handling is SLOW. Would be good to cache file handles rather than
 ;       closing/reopening every time.
-; TODO: Sector-level BIOS calls.
 ; TODO: Implement missing BDOS system calls:
 ;        - RS232 (A_READ, A_WRITE)
 ;        - Printer (LWRITE)
 ; TODO: IOBYTE doesn't do anything
 ; TODO: User number doesn't do anything
-; Other Random TODO comments in the code
 ; 
 
 BDOSADDR	EQU		08100H			; 
