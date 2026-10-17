@@ -47,8 +47,6 @@ COUT		EQU		0B803H			; Direct video output entry (B803)
 RDKEY		EQU		0B806H			; Direct keyboard/cursor entry (B806)
 BELL		EQU		0B809H			; Direct speaker click entry (B809)
 RAWOUT		EQU		0B80FH			; Raw BIOS console entry (B80F)
-; TERM.COM (separate transient utility) calls 6502 B80C to switch terminal.
-; Only a 6-byte raw-output shim is added to the resident BDOS.
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Entry point when Z80 cold starts is 0000H
@@ -164,7 +162,7 @@ B_DRV_RESET		EQU		25H			; Selectively reset disk drives
 
 
 ; ================================================================
-; AUX56 PHASE 2: MAIN-bank FCB/DMA gateway in otherwise idle MAIN TPA.
+; AUX56: MAIN-bank FCB/DMA gateway in otherwise idle MAIN TPA.
 ; The executable TPA is in AUX $0100-$AFFF, so MAIN $7000 is free.
 ; All caller pointers refer to AUX unless explicitly translated.
 ; MAIN $7800-$7BFF holds permanent staging and ProDOS-safe scratch.
@@ -258,7 +256,6 @@ AXBAD       LD      A,2
             LD      A,0FFH
             LD      L,A
             RET
-; TERM.COM must not switch to the 6502 directly from AUX RAM:
 ; the 6502 console lives at MAIN $B800. This dispatcher is called by
 ; LCGATE with MAIN RAM selected, and the original LC/stack are restored
 ; automatically on return. Private BDOS $F0: E=0 Videx / E=1 Soroc.
@@ -672,7 +669,7 @@ AXM2A       LD      A,(LCB2RW)
 ; High memory is read from the post-execution AUX LC snapshot in MAIN.
 ; Only MAIN $AUXSTAGE is passed as the ProDOS write DMA buffer.
 ; ================================================================
-            ORG     07400H
+           ORG     07400H
 SAVEFILE   LD      HL,FILEBUF+2   ; decimal pages (the first argument)
            LD      B,0
 SVDEC      LD      A,(HL)
