@@ -75,8 +75,15 @@ RELOC_ST
  JMP VSETMODE ; B80C: A=0 Videx, A=1 Soroc (does not clear)
  JMP VRAWPUT  ; B80F: raw BIOS/BDOS function 6 output
  JMP VCLS     ; B812: CLS reset terminal, clear and home
+ JMP RWPROBE  ; B815: reversible RamWorks banks 0/1/2 probe
+ JMP RWSELECT ; B818: bank selection, A=0/1 (private Z80 caller)
+ JMP VGETMODE ; B81B: return terminal personality in A (private Z80)
+ JMP VSTATEPTR ; B81E: pointer to contiguous VCOL..VATTR state
 
-ENTRY JSR VINIT ; Initialize video hardware and clear screen
+ENTRY LDA #0
+ STA RWACTIVE
+ STA $C073       ; Start all CP/M sessions from system/video bank 0
+ JSR VINIT ; Initialize video hardware and clear screen
  JSR PRWELC ; Print welcome message
  LDA #$00 ; Clear ProDOS system bitmap
  LDX #$00 ;
@@ -112,6 +119,8 @@ MAINLOOP
 * loader errors use the same exit. QUIT normally never returns.
 DONE
  LDA #0
+ STA RWACTIVE ; Leave ProDOS selector with default AUX bank
+ STA $C073
  STA $C000 ; 80STORE off
  STA $C002 ; RAMRD main
  STA $C004 ; RAMWRT main
@@ -252,7 +261,9 @@ CL_PL DB 1 ; Start of param list; 1 parameter
 CL_N DB 0 ; File ref num (0 close all)
 
 * Handle calls made by Z80 code
-HANDLR LDA CMD
+HANDLR LDA #0
+ STA $C073   ; MLI/video/keyboard always use physical AUX bank 0
+ LDA CMD
  CMP #0 ; CMD=0 means continue running 6502 code
  BNE :CMD1 ;
  PLA  ; Clean up stack
@@ -273,12 +284,12 @@ HANDLR LDA CMD
  PHP  ; Move status to A via the stack
  PLA  ;
  STA FLAGS ; Store the flags
- RTS  ; Will go back to Z80
+ JMP RWRETURN ; Restore selected transient bank before Z80 resumes
 :CMD2 CMP #2 ; CMD=2 means call ProDOS MLI then return to Z80
  BNE :CMD3 ;
  JSR :DOJMP ; ProDOS MLI call
  STA AREG ; Store return code
- RTS  ; Will go back to Z80
+ JMP RWRETURN
 :CMD3 CMP #3 ; CMD=3 means peek at the keyboard then ret to Z80
  BNE :CMD4 ;
  BIT $C000 ; Peek at the keyboard status
@@ -287,10 +298,20 @@ HANDLR LDA CMD
  JMP :C3DONE ; ...
 :C3YES LDA #1 ; Otherwise return 1 in AREG
 :C3DONE STA AREG ; Store the value for the Z80
- RTS  ; Go back to Z80
+ JMP RWRETURN ; Restore transient bank
 :CMD4 JSR VBELL ; Beep for error
  BRK  ; And drop into monitor
 :DOJMP JMP (ADDR) ;
+
+* Only HANDLR's MAIN-memory code manipulates bank selection.
+* RWSELECT is called via $B818, with bank number in AREG.
+* The return path must never leave MLI or video using AUX bank 1.
+RWSELECT STA RWACTIVE
+ RTS
+RWRETURN LDA RWACTIVE
+ STA $C073
+ RTS
+RWACTIVE DB 0
 
 
 ***************************************************
@@ -866,5 +887,94 @@ PRHEX CMP #10
 :PH1 CLC
  ADC #'0'
  JMP VPUT
+* RamWorks phase-1 probe. A=3 only if banks 0,1,2 are distinct.
+* Uses $07FE, a byte outside the visible 80-column text rows.
+* 80STORE/PAGE2 routes accesses at $07FE to the selected AUX bank,
+* while instruction fetch and variables at $B8xx stay in MAIN RAM.
+* Restore all originals even on absent/aliased RamWorks hardware.
+* Call only from the MAIN-memory CCP, not from an AUX transient.
+RWPROBE
+ LDA #0
+ STA RWFOUND
+ STA $C000    ; 80STORE off before setting up
+ STA $C002    ; RAMRD MAIN
+ STA $C004    ; RAMWRT MAIN
+ STA $C073    ; Always begin with bank zero
+ STA $C001    ; 80STORE on
+ BIT $C055   ; PAGE2 => AUX for $0400-$07FF
+ LDA $07FE
+ STA RWSAVE0
+ LDA #1
+ STA $C073
+ LDA $07FE
+ STA RWSAVE1
+ LDA #2
+ STA $C073
+ LDA $07FE
+ STA RWSAVE2
+* Distinct markers must survive in *all three* banks concurrently.
+ LDA #0
+ STA $C073
+ LDA #$19
+ STA $07FE
+ LDA #1
+ STA $C073
+ LDA #$53
+ STA $07FE
+ LDA #2
+ STA $C073
+ LDA #$A7
+ STA $07FE
+ LDA #0
+ STA $C073
+ LDA $07FE
+ CMP #$19
+ BNE :RWFAIL
+ LDA #1
+ STA $C073
+ LDA $07FE
+ CMP #$53
+ BNE :RWFAIL
+ LDA #2
+ STA $C073
+ LDA $07FE
+ CMP #$A7
+ BNE :RWFAIL
+ LDA #3
+ STA RWFOUND
+:RWFAIL
+* Restore bytes on every exit; aliasing banks may share storage.
+ LDA #2
+ STA $C073
+ LDA RWSAVE2
+ STA $07FE
+ LDA #1
+ STA $C073
+ LDA RWSAVE1
+ STA $07FE
+ LDA #0
+ STA $C073
+ LDA RWSAVE0
+ STA $07FE
+ BIT $C054   ; PAGE1/main
+ LDA #0
+ STA $C000    ; 80STORE off
+ STA $C073    ; Ensure session/video bank zero remains selected
+ LDA RWFOUND
+ RTS
+RWSAVE0 DB 0
+RWSAVE1 DB 0
+RWSAVE2 DB 0
+RWFOUND DB 0
+
+* Query terminal mode without resetting it. Used by TAB session state.
+VGETMODE LDA VMODE
+ RTS
+
+* Return physical address of the 9-byte contiguous terminal state.
+* Z80 main code converts Apple Bxxx to Z80 Axxx (minus $1000).
+VSTATEPTR LDA #<VCOL
+ LDX #>VCOL
+ RTS
 
 RELOC_EN

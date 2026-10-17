@@ -21,7 +21,7 @@ DISK_VOLUME ?= ZAPPLE2
 
 # Keep the MAME setup from the original build script.
 MAME_MACHINE     ?= apple2ee
-MAME_SLOTS       ?= -sl4 softcard -sl7 cffa202
+MAME_SLOTS       ?= -sl4 softcard -sl7 cffa202 -aux rw3
 MAME_HARD1       ?= h1-backup-220908.po
 MAME_HARD2       ?= $(DISK_IMAGE)
 MAME_RUN_FLAGS   ?= -w
