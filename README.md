@@ -118,6 +118,8 @@ The following applications and utilities are known to work, or have been used in
 | **TE** | Full-screen text editor; works with the terminal emulation. |
 | **WordStar 3.3** | Full-screen word processor; a generic CP/M release works with Soroc terminal support. Other machine-specific installations may need adjustment. |
 | **Turbo Pascal 3** | Integrated Pascal editor/compiler; tested compiling to memory and generating standalone `.COM` executables that run from the CCP. |
+| **SuperCalc 1.12** | Spreadsheet; tested basic function and loading of sample files. |
+| **dBase II v2.4** | Database management system; tested opening and browsing existing files, creating a new file. |
 | **PIP** | CP/M file copier; tested copying entire directories, including large files. |
 | **STAT** | Drive/file status utility. |
 | **DUMP** | Hex dump utility. |
