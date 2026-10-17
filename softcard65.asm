@@ -2,19 +2,18 @@
 * 6502 code to invoke Z80 routine on Softcard and
 * handle calls from Z80 back to 6502
 * Assumes Softcard in slot 4
-* Bobbi 2019
+* Bobbi 2019, 2026
 ***************************************************
 
  ORG $2000  ; System program
  TYP $FF  ; .SYS
 
 SFTCRD EQU $C400 ; Softcard in slot 4
-CMD EQU $06 ; ZP address for command code (0,1,2)
+CMD EQU $06 ; ZP address for command code (0=quit,1=6502,2=MLI,3=key status)
 AREG EQU $07 ; Pass 6502 A reg to/from Z80
 XREG EQU $08 ; Pass 6502 X reg to/from Z80
 YREG EQU $09 ; Pass 6502 Y reg to/from Z80
 ADDR EQU $EB ; Pass address of 6502 routine to call from Z80
-ADDRH EQU $EC ; High byte of address ADDR
 FLAGS EQU $ED ; Pass 6502 flags to/from Z80
 
 * 80-column text page 1, direct main/aux video access.
@@ -253,8 +252,6 @@ PRSUCC LDA #<PATH ;
 
 * File to load
 PATH STR "SOFTCARD80.BIN"
-;PAYLOAD STR "MBASIC.COM"
-PAYLOAD STR "NSWEEP.COM"
 
 * Messages
 WELCOME STR "Zapple-II B/PM ... Bobbi 2019, 2026"
@@ -272,16 +269,6 @@ OP_FP DW PATH ; Pointer to file path
 OP_FBL DW IOBUF ; Pointer to I/O buffer
 OP_N DB 0 ; File reference number
 
-* ProDOS Parameter List for OPEN (for the payload)
-OPPL JSR $BF00 ; ProDOS call
- DB $C8 ; OPEN
- DW OPPL_PL ; Pointer to parm list
- RTS
-OPPL_PL DB 3 ; Start of param list; 3 parameters
-OPPL_FP DW PAYLOAD ; Pointer to payload path
-OPPL_FBL DW IOBUF ; Pointer to I/O buffer
-OPPL_N DB 0 ; File reference number
-
 * ProDOS Parameter List for READ
 RD JSR $BF00 ; ProDOS call
  DB $CA ; READ
@@ -292,17 +279,6 @@ RD_N DB 0 ; File reference number
 RD_DB DW LDADDR ; Data buffer LSB
 RD_RC DW LDLEN ; Request count LSB
 RD_TC DW $0000 ; Trans count LSB
-
-* ProDOS Parameter List for READ
-RDPL JSR $BF00 ; ProDOS call
- DB $CA ; READ
- DW RDPL_PL ; Pointer to parm list
- RTS
-RDPL_PL DB 4 ; Start of param list; 4 parameters
-RDPL_N DB 0 ; File reference number
-RDPL_DB DW $1100 ; Data buffer LSB
-RDPL_RC DW LDLEN ; Request count LSB
-RDPL_TC DW $0000 ; Trans count LSB
 
 * ProDOS Parameter List for CLOSE
 CL JSR $BF00 ; ProDOS call
@@ -357,9 +333,9 @@ HANDLR LDA #0
  BRK  ; And drop into monitor
 :DOJMP JMP (ADDR) ;
 
-* Only HANDLR's MAIN-memory code manipulates bank selection.
-* RWSELECT is called via $B818, with bank number in AREG.
-* The return path must never leave MLI or video using AUX bank 1.
+* Bank selection lives in MAIN memory, not in a banked AUX program.
+* RWSELECT is called via $B818, with the selected bank in AREG.
+* MLI, keyboard and video use bank 0; restore RWACTIVE on return.
 RWSELECT STA RWACTIVE
  RTS
 RWRETURN LDA RWACTIVE
@@ -942,12 +918,8 @@ PRHEX CMP #10
 :PH1 CLC
  ADC #'0'
  JMP VPUT
-* RamWorks phase-1 probe. A=3 only if banks 0,1,2 are distinct.
-* Uses $07FE, a byte outside the visible 80-column text rows.
-* 80STORE/PAGE2 routes accesses at $07FE to the selected AUX bank,
-* while instruction fetch and variables at $B8xx stay in MAIN RAM.
-* Restore all originals even on absent/aliased RamWorks hardware.
-* Cold-start bank count; no destructive runtime probe needed.
+* Return the bank count saved by the one-time pre-relocation loader probe.
+* Do not test banks again here: sessions may now contain live programs.
 RWPROBE LDA RWCOUNT
  RTS
 
