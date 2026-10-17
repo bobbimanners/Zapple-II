@@ -47,6 +47,8 @@ COUT		EQU		0B803H			; Direct video output entry (B803)
 RDKEY		EQU		0B806H			; Direct keyboard/cursor entry (B806)
 BELL		EQU		0B809H			; Direct speaker click entry (B809)
 RAWOUT		EQU		0B80FH			; Raw BIOS console entry (B80F)
+; TERM.COM (separate transient utility) calls 6502 B80C to switch terminal.
+; Only a 6-byte raw-output shim is added to the resident BDOS.
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Entry point when Z80 cold starts is 0000H
@@ -120,6 +122,369 @@ FILEBUF		DEFS	128				; Command args go here too (Pascal string)
 
 PROGSTRT	CALL	CCP				; Run the CCP
 
+; Phase 2: small MAIN-only bank-control helper and shell command.
+; MAIN $0200..$02FF is unused by AUX transients and by SAVE's
+; temporary $1000..$3FFF staging. No program ever runs here in AUX.
+            ORG     00200H
+; A = AUX bank number. 6502 vector $B818 selects it and records it.
+AXBANK      LD      (AREG),A
+            LD      HL,0B818H
+            LD      (ADDR),HL
+            LD      A,1
+            LD      (CMD),A
+            LD      (SOFTCARD),A
+            RET
+
+; Logical sessions 0..F use physical banks 0,1,3,4,6..9,11..14,16..19.
+; Each group of four shares one otherwise reserved screen-snapshot bank.
+TABPHYS     LD      HL,TABPHY
+            LD      E,A
+            LD      D,0
+            ADD     HL,DE
+            LD      A,(HL)
+            RET
+TABPHY      DEFB    0,1,3,4,6,7,8,9,11,12,13,14,16,17,18,19
+; Find the first bank that does not physically exist, capped at 16 tabs.
+RWDETECT    LD      HL,0B815H
+            LD      (ADDR),HL
+            LD      A,1
+            LD      (CMD),A
+            LD      (SOFTCARD),A
+            LD      A,(AREG)
+            OR      A
+            JR      NZ,RWD_OK
+            INC     A              ; no card still has ordinary AUX bank 0
+RWD_OK      LD      (RWTOTAL),A
+            CP      3
+            JR      NC,RWD_MULTI
+            LD      A,1           ; no snapshot bank: single console only
+            LD      (TABCOUNT),A
+            RET
+RWD_MULTI   LD      A,(RWTOTAL)
+            LD      C,A
+            LD      HL,TABPHY
+            LD      B,0
+RWD_NEXT    LD      A,(HL)
+            CP      C
+            JR      NC,RWD_DONE
+            INC     B
+            INC     HL
+            LD      A,B
+            CP      16
+            JR      C,RWD_NEXT
+RWD_DONE    LD      A,B
+            LD      (TABCOUNT),A
+            RET
+RWTOTAL     DEFB    1
+TABCOUNT    DEFB    1
+TABREQ      DEFB    0FFH         ; ^] followed by 0..9/A..F, FF = none
+RWREPORT    LD      DE,RWMSG1
+            CALL    C_WRITESTR
+            LD      A,(RWTOTAL)
+            CALL    RWDECIMAL
+            LD      DE,RWMSG2
+            CALL    C_WRITESTR
+            LD      A,(TABCOUNT)
+            CALL    RWDECIMAL
+            LD      DE,RWMSG3
+            JP      C_WRITESTR
+RWMSG1      DEFM    'RamWorks: '
+            DEFB    '$'
+RWMSG2      DEFM    ' banks '
+            DEFB    '$'
+; Print unsigned 0..255 without leading zeroes.
+RWDECIMAL   LD      B,'0'
+RWD_HUND    CP      100
+            JR      C,RWD_TENS
+            SUB     100
+            INC     B
+            JR      RWD_HUND
+RWD_TENS    LD      C,0          ; hundreds digit was printed?
+            PUSH    AF
+            LD      A,B
+            CP      '0'
+            JR      Z,RWD_T0
+            LD      C,1
+            LD      E,A
+            PUSH    BC
+            CALL    C_WRITE
+            POP     BC
+RWD_T0      POP     AF
+            LD      B,'0'
+RWD_TLOOP   CP      10
+            JR      C,RWD_ONES
+            SUB     10
+            INC     B
+            JR      RWD_TLOOP
+RWD_ONES    PUSH    AF
+            LD      A,B
+            CP      '0'
+            JR      NZ,RWD_TPRINT
+            LD      A,C
+            OR      A
+            JR      Z,RWD_TEND
+            LD      A,'0'        ; display 100, not 10
+RWD_TPRINT  LD      E,A
+            CALL    C_WRITE
+RWD_TEND    POP     AF
+            ADD     A,'0'
+            LD      E,A
+            JP      C_WRITE
+
+            ORG     00300H
+CR_SELCMD   CALL    BIOSCONIN      ; selector after Ctrl-] at CCP
+            CALL    TABDECODE
+            JP      C,CRSL1        ; bad key: continue editing
+            LD      (TABREQ),A
+            XOR     A
+            LD      (IX+1),A       ; discard partial command line
+            RET
+
+; Fullscreen CP/M programs commonly poll BDOS 11 or BIOS CONST before
+; reading a keystroke. Detect ^] here rather than waiting for a read call.
+; CMD=3 returns 0/1 in AREG and an unconsumed keycode in YREG.
+; Return FF/00 as usual; F3 is a private deferred-status marker on suspend.
+TSKSTAT     LD      A,3
+            LD      (CMD),A
+            LD      (SOFTCARD),A
+            LD      A,(AREG)
+            OR      A
+            JR      Z,TSSTEMPTY
+            LD      A,(YREG)
+            AND     07FH
+            CP      01DH
+            JR      NZ,TSSTREADY
+            CALL    BIOSCONIN      ; consume ^] only, leave other keys alone
+            CALL    TSKKEY         ; get selector and queue tab switch
+            JR      NC,TSKSTAT     ; invalid selector: resume status polling
+            LD      A,0F3H        ; deferred status poll on resume
+            LD      L,A
+            RET
+TSSTREADY   LD      A,0FFH
+            LD      L,A
+            RET
+TSSTEMPTY   XOR     A
+            LD      L,A
+            RET
+
+; Cold-start BANKS report also tells the user how to switch sessions.
+; Ctrl-] is ASCII $1D; Ctrl-[ is ESC and is NOT our switch key.
+RWMSG3      DEFM    ' sessions (0-9,A-F)'
+            DEFB    13
+            DEFM    'Switch: ^] (Ctrl-]) then 0-9/A-F'
+            DEFB    13,'$'
+
+; Print the current logical session and drive: [0]A:> ... [F]P:>
+; Kept outside the crowded $81xx-$97xx resident filesystem region.
+CCPPRNT     LD      E,'['
+            CALL    C_WRITE
+            LD      A,(TABMODE)
+            CALL    PHNYB
+            LD      E,']'
+            CALL    C_WRITE
+            LD      A,(CURDRV)
+            AND     0FH
+            ADD     A,'A'
+            LD      E,A
+            CALL    C_WRITE
+            LD      E,':'
+            CALL    C_WRITE
+            LD      E,'>'
+            JP      C_WRITE
+
+; Keep TAB's address unchanged. No special ALTZP copy is needed:
+; SoftCard Z80 $0000 maps to Apple II $1000, where WRAUX works.
+            ORG     00400H
+
+; Phase 3A: two independent CCP contexts. TAB 0 / TAB 1 switches
+; shell state (drive/user, IOBYTE, login/R/O vectors, terminal type).
+; The transient for a context uses its corresponding RamWorks bank.
+; Phase 3B: Ctrl-] at supported input calls parks one transient in each
+; bank. TAB n resumes a parked transient, rather than reloading it.
+; Phase 3C: full text-screen/terminal-state snapshots in reserved bank 2.
+; Still cooperative: no switching from a CPU-bound loop.
+CCPTAB      LD      A,(FILEBUF)
+            OR      A
+            JP      Z,TB_STAT
+            CP      3                 ; " n " tail
+            JP      NZ,CCPBAD
+            LD      A,(FILEBUF+3)
+            CP      ' '
+            JP      NZ,CCPBAD
+            LD      A,(FILEBUF+2)
+            CALL    TABDECODE
+            JP      C,CCPBAD
+            LD      B,A
+            JP      TB_SWITCH
+
+; Convert a hexadecimal ASCII tab selector to A=0..15, carry on error.
+; Check the detected bank count so an unavailable tab is never touched.
+TABDECODE   CP      '0'
+            JR      C,TBD_BAD
+            CP      '9'+1
+            JR      NC,TBD_HEX
+            SUB     '0'
+            JR      TBD_RANGE
+TBD_HEX     AND     0DFH          ; lowercase a..f accepted
+            CP      'A'
+            JR      C,TBD_BAD
+            CP      'F'+1
+            JR      NC,TBD_BAD
+            SUB     'A'-10
+TBD_RANGE   LD      C,A
+            LD      A,(TABCOUNT)
+            CP      C
+            JR      Z,TBD_BAD
+            JR      C,TBD_BAD
+            LD      A,C
+            OR      A              ; clear carry
+            RET
+TBD_BAD     SCF
+            RET
+
+; Drain queued switches before returning to the CCP prompt.
+; TB_SWITCH can resume a suspended program, which can later suspend
+; and queue ANOTHER switch.  A tail-JR here returned to CCPL1 after
+; that suspension and printed a CCP prompt into the application's
+; still-visible fullscreen display.  Loop until no request remains.
+TBAUTOSW    LD      A,(TABREQ)
+            CP      0FFH
+            RET     Z
+            LD      B,A
+            LD      A,0FFH
+            LD      (TABREQ),A
+            CALL    TB_SWITCH
+            JR      TBAUTOSW
+TB_SWITCH   LD      A,(TABMODE)
+            CP      B
+            JR      Z,TB_RESUM
+            PUSH    BC
+            CALL    TSKACTIVE
+            OR      A
+            CALL    Z,VSSAVE       ; otherwise snapshot current CCP screen
+            CALL    TABSAVE
+            CALL    CACHEALL
+            POP     BC
+            LD      A,B
+            LD      (TABMODE),A
+            CALL    TABLOAD
+            CALL    VSREST
+            JR      TB_GO
+TB_RESUM    CALL    TSKACTIVE
+            OR      A
+            CALL    NZ,VSREST
+TB_GO       CALL    TABRESUM
+            RET
+TB_STAT     LD      DE,TB_PREFIX
+            CALL    C_WRITESTR
+            LD      A,(TABMODE)
+            CALL    PHNYB
+            LD      DE,TB_SUFFIX
+            JP      C_WRITESTR
+; One byte per CCP session. Saved display may already contain the
+; A> prompt, so do not print it again after restoring that screen.
+CCPPRPTR    LD      A,(TABMODE)
+            LD      E,A
+            LD      D,0
+            LD      HL,CCPPROMS
+            ADD     HL,DE
+            RET
+TABMODE     DEFB    0
+TB_PREFIX   DEFM    'TAB '
+            DEFB    '$'
+TB_SUFFIX   DEFM    ' (Ctrl-] then 0-9/A-F)'
+            DEFB    13,'$'
+
+; Session descriptors are only seven bytes each, stored in MAIN memory.
+; Offsets: 0 current drive/user, 1 IOBYTE, 2..3 LOGVEC,
+; 4..5 ROVEC, 6 terminal personality (0 Videx / 1 Soroc).
+; DMA is intentionally reset to $0080 at each switch; no BDOS search
+; or pending directory enumeration is allowed across a CCP TAB command.
+TABPICK     LD      IX,TABCTXS
+            LD      A,(TABMODE)
+            OR      A
+            RET     Z
+            LD      B,A
+            LD      DE,7
+TP_NEXT     ADD     IX,DE
+            DJNZ    TP_NEXT
+            RET
+
+TABSAVE     CALL    TABPICK
+            LD      A,(CURDRV)
+            LD      (IX+0),A
+            LD      A,(IOBYTE)
+            LD      (IX+1),A
+            LD      HL,(LOGVEC)
+            LD      (IX+2),L
+            LD      (IX+3),H
+            LD      HL,(ROVEC)
+            LD      (IX+4),L
+            LD      (IX+5),H
+            LD      HL,0B81BH
+            LD      (ADDR),HL
+            LD      A,1
+            LD      (CMD),A
+            LD      (SOFTCARD),A
+            LD      A,(AREG)
+            LD      (IX+6),A
+            RET
+
+TABLOAD     CALL    TABPICK
+            LD      A,(IX+0)
+            LD      (CURDRV),A
+            LD      A,(IX+1)
+            LD      (IOBYTE),A
+            LD      L,(IX+2)
+            LD      H,(IX+3)
+            LD      (LOGVEC),HL
+            LD      L,(IX+4)
+            LD      H,(IX+5)
+            LD      (ROVEC),HL
+            LD      HL,FILEBUF
+            LD      (DMAADDR),HL
+            LD      HL,0080H
+            LD      (AXDMAP),HL
+            LD      A,(IX+6)
+            LD      (AREG),A
+            LD      HL,0B80CH
+            LD      (ADDR),HL
+            LD      A,1
+            LD      (CMD),A
+            LD      (SOFTCARD),A
+            RET
+
+TABINIT     CALL    RWDETECT
+            LD      HL,TABCTXS
+            LD      B,16
+TI_NEXT     XOR     A
+            LD      (HL),A
+            INC     HL
+            LD      (HL),A
+            INC     HL
+            INC     A
+            LD      (HL),A         ; LOGVEC = 0001H
+            INC     HL
+            XOR     A
+            LD      (HL),A
+            INC     HL
+            LD      (HL),A
+            INC     HL
+            LD      (HL),A
+            INC     HL
+            INC     A
+            LD      (HL),A         ; Soroc default
+            INC     HL
+            DJNZ    TI_NEXT
+            CALL    VSINIT
+            LD      HL,CCPPROMS
+            LD      DE,CCPPROMS+1
+            LD      BC,15
+            XOR     A
+            LD      (HL),A
+            LDIR
+            RET
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Implementation of CP/M STYLE BDOS
 ; Function to invoke is passed in C, as follows:
@@ -162,11 +527,504 @@ B_DRV_RESET		EQU		25H			; Selectively reset disk drives
 
 
 ; ================================================================
-; AUX56: MAIN-bank FCB/DMA gateway in otherwise idle MAIN TPA.
+; AUX56 PHASE 2: MAIN-bank FCB/DMA gateway in otherwise idle MAIN TPA.
 ; The executable TPA is in AUX $0100-$AFFF, so MAIN $7000 is free.
 ; All caller pointers refer to AUX unless explicitly translated.
 ; MAIN $7800-$7BFF holds permanent staging and ProDOS-safe scratch.
 ; ================================================================
+
+; ================================================================
+; RamWorks Phase 3B: two parked AUX transients, cooperative switching.
+; Resident MAIN-memory code below $1000 is outside both AUX TPAs.
+; ^] is intercepted at BDOS 1, BIOS CONIN, and BDOS 6 input, and at
+; the start of a buffered BDOS 10 input line. No interrupt preemption.
+; ================================================================
+            ORG     00800H
+; BDOS 10 may suspend only at an empty line. A successful hotkey
+; parks the read itself; resume restarts it, without submitting CR.
+AXLSKEY     LD      A,C
+            OR      A
+            JP      NZ,AXLNEXT
+            CALL    TSKKEY
+            JP      NC,AXLNEXT     ; invalid selector, keep waiting
+            LD      A,0FAH        ; deferred BDOS 10 input
+            LD      L,A
+            RET
+
+; BDOS function 1 cooked input, with suspend hotkey and Ctrl-C.
+TSKCIN      CALL    BIOSCONIN
+            CP      01DH
+            JR      Z,TSKCIKEY
+            CP      3
+            JR      NZ,TSKECHO
+            LD      A,1
+            LD      (LCQUIT),A
+            XOR     A
+            LD      L,A
+            RET
+TSKECHO     PUSH    AF
+            LD      E,A
+            CALL    C_WRITE
+            POP     AF
+            LD      L,A
+            RET
+TSKCIKEY    CALL    TSKKEY
+            JR      NC,TSKCIN      ; no switch, consume nothing
+            LD      A,0F1H        ; deferred cooked input
+            LD      L,A
+            RET
+
+TSKBIRD     CALL    BIOSCONIN
+            CP      01DH
+            JR      Z,TSKBIKEY
+            LD      L,A
+            RET
+TSKBIKEY    CALL    TSKKEY
+            JR      NC,TSKBIRD
+            LD      A,0F2H        ; deferred BIOS character input
+            LD      L,A
+            RET
+
+TSKINIT     LD      HL,TSKFLAGS
+            LD      DE,TSKFLAGS+1
+            LD      BC,15
+            XOR     A
+            LD      (HL),A
+            LDIR
+            LD      A,0FFH
+            LD      (TABREQ),A
+            RET
+
+TSKFLPTR    LD      A,(TABMODE)
+            LD      E,A
+            LD      D,0
+            LD      HL,TSKFLAGS
+            ADD     HL,DE
+            RET
+TSKACTIVE   CALL    TSKFLPTR
+            LD      A,(HL)
+            RET
+
+; ^] is a prefix. Carry=1 when a valid selector queued a switch;
+; carry=0 if invalid (caller retries its original keyboard operation).
+TSKKEY      CALL    BIOSCONIN
+            CALL    TABDECODE
+            JR      C,TSKIGNORE
+            LD      (TABREQ),A
+            LD      A,3
+            LD      (AXQUIT),A
+            SCF
+            RET
+TSKIGNORE   OR      A             ; clear carry
+            RET
+
+TSKSET      PUSH    AF
+            CALL    TSKFLPTR
+            POP     AF
+            LD      (HL),A
+            RET
+
+; DE = 27 * logical session index + TSKREGS, return HL.
+TSKSLOTP    LD      A,(TABMODE)
+            LD      L,A
+            LD      H,0
+            LD      E,L
+            LD      D,H
+            ADD     HL,HL
+            ADD     HL,HL
+            ADD     HL,HL           ; 8n
+            LD      B,H
+            LD      C,L
+            ADD     HL,HL           ; 16n
+            ADD     HL,BC           ; 24n
+            ADD     HL,DE           ; 25n
+            ADD     HL,DE           ; 26n
+            ADD     HL,DE           ; 27n
+            LD      DE,TSKREGS
+            ADD     HL,DE
+            RET
+
+; Copy 27 bytes of preserved Z80/BDOS context to the current slot.
+; TASKSAVE is called immediately after AUXBDOS, before changing tabs.
+TASKSAVE    LD      (TSKBC),BC
+            LD      (TSKDE),DE
+            LD      (TSKIX),IX
+            LD      (TSKIY),IY
+            EXX
+            LD      (TSKAB),BC
+            LD      (TSKAD),DE
+            LD      (TSKAH),HL
+            EXX
+            EX      AF,AF'
+            PUSH    AF
+            POP     HL
+            LD      (TSKAA),HL
+            EX      AF,AF'
+            LD      HL,(AXASP)
+            LD      (TSKSP),HL
+            LD      HL,(AXRHL)
+            LD      (TSKHL),HL
+            LD      HL,(DMAADDR)
+            LD      (TSKDM),HL
+            LD      HL,(AXDMAP)
+            LD      (TSKDP),HL
+            LD      A,(AXRES)
+            LD      (TSKRE),A
+            LD      HL,(AXLIP)
+            LD      (TSKLI),HL
+            LD      A,1
+            CALL    TSKSET
+            LD      HL,TSKBUFF
+            CALL    TSKSLOTP
+            EX      DE,HL
+            LD      HL,TSKBUFF
+            LD      BC,TSKSIZE
+            LDIR
+            RET
+
+; Reconstitute the same registers and return values before the saved
+; AUX stack is made active. Caller must have selected the RamWorks bank.
+TASKLOAD    CALL    TSKSLOTP
+            LD      DE,TSKBUFF
+            LD      BC,TSKSIZE
+            LDIR
+            LD      HL,(TSKSP)
+            LD      (AXASP),HL
+            LD      HL,(TSKHL)
+            LD      (AXRHL),HL
+            LD      HL,(TSKDM)
+            LD      (DMAADDR),HL
+            LD      HL,(TSKDP)
+            LD      (AXDMAP),HL
+            LD      A,(TSKRE)
+            LD      (AXRES),A
+            LD      HL,(TSKLI)
+            LD      (AXLIP),HL
+            LD      BC,(TSKAB)
+            LD      DE,(TSKAD)
+            LD      HL,(TSKAH)
+            EXX
+            LD      HL,(TSKAA)
+            PUSH    HL
+            EX      AF,AF'
+            POP     AF
+            EX      AF,AF'
+            LD      IX,(TSKIX)
+            LD      IY,(TSKIY)
+            LD      BC,(TSKBC)
+            LD      DE,(TSKDE)
+            RET
+
+; TAB n resumes a parked program. All MLI and cache resources are
+; shared, hence physical handles were flushed when it was parked.
+TABRESUM    CALL    TSKACTIVE
+            OR      A
+            RET     Z
+            XOR     A
+            CALL    TSKSET          ; clear active flag during execution
+            LD      A,(TABMODE)
+            CALL    TABPHYS
+            CALL    AXBANK
+            CALL    AXSNAP          ; save ProDOS MAIN LC; do not load .COM
+            CALL    TASKLOAD
+            CALL    AXCONT          ; returns after new ^] or program exit
+            LD      A,(AXQUIT)
+            CP      3
+            JR      Z,TSKRSUS
+            ; Program exited normally: discard its LC/TPA context.
+            CALL    CACHEALL
+            CALL    AXREST
+            XOR     A
+            LD      (SVVALID),A
+            JR      TSKRFIN
+TSKRSUS     CALL    CACHEALL
+            CALL    AXMAINLC       ; parked bank's LC must survive
+TSKRFIN     XOR     A
+            CALL    AXBANK
+            LD      A,(AXQUIT)
+            CP      3
+            CALL    Z,VSSAVE       ; screen changed since previous resume
+            LD      HL,FILEBUF
+            LD      (DMAADDR),HL
+            LD      HL,0080H
+            LD      (AXDMAP),HL
+            RET
+
+TSKMSG      DEFM    'Suspended (Ctrl-] then 0-9/A-F to switch)'
+            DEFB    13,'$'
+TSKBUSY     DEFM    'Session suspended: select it first'
+            DEFB    13,'$'
+; Shared serialization buffer and one copy for each session.
+TSKBUFF
+TSKBC       DEFW    0
+TSKDE       DEFW    0
+TSKIX       DEFW    0
+TSKIY       DEFW    0
+TSKAB       DEFW    0
+TSKAD       DEFW    0
+TSKAH       DEFW    0
+TSKAA       DEFW    0
+TSKSP       DEFW    0
+TSKHL       DEFW    0
+TSKDM       DEFW    0
+TSKDP       DEFW    0
+TSKRE       DEFB    0
+TSKLI       DEFW    0             ; interrupted BDOS 10 AUX buffer pointer
+TSKEND
+TSKSIZE     EQU     TSKEND-TSKBUFF
+
+; On resume, complete a parked input call *before* returning to AUX.
+; AXRES carries a private marker only when suspended in keyboard I/O.
+; No synthetic NUL/CR is sent to MBASIC, WordStar or the CCP.
+AXRETRY     LD      A,(AXRES)
+            CP      0F1H
+            JR      Z,ARCOOK
+            CP      0F2H
+            JR      Z,ARBIOS
+            CP      0FAH
+            JR      Z,ARLINE
+            CP      0F6H
+            JR      Z,ARRAW
+            CP      0F3H
+            JR      Z,ARSTAT
+            JP      AXGO
+ARCOOK      CALL    TSKCIN
+            JR      ARDONE
+ARBIOS      CALL    TSKBIRD
+            JR      ARDONE
+ARLINE      LD      DE,(AXLIP)
+            CALL    AXLINE
+            JR      ARDONE
+ARRAW       LD      E,0FFH
+            CALL    AUXBDOS6
+            JR      ARDONE
+ARSTAT      CALL    TSKSTAT       ; retry actual BIOS/BDOS status request
+ARDONE      LD      (AXRES),A
+            LD      (AXRHL),HL
+            LD      A,(AXQUIT)
+            CP      3
+            CALL    Z,TASKSAVE
+            LD      A,(AXQUIT)
+            OR      A
+            JP      NZ,AXFIN
+            JP      AXGO
+
+; ================================================================
+; RamWorks Phase 3C: save/restore full 80-column video memory.
+; Uses AUX bank 2 as an out-of-band backing store for both sessions.
+; Physical 6502 $2000-$2FFF in bank 2 (Z80 $1000-$1FFF) holds
+; 1KB MAIN + 1KB AUX video page for each session.
+;
+; $C001/HIRES/PAGE2 maps ONLY the Apple II HGR page ($2000-$3FFF)
+; to RamWorks AUX, so this MAIN resident code ($0B00) can copy directly
+; via Z80 $1000-$1FFF. Z80 $3000-$33FF (physical MAIN $4000) is
+; temporary copy scratch during TAB/suspend; SAVE cannot run then.
+; $C073 banks and $C0xx switches are always restored before returning.
+; The two live CP/M AUX banks 0/1 are never used for screen storage.
+; ================================================================
+            ORG     00B00H
+VS80ON      EQU     0E001H
+VSPAGE1     EQU     0E054H
+VSPAGE2     EQU     0E055H
+VSHIRES0    EQU     0E056H
+VSHIRES1    EQU     0E057H
+VSTEXT      EQU     0F400H
+VSSCRATCH   EQU     03000H
+VSMINSIZE   EQU     0400H
+VSTLEN      EQU     9          ; contiguous VCOL..VATTR in 6502
+
+; 6502 $B81E returns VCOL address as A=low, X=high. Convert to
+; SoftCard Z80 address by subtracting $1000 from its high byte.
+VSINIT      LD      HL,VSMETAS
+            LD      DE,VSMETAS+1
+            LD      BC,159
+            XOR     A
+            LD      (HL),A
+            LDIR
+            LD      A,(RWTOTAL)
+            CP      3
+            LD      A,0
+            JR      C,VSNOTRW
+            INC     A
+VSNOTRW     LD      (VSOK),A
+            LD      HL,0B81EH
+            LD      (ADDR),HL
+            LD      A,1
+            LD      (CMD),A
+            LD      (SOFTCARD),A
+            LD      A,(AREG)
+            LD      L,A
+            LD      A,(XREG)
+            SUB     010H
+            LD      H,A
+            LD      (VSPTR),HL
+            RET
+
+; Every snapshot bank provides an 8KB HGR window: 4 x 2KB screens.
+; session 0..3 -> bank 2; 4..7 -> bank 5; 8..11 -> bank 10;
+; 12..15 -> bank 15. Data lives at Z80 $1000..$2FFF.
+VSSLOT      LD      B,A           ; 0 main half, 1 auxiliary half
+            LD      A,(TABMODE)
+            AND     3
+            ADD     A,A
+            ADD     A,A
+            ADD     A,A           ; logical slot within group * $0800
+            ADD     A,010H
+            LD      D,A
+            LD      E,0
+            LD      A,B
+            OR      A
+            RET     Z
+            LD      A,D
+            ADD     A,4
+            LD      D,A
+            RET
+
+VSMETA      LD      A,(TABMODE)
+            LD      L,A
+            LD      H,0
+            LD      E,L
+            LD      D,H
+            ADD     HL,HL         ; 2n
+            ADD     HL,HL         ; 4n
+            ADD     HL,HL         ; 8n
+            ADD     HL,DE         ; 9n
+            ADD     HL,DE         ; 10n
+            LD      DE,VSMETAS
+            ADD     HL,DE
+            RET
+
+VSSBANK     LD      A,(TABMODE)
+            CP      4
+            JR      C,VSB_FIRST
+            SRL     A
+            SRL     A            ; group 1..3
+            LD      B,A
+            ADD     A,A
+            ADD     A,A
+            ADD     A,B          ; group * 5
+            RET
+VSB_FIRST   LD      A,2
+            RET
+
+; Set bank 2 + 80STORE HIRES PAGE2: map AUX HGR $2000-$3FFF
+; into $1000-$2FFF, without disturbing this code or Z80 stack.
+VSWINDOW    CALL    VSSBANK
+            CALL    AXBANK
+            XOR     A
+            LD      (VS80ON),A
+            LD      A,(VSHIRES1)
+            LD      A,(VSPAGE2)
+            RET
+
+; Restore safe text-mode addressing and return to AUX bank 0.
+VSUNWIN     LD      A,(VSPAGE1)
+            LD      A,(VSHIRES0)
+            XOR     A
+            LD      (SW80OFF),A
+            CALL    AXBANK
+            RET
+
+; HL=source into MAIN staging scratch. Video bank 0 selected.
+VSFROMMAIN  LD      HL,VSTEXT
+            LD      DE,VSSCRATCH
+            LD      BC,VSMINSIZE
+            LDIR
+            RET
+VSFROMAUX   XOR     A
+            LD      (VS80ON),A
+            LD      A,(VSPAGE2)
+            LD      HL,VSTEXT
+            LD      DE,VSSCRATCH
+            LD      BC,VSMINSIZE
+            LDIR
+            LD      A,(VSPAGE1)
+            XOR     A
+            LD      (SW80OFF),A
+            RET
+
+; A=half (0 main, 1 aux): copy staged 1K to bank2 snapshot.
+VSWRITE     CALL    VSSLOT
+            PUSH    DE
+            CALL    VSWINDOW
+            POP     DE
+            LD      HL,VSSCRATCH
+            LD      BC,VSMINSIZE
+            LDIR
+            JP      VSUNWIN
+
+; A=half: copy saved 1K to staging scratch, then restore bank0.
+VSREAD      CALL    VSSLOT
+            PUSH    DE
+            CALL    VSWINDOW
+            POP     HL
+            LD      DE,VSSCRATCH
+            LD      BC,VSMINSIZE
+            LDIR
+            JP      VSUNWIN
+
+VSSAVE      LD      A,(VSOK)
+            OR      A
+            RET     Z
+            CALL    VSMETA
+            LD      A,1
+            LD      (HL),A
+            INC     HL
+            EX      DE,HL
+            LD      HL,(VSPTR)
+            LD      BC,VSTLEN
+            LDIR
+            CALL    VSFROMMAIN
+            XOR     A
+            CALL    VSWRITE
+            CALL    VSFROMAUX
+            LD      A,1
+            JP      VSWRITE
+
+; Restore byte-identical MAIN and AUX text pages, cursor/parser data,
+; then return to 80-col text state. Initial unused tab is cleared.
+VSREST      LD      A,(VSOK)
+            OR      A
+            JP      Z,CCPCLS
+            CALL    VSMETA
+            LD      A,(HL)
+            OR      A
+            JP      Z,CCPCLS
+            INC     HL
+            LD      DE,(VSPTR)
+            LD      BC,VSTLEN
+            LDIR
+            XOR     A
+            CALL    VSREAD
+            LD      HL,VSSCRATCH
+            LD      DE,VSTEXT
+            LD      BC,VSMINSIZE
+            LDIR
+            LD      A,1
+            CALL    VSREAD
+            XOR     A
+            LD      (VS80ON),A
+            LD      A,(VSPAGE2)
+            LD      HL,VSSCRATCH
+            LD      DE,VSTEXT
+            LD      BC,VSMINSIZE
+            LDIR
+            LD      A,(VSPAGE1)
+            XOR     A
+            LD      (SW80OFF),A
+            RET
+
+VSPTR       DEFW    0
+VSOK        DEFB    0
+
+; Shared MAIN descriptors; never in the application's switchable AUX RAM.
+            ORG     00D00H
+TABCTXS     DEFS    112          ; 16 * 7 bytes
+TSKFLAGS    DEFS    16           ; one parked flag per logical session
+TSKREGS     DEFS    432          ; 16 * 27-byte saved Z80 contexts
+VSMETAS     DEFS    160          ; 16 * (valid + 9 terminal bytes)
+CCPPROMS    DEFS    16           ; 1 if restored CCP screen includes prompt
+
             ORG     07000H
 
 AXBDOS      LD      A,C
@@ -256,6 +1114,7 @@ AXBAD       LD      A,2
             LD      A,0FFH
             LD      L,A
             RET
+; TERM.COM must not switch to the 6502 directly from AUX RAM:
 ; the 6502 console lives at MAIN $B800. This dispatcher is called by
 ; LCGATE with MAIN RAM selected, and the original LC/stack are restored
 ; automatically on return. Private BDOS $F0: E=0 Videx / E=1 Soroc.
@@ -320,20 +1179,7 @@ AXUSER      CALL    F_USERNUM
             RET
 ; Cooked CONIN via existing BIOS raw read, with echo and ^C exit.
 ; Avoid C_READ's nonreturning main-bank warm boot in AUX mode.
-AXCIN       CALL    BIOSCONIN
-            CP      3
-            JR      NZ,AXECH
-            LD      A,1
-            LD      (LCQUIT),A
-            XOR     A
-            LD      L,A
-            RET
-AXECH       PUSH    AF
-            LD      E,A
-            CALL    C_WRITE
-            POP     AF
-            LD      L,A
-            RET
+AXCIN       JP      TSKCIN    ; handler moved under $0800
 AXIOGET     JP      GET_IOB
 AXIOSET     JP      SET_IOB
 AXAUXRD     LD      A,1AH       ; no input device: CP/M EOF
@@ -345,12 +1191,8 @@ AXAUXWR     XOR     A            ; no punch/list device attached
 
 ; Direct BIOS console calls use private C codes $F1..$F3 from the LC
 ; jump-table shims. Caller registers are preserved by those shims.
-AXBICON     CALL    BIOSCONST
-            LD      L,A
-            RET
-AXBIREAD    CALL    BIOSCONIN
-            LD      L,A
-            RET
+AXBICON     JP      TSKSTAT     ; catch ^] while BIOS CONST polls
+AXBIREAD    JP      TSKBIRD    ; handler moved under $0800
 AXBIOUT     CALL    C_RAWPUT
             XOR     A
             LD      L,A
@@ -419,6 +1261,8 @@ AXLNEXT     PUSH    BC
             POP     HL
             POP     BC
             AND     07FH
+            CP      01DH            ; only suspend at start of a new line
+            JP      Z,AXLSKEY
             CP      13
             JR      Z,AXLDONE
             CP      3
@@ -669,7 +1513,7 @@ AXM2A       LD      A,(LCB2RW)
 ; High memory is read from the post-execution AUX LC snapshot in MAIN.
 ; Only MAIN $AUXSTAGE is passed as the ProDOS write DMA buffer.
 ; ================================================================
-           ORG     07400H
+            ORG     07400H
 SAVEFILE   LD      HL,FILEBUF+2   ; decimal pages (the first argument)
            LD      B,0
 SVDEC      LD      A,(HL)
@@ -819,6 +1663,52 @@ SVPTR      DEFW    0100H
 SVSTAT     DEFB    0
 SVVALID    DEFB    0      ; latest completed AUX LC image in MAIN $4000
 
+; CCP helper routines relocated here to keep resident code below $9800.
+; Uppercase the command input (Pascal string) in place.
+UCASE      LD      B,(HL)
+UCL1       LD      A,B
+           OR      A
+           RET     Z
+           INC     HL
+           LD      A,(HL)
+           CP      'a'
+           JR      C,UCS1
+           CP      'z'+1
+           JR      NC,UCS1
+           SUB     'a'-'A'
+           LD      (HL),A
+UCS1       DJNZ    UCL1
+           RET
+
+
+; Shared confirmation reader. A=0 for Y; A=1 for N.
+; Invalid input is ignored; C_READ echoes typed characters.
+CCPYESNO   CALL    C_WRITESTR
+CYKEY      CALL    C_READ
+           AND     0DFH
+           CP      'Y'
+           JR      Z,CYYES
+           CP      'N'
+           JR      NZ,CYKEY
+           LD      E,13
+           CALL    C_WRITE
+           LD      A,1
+           RET
+CYYES      LD      E,13
+           CALL    C_WRITE
+           XOR     A
+           RET
+CCPBYE     LD      DE,BYEASK
+           CALL    CCPYESNO
+           OR      A
+           RET     NZ
+           XOR     A
+           LD      (CMD),A
+           JP      BYERESUME      ; Stable SoftCard handoff; next start is cold
+BYEASK     DEFM    'Y/N? $'
+
+
+
 ; CCP's built-in command table and terminal selector live in the unused
 ; MAIN-memory TPA.  $7600-$77FF is free of AXBDOS ($7000-$73xx)
 ; and the permanent AUX bridge staging region ($7800 onward).
@@ -850,6 +1740,12 @@ BITABLE    DEFM    'DIR  '
            DEFM    'CLS  '
            DEFB    0
            DEFW    CCPCLS
+           DEFM    'BANKS'
+           DEFB    0
+           DEFW    CCPBANKS
+           DEFM    'TAB  '
+           DEFB    081H             ; optional 0 or 1
+           DEFW    CCPTAB
 
 ; Native CCP terminal selector.  This code runs with MAIN RAM visible,
 ; unlike the old AUX .COM, so it calls the 6502 VSETMODE vector directly.
@@ -977,6 +1873,61 @@ ROFTEXT	DEFM	': File R/O'
 RODTEXT	DEFM	': R/O'
 			DEFB	'$'
 
+; CCP command argument/file validators relocated from resident code.
+; The CCP parser normalizes arguments as " arg1 arg2 ", always
+; separating words by ONE space and retaining the leading/trailing space.
+; Number of words = number of spaces - 1 (or 0 if tail is empty).
+CCPARGC    LD      HL,FILEBUF
+           LD      B,(HL)
+           LD      C,0
+           INC     HL
+CALOOP     LD      A,B
+           OR      A
+           JR      Z,CADONE
+           LD      A,(HL)
+           CP      ' '
+           JR      NZ,CANEXT
+           INC     C
+CANEXT     INC     HL
+           DJNZ    CALOOP
+CADONE     LD      A,C
+           OR      A
+           RET     Z
+           DEC     A
+           RET
+
+CCPBAD     LD      DE,BFMSG
+           CALL    C_WRITESTR
+           LD      A,1
+           OR      A
+           RET
+
+; Disallow ambiguous file specifications in TYPE, REN and SAVE.
+; Returns A=0 for unambiguous name, nonzero for '?' anywhere.
+ISWILD     LD      B,11
+IWLOOP     LD      A,(HL)
+           CP      '?'
+           RET     Z
+           INC     HL
+           DJNZ    IWLOOP
+           XOR     A
+           RET
+CCPNOWILD  CALL    ISWILD
+           OR      A
+           RET     Z
+           JP      CCPBAD
+
+BITYPE     LD      HL,FCB1NAM
+           CALL    CCPNOWILD
+           RET     NZ
+           JP      TYPEFILE
+BISAVE     LD      HL,FCB2NAM
+           CALL    CCPNOWILD
+           RET     NZ
+           JP      SAVEFILE
+
+
+
 
 ; Permanent scratch: main TPA is unused by auxiliary transients.
             ORG     07800H
@@ -1003,6 +1954,14 @@ AXSTART     LD      (AXMSP),SP    ; called with MAIN RAM and main LC
             XOR     A
             LD      (ZPAUX),A
             JP      LCREN         ; enter the AUX LC DF00h gateway
+; Resume a parked BDOS return. Called from TABRESUM on the MAIN stack.
+; The suspended stack frame in its AUX bank is still there.
+AXCONT      LD      (AXMSP),SP
+            XOR     A
+            LD      (AXQUIT),A
+            INC     A
+            LD      (AXMODE),A
+            JP      AXRETRY
 AXGATE      LD      (AXASP),SP    ; user's stack may itself be in AUX LC
             LD      SP,(AXMSP)    ; restore main resident stack
             XOR     A
@@ -1012,9 +1971,12 @@ AXGATE      LD      (AXASP),SP    ; user's stack may itself be in AUX LC
             LD      (AXRES),A
             LD      (AXRHL),HL
             LD      A,(AXQUIT)
+            CP      3
+            CALL    Z,TASKSAVE     ; save before the CCP/other session runs
+            LD      A,(AXQUIT)
             OR      A
             JR      NZ,AXFIN
-            LD      A,(LCB2RW)
+AXGO        LD      A,(LCB2RW)
             LD      A,(LCB2RW)
             XOR     A
             LD      (ZPAUX),A    ; executable LC image now AUX
@@ -1126,6 +2088,8 @@ CCHITMSG    DEFM    ' hits='
 CCEVMSG     DEFM    ' evictions='
             DEFB    '$'
 
+CCPBANKS    JP      RWREPORT
+
             ORG     07C00H
 
 ; LC entry points are absolute RUNTIME addresses, not source image labels.
@@ -1154,6 +2118,12 @@ AUXRUN      LD      DE,PATHBUF2
             ; Loading overwrites the previous transient's LC snapshot.
             XOR     A
             LD      (SVVALID),A
+            ; The transient's RAM can now be in AUX bank 1 instead of
+            ; the system/video bank 0. 6502 HANDLR temporarily uses bank
+            ; zero for ALL MLI, keyboard and video requests.
+            LD      A,(TABMODE)
+            CALL    TABPHYS
+            CALL    AXBANK
             ; MAIN 4K in $3000, original AUX 12K in MAIN $4000-$6FFF.
             CALL    AXSNAP
             LD      HL,0100H
@@ -1203,10 +2173,14 @@ AUXADV      LD      HL,(AUXDEST)
 AUXRERR     LD      DE,PATHBUF2
             CALL    F_CLOSE
             CALL    AXREST
+            XOR     A
+            CALL    AXBANK
             JP      RCLERR
 AUX2BIG     LD      DE,PATHBUF2
             CALL    F_CLOSE
             CALL    AXREST
+            XOR     A
+            CALL    AXBANK
             JP      AUXSIZEERR
 AUXLDONE    LD      DE,PATHBUF2
             CALL    F_CLOSE
@@ -1238,7 +2212,9 @@ AUXLDONE    LD      DE,PATHBUF2
             LD      DE,02800H
             LD      BC,16
             CALL    LCA2M
-            ; Clone CP/M page zero and patch public DF00 gateway vectors.
+            ; Restore the known-working page-zero copy. The SoftCard
+            ; translates these Z80 addresses into Apple II $1000..$10FF,
+            ; where RAMWRT=AUX selects the current RamWorks bank.
             LD      HL,0000H
             LD      DE,0000H
             LD      BC,0100H
@@ -1264,6 +2240,9 @@ AUXLDONE    LD      DE,PATHBUF2
             CALL    AXSTART
             POP     AF
             LD      (CURDRV),A
+            LD      A,(AXQUIT)
+            CP      3
+            JP      Z,AUXSUSP      ; do NOT destroy the parked AUX LC image
             CALL    CACHEALL        ; AUX termination also closes/flushed files
             LD      A,(AXQUIT)
             LD      (AUXEXCD),A
@@ -1280,6 +2259,8 @@ AUXLDONE    LD      DE,PATHBUF2
             ; contents.  AUX LC is restored; MAIN $4000-$6FFF now holds
             ; the guest image for a subsequent CCP SAVE 176..222.
             CALL    AXKEEP
+            XOR     A
+            CALL    AXBANK          ; CCP/ProDOS always return to bank 0
             LD      A,1
             LD      (SVVALID),A
             LD      HL,FILEBUF
@@ -1292,7 +2273,21 @@ AUXLDONE    LD      DE,PATHBUF2
 AUXEXOK     LD      E,13
             CALL    C_WRITE
             RET
+; Returning to the CCP after Ctrl-] must not restore the old AUX LC:
+; the parked transient, including its LC gateway, lives in that bank.
+AUXSUSP     CALL    CACHEALL
+            CALL    AXMAINLC        ; restore ProDOS MAIN LC, keep AUX LC
+            XOR     A
+            CALL    AXBANK          ; 6502/video service bank 0
+            CALL    VSSAVE          ; capture program BEFORE CCP message
+            LD      HL,FILEBUF
+            LD      (DMAADDR),HL
+            LD      HL,0080H
+            LD      (AXDMAP),HL
+            RET
 AUXRERR0    CALL    AXREST
+            XOR     A
+            CALL    AXBANK
             JP      RCLERR
 
 ; Save both physical LC images before any AUX LC .COM loading. LC bank2
@@ -1385,13 +2380,19 @@ AUXBDOS2    PUSH    DE
             LD      A,E
             LD      L,A
             RET
-AUXBDOS6    JP      C_RAWIO
-ABDSTAT     CALL    C_STAT
-            OR      A
-            RET     Z
-            LD      A,0FFH
+AUXBDOS6    LD      A,E
+            CP      0FFH
+            JR      NZ,AB6OUT     ; control-character output is not input
+AB6IN       CALL    C_RAWIO
+            CP      01DH
+            RET     NZ
+            CALL    TSKKEY
+            JR      NC,AB6IN      ; invalid selector, poll again
+            LD      A,0F6H        ; deferred BDOS 6 poll
             LD      L,A
             RET
+AB6OUT      JP      C_RAWIO
+ABDSTAT     JP      TSKSTAT     ; catch ^] while BDOS 11 polls
 AUXBDOS9    PUSH    BC
             PUSH    DE
             PUSH    HL
@@ -1523,10 +2524,14 @@ BDOSINIT	DI
 			XOR		A
 			LD		(VUCVALID),A
 			LD		(SVVALID),A		; no completed AUX LC snapshot yet
+            LD      (TABMODE),A       ; cold boot starts in session 0
+            CALL    TABINIT         ; reset both CCP session descriptors
+            CALL    TSKINIT         ; discard suspended programs on cold boot
 			CALL	CACHERST		; zero cache counters on cold start only
 			LD		HL,BIOSWBOOT
 			LD		(0001H),HL		; 0000H -> BIOS WBOOT JP (CP/M ABI)
-			CALL	BPMSIGN			; Print TPA banner exactly once
+            CALL    BPMSIGN
+            CALL    RWREPORT       ; physical bank count and supported tabs
 
 ; Warm-boot path for BDOS 0, RST 0, JP 0000H and Ctrl-C.
 ; Keep the existing BDOS reset semantics, but do not print BPMSIGN.
@@ -1779,8 +2784,10 @@ CRSL1		PUSH	HL
 			POP		HL
 			CP		3				; Preserve CP/M Ctrl-C abort
 			JP		Z,BDOSWARM
-			CP		13
-			JR		Z,CRSEND
+            CP      01DH
+            JP      Z,CR_SELCMD
+            CP      13
+            JR      Z,CRSEND
 			CP		10
 			JR		Z,CRSEND
 			CP		8
@@ -3824,6 +4831,7 @@ PHOUT		LD		E,A
 ; - TERM VIDEX/SOROC - Set terminal personality (no .COM needed)
 ; - CACHE        - Show ProDOS handle-cache counters (CACHE RESET to zero)
 ; - CLS          - Reset video state, clear screen and home cursor
+; - TAB 0..F      - Switch CCP contexts or resume parked .COM (Phase 3B)
 ; - FILENAME.COM - Load and run FILENAME.COM at 0100H
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -3832,18 +4840,23 @@ PHOUT		LD		E,A
 
 ; Get a line of text from the console & handle it
 CCP			
-CCPL1		LD		A,(CURDRV)		; Get current drive & user number
-			AND		0FH				; Mask out user number
-			ADD		A,'A'			; Convert to letter
-			LD		E,A				; Print it
-			CALL	C_WRITE			; ...
-			LD		E,'>'			; Print '>'
-			CALL	C_WRITE			; ...
-			
+CCPL1       CALL    TBAUTOSW
+            CALL    CCPPRPTR
+            LD      A,(HL)
+            OR      A
+            JR      NZ,CCPREAD      ; restored CCP screen already has A>
+            LD      (HL),1          ; prompt will now be drawn
+            CALL    CCPPRNT        ; [session]drive:> prompt
+CCPREAD
 			LD		DE,FILEBUF		; Use FILEBUF as line buffer
 			LD		A,120			; Max line length
 			LD		(DE),A			; Stored in first char of buffer
 			CALL	C_READSTR		; Get a line from the user
+            LD      A,(TABREQ)
+            CP      0FFH
+            JP      NZ,CCPL1       ; selector is pending: NO empty command
+            CALL    CCPPRPTR
+            LD      (HL),0         ; an actual input line was completed
 			LD		HL,FILEBUF+1	; Use actual count byte, not DE (editing clobbers E)
 			CALL	UCASE			; Uppercase commands AND transient command tails
 
@@ -3884,21 +4897,7 @@ CCPS1      LD      HL,FCB1			; Clear FCB1
 
 			JP		CCP				; Go again
 
-; Uppercase the command input (Pascal string) in place.
-UCASE      LD      B,(HL)
-UCL1       LD      A,B
-           OR      A
-           RET     Z
-           INC     HL
-           LD      A,(HL)
-           CP      'a'
-           JR      C,UCS1
-           CP      'z'+1
-           JR      NC,UCS1
-           SUB     'a'-'A'
-           LD      (HL),A
-UCS1       DJNZ    UCL1
-           RET
+; CCP uppercaser routines relocated into spare MAIN memory.
 
 ; Parse the command line
 ; Replaces the contents of FILEBUF with command tail as Pascal-style string
@@ -4080,62 +5079,12 @@ EPPFULL    POP     AF
 ; Bit 7 of nargs permits zero arguments as well as one (DIR).
 ; BITABLE now resides at MAIN $7600, with CCPTERM and its strings.
 
-; The CCP parser normalizes arguments as " arg1 arg2 ", always
-; separating words by ONE space and retaining the leading/trailing space.
-; Number of words = number of spaces - 1 (or 0 if tail is empty).
-CCPARGC    LD      HL,FILEBUF
-           LD      B,(HL)
-           LD      C,0
-           INC     HL
-CALOOP     LD      A,B
-           OR      A
-           JR      Z,CADONE
-           LD      A,(HL)
-           CP      ' '
-           JR      NZ,CANEXT
-           INC     C
-CANEXT     INC     HL
-           DJNZ    CALOOP
-CADONE     LD      A,C
-           OR      A
-           RET     Z
-           DEC     A
-           RET
-
-CCPBAD     LD      DE,BFMSG
-           CALL    C_WRITESTR
-           LD      A,1
-           OR      A
-           RET
-
-; Disallow ambiguous file specifications in TYPE, REN and SAVE.
-; Returns A=0 for unambiguous name, nonzero for '?' anywhere.
-ISWILD     LD      B,11
-IWLOOP     LD      A,(HL)
-           CP      '?'
-           RET     Z
-           INC     HL
-           DJNZ    IWLOOP
-           XOR     A
-           RET
-CCPNOWILD  CALL    ISWILD
-           OR      A
-           RET     Z
-           JP      CCPBAD
-
-BITYPE     LD      HL,FCB1NAM
-           CALL    CCPNOWILD
-           RET     NZ
-           JP      TYPEFILE
-BISAVE     LD      HL,FCB2NAM
-           CALL    CCPNOWILD
-           RET     NZ
-           JP      SAVEFILE
+; CCP arg-checks routines relocated into spare MAIN memory.
 
 ; Single table-driven dispatcher instead of six repeated string
 ; comparisons. A handler is entered with a synthetic return address.
 BUILTIN    LD      HL,BITABLE
-           LD      C,9
+           LD      C,11
 BISCAN     LD      DE,PATHBUF2+1
            LD      B,5
 BICMP      LD      A,(DE)
@@ -4184,35 +5133,15 @@ BISKIP     LD      E,B            ; Skip unmatched portion of 5-char key
            RET
 BIREQ      DEFB    0
 
-; Shared confirmation reader. A=0 for Y; A=1 for N.
-; Invalid input is ignored; C_READ echoes typed characters.
-CCPYESNO   CALL    C_WRITESTR
-CYKEY      CALL    C_READ
-           AND     0DFH
-           CP      'Y'
-           JR      Z,CYYES
-           CP      'N'
-           JR      NZ,CYKEY
-           LD      E,13
-           CALL    C_WRITE
-           LD      A,1
-           RET
-CYYES      LD      E,13
-           CALL    C_WRITE
-           XOR     A
-           RET
-CCPBYE     LD      DE,BYEASK
-           CALL    CCPYESNO
-           OR      A
-           RET     NZ
-           XOR     A
-           LD      (CMD),A
-           JP      BYERESUME      ; Stable SoftCard handoff; next start is cold
-BYEASK     DEFM    'Y/N? $'
+; CCP yesno routines relocated into spare MAIN memory.
 
 ; 44K experiment: CCP stays in MAIN, transients load into AUX $0100-$AFFF.
 ; Only console BDOS calls are supported by the temporary LC gateway.
-RUNCOM      JP      AUXRUN
+RUNCOM      CALL    TSKACTIVE
+            OR      A
+            JP      Z,AUXRUN
+            LD      DE,TSKBUSY
+            JP      C_WRITESTR
 
 RCOERR      LD      DE,NFMSG
             CALL    C_WRITESTR

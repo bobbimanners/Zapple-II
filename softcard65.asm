@@ -2,19 +2,18 @@
 * 6502 code to invoke Z80 routine on Softcard and
 * handle calls from Z80 back to 6502
 * Assumes Softcard in slot 4
-* Bobbi 2019
+* Bobbi 2019, 2026
 ***************************************************
 
  ORG $2000  ; System program
  TYP $FF  ; .SYS
 
 SFTCRD EQU $C400 ; Softcard in slot 4
-CMD EQU $06 ; ZP address for command code (0,1,2)
+CMD EQU $06 ; ZP address for command code (0=quit,1=6502,2=MLI,3=key status)
 AREG EQU $07 ; Pass 6502 A reg to/from Z80
 XREG EQU $08 ; Pass 6502 X reg to/from Z80
 YREG EQU $09 ; Pass 6502 Y reg to/from Z80
 ADDR EQU $EB ; Pass address of 6502 routine to call from Z80
-ADDRH EQU $EC ; High byte of address ADDR
 FLAGS EQU $ED ; Pass 6502 flags to/from Z80
 
 * 80-column text page 1, direct main/aux video access.
@@ -59,8 +58,65 @@ STADDR EQU  $B800  ; Code will be relocated to this addr
  CMP #<RELOC_EN ; at end?
  BNE :LDRL1 ; Nope. Loop
 
+ JSR RWAUTODETECT ; One-time test; loader code is disposable
  JMP STADDR ; Jump to reloc'd code
 
+* Probe up to 128 distinct RamWorks banks using physical AUX $07FE.
+* Executed only before the Z80 starts; this loader code can be discarded.
+* Save every original byte, write distinct markers, verify all prior banks
+* remain independent, then restore the bytes even on an aliased bank.
+RWAUTODETECT
+ LDA #0
+ STA $C000       ; 80STORE off
+ STA $C002       ; RAMRD MAIN
+ STA $C004       ; RAMWRT MAIN
+ STA $C073
+ BIT $C056      ; HIRES off, so loader code at $2000 remains MAIN
+ STA $C001       ; 80STORE on
+ BIT $C055      ; PAGE2 maps AUX text to $0400..$07FF
+ LDY #0
+:RWTRY
+ TYA
+ STA $C073
+ LDA $07FE
+ STA RWORIGINAL,Y
+ TYA
+ EOR #$5A
+ STA $07FE
+ LDX #0
+:RWVERIFY
+ TXA
+ STA $C073
+ TXA
+ EOR #$5A
+ CMP $07FE
+ BNE :RWFINISH
+ INX
+ ; X <= Y means candidate and all established banks need checking.
+ STX RWTESTX
+ TYA
+ CMP RWTESTX
+ BCS :RWVERIFY
+ INY
+ CPY #128
+ BCC :RWTRY
+:RWFINISH
+ STY RWCOUNT    ; Number of distinct banks, at least one.
+:RWRESTORE
+ DEY
+ TYA
+ STA $C073
+ LDA RWORIGINAL,Y
+ STA $07FE
+ TYA
+ BNE :RWRESTORE
+ BIT $C054      ; PAGE1
+ LDA #0
+ STA $C000       ; 80STORE off
+ STA $C073       ; normal system bank
+ RTS
+RWTESTX DB 0
+RWORIGINAL DS 128
 
 RELOC_ST
  ORG STADDR ; Assemble for this origin
@@ -75,8 +131,15 @@ RELOC_ST
  JMP VSETMODE ; B80C: A=0 Videx, A=1 Soroc (does not clear)
  JMP VRAWPUT  ; B80F: raw BIOS/BDOS function 6 output
  JMP VCLS     ; B812: CLS reset terminal, clear and home
+ JMP RWPROBE  ; B815: cached physical bank count (cold probe)
+ JMP RWSELECT ; B818: bank selection, A=0/1 (private Z80 caller)
+ JMP VGETMODE ; B81B: return terminal personality in A (private Z80)
+ JMP VSTATEPTR ; B81E: pointer to contiguous VCOL..VATTR state
 
-ENTRY JSR VINIT ; Initialize video hardware and clear screen
+ENTRY LDA #0
+ STA RWACTIVE
+ STA $C073       ; Start all CP/M sessions from system/video bank 0
+ JSR VINIT ; Initialize video hardware and clear screen
  JSR PRWELC ; Print welcome message
  LDA #$00 ; Clear ProDOS system bitmap
  LDX #$00 ;
@@ -96,12 +159,7 @@ ENTRY JSR VINIT ; Initialize video hardware and clear screen
  JSR PRBYTE ; Print error code
  JSR PRRDERR ; Print "read error"
  JMP DONE ; Quit
-:S2 LDA RD_TC+1 ; MSB
- JSR PRBYTE ; Print it
- LDA RD_TC ; LSB
- JSR PRBYTE ; Print it
- JSR CROUT ; ...
- JSR CL ; Close file
+:S2 JSR CL ; Close file
  JSR PRSUCC ; Print success message
 
 MAINLOOP
@@ -112,6 +170,8 @@ MAINLOOP
 * loader errors use the same exit. QUIT normally never returns.
 DONE
  LDA #0
+ STA RWACTIVE ; Leave ProDOS selector with default AUX bank
+ STA $C073
  STA $C000 ; 80STORE off
  STA $C002 ; RAMRD main
  STA $C004 ; RAMWRT main
@@ -192,11 +252,9 @@ PRSUCC LDA #<PATH ;
 
 * File to load
 PATH STR "SOFTCARD80.BIN"
-;PAYLOAD STR "MBASIC.COM"
-PAYLOAD STR "NSWEEP.COM"
 
 * Messages
-WELCOME STR "Zapple-II Loader"
+WELCOME STR "Zapple-II B/PM ... Bobbi 2019, 2026"
 OPERR STR ": Can't open "
 RDERR STR ": Read error"
 SUCCMSG STR " loaded"
@@ -211,16 +269,6 @@ OP_FP DW PATH ; Pointer to file path
 OP_FBL DW IOBUF ; Pointer to I/O buffer
 OP_N DB 0 ; File reference number
 
-* ProDOS Parameter List for OPEN (for the payload)
-OPPL JSR $BF00 ; ProDOS call
- DB $C8 ; OPEN
- DW OPPL_PL ; Pointer to parm list
- RTS
-OPPL_PL DB 3 ; Start of param list; 3 parameters
-OPPL_FP DW PAYLOAD ; Pointer to payload path
-OPPL_FBL DW IOBUF ; Pointer to I/O buffer
-OPPL_N DB 0 ; File reference number
-
 * ProDOS Parameter List for READ
 RD JSR $BF00 ; ProDOS call
  DB $CA ; READ
@@ -232,17 +280,6 @@ RD_DB DW LDADDR ; Data buffer LSB
 RD_RC DW LDLEN ; Request count LSB
 RD_TC DW $0000 ; Trans count LSB
 
-* ProDOS Parameter List for READ
-RDPL JSR $BF00 ; ProDOS call
- DB $CA ; READ
- DW RDPL_PL ; Pointer to parm list
- RTS
-RDPL_PL DB 4 ; Start of param list; 4 parameters
-RDPL_N DB 0 ; File reference number
-RDPL_DB DW $1100 ; Data buffer LSB
-RDPL_RC DW LDLEN ; Request count LSB
-RDPL_TC DW $0000 ; Trans count LSB
-
 * ProDOS Parameter List for CLOSE
 CL JSR $BF00 ; ProDOS call
  DB $CC ; CLOSE
@@ -252,7 +289,9 @@ CL_PL DB 1 ; Start of param list; 1 parameter
 CL_N DB 0 ; File ref num (0 close all)
 
 * Handle calls made by Z80 code
-HANDLR LDA CMD
+HANDLR LDA #0
+ STA $C073   ; MLI/video/keyboard always use physical AUX bank 0
+ LDA CMD
  CMP #0 ; CMD=0 means continue running 6502 code
  BNE :CMD1 ;
  PLA  ; Clean up stack
@@ -273,24 +312,37 @@ HANDLR LDA CMD
  PHP  ; Move status to A via the stack
  PLA  ;
  STA FLAGS ; Store the flags
- RTS  ; Will go back to Z80
+ JMP RWRETURN ; Restore selected transient bank before Z80 resumes
 :CMD2 CMP #2 ; CMD=2 means call ProDOS MLI then return to Z80
  BNE :CMD3 ;
  JSR :DOJMP ; ProDOS MLI call
  STA AREG ; Store return code
- RTS  ; Will go back to Z80
+ JMP RWRETURN
 :CMD3 CMP #3 ; CMD=3 means peek at the keyboard then ret to Z80
  BNE :CMD4 ;
  BIT $C000 ; Peek at the keyboard status
  BMI :C3YES ; Branch if keystroke available
  LDA #0 ; If no chars, return 0 in AREG
  JMP :C3DONE ; ...
-:C3YES LDA #1 ; Otherwise return 1 in AREG
+:C3YES LDA $C000 ; Expose keycode without consuming the key
+ STA YREG   ; AREG remains the original boolean interface
+ LDA #1
 :C3DONE STA AREG ; Store the value for the Z80
- RTS  ; Go back to Z80
+ JMP RWRETURN ; Restore transient bank
 :CMD4 JSR VBELL ; Beep for error
  BRK  ; And drop into monitor
 :DOJMP JMP (ADDR) ;
+
+* Bank selection lives in MAIN memory, not in a banked AUX program.
+* RWSELECT is called via $B818, with the selected bank in AREG.
+* MLI, keyboard and video use bank 0; restore RWACTIVE on return.
+RWSELECT STA RWACTIVE
+ RTS
+RWRETURN LDA RWACTIVE
+ STA $C073
+ RTS
+RWACTIVE DB 0
+RWCOUNT DB 1  ; Filled by disposable loader probe before ENTRY
 
 
 ***************************************************
@@ -866,5 +918,19 @@ PRHEX CMP #10
 :PH1 CLC
  ADC #'0'
  JMP VPUT
+* Return the bank count saved by the one-time pre-relocation loader probe.
+* Do not test banks again here: sessions may now contain live programs.
+RWPROBE LDA RWCOUNT
+ RTS
+
+* Query terminal mode without resetting it. Used by TAB session state.
+VGETMODE LDA VMODE
+ RTS
+
+* Return physical address of the 9-byte contiguous terminal state.
+* Z80 main code converts Apple Bxxx to Z80 Axxx (minus $1000).
+VSTATEPTR LDA #<VCOL
+ LDX #>VCOL
+ RTS
 
 RELOC_EN
