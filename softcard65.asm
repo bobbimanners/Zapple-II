@@ -59,8 +59,65 @@ STADDR EQU  $B800  ; Code will be relocated to this addr
  CMP #<RELOC_EN ; at end?
  BNE :LDRL1 ; Nope. Loop
 
+ JSR RWAUTODETECT ; One-time test; loader code is disposable
  JMP STADDR ; Jump to reloc'd code
 
+* Probe up to 128 distinct RamWorks banks using physical AUX $07FE.
+* Executed only before the Z80 starts; this loader code can be discarded.
+* Save every original byte, write distinct markers, verify all prior banks
+* remain independent, then restore the bytes even on an aliased bank.
+RWAUTODETECT
+ LDA #0
+ STA $C000       ; 80STORE off
+ STA $C002       ; RAMRD MAIN
+ STA $C004       ; RAMWRT MAIN
+ STA $C073
+ BIT $C056      ; HIRES off, so loader code at $2000 remains MAIN
+ STA $C001       ; 80STORE on
+ BIT $C055      ; PAGE2 maps AUX text to $0400..$07FF
+ LDY #0
+:RWTRY
+ TYA
+ STA $C073
+ LDA $07FE
+ STA RWORIGINAL,Y
+ TYA
+ EOR #$5A
+ STA $07FE
+ LDX #0
+:RWVERIFY
+ TXA
+ STA $C073
+ TXA
+ EOR #$5A
+ CMP $07FE
+ BNE :RWFINISH
+ INX
+ ; X <= Y means candidate and all established banks need checking.
+ STX RWTESTX
+ TYA
+ CMP RWTESTX
+ BCS :RWVERIFY
+ INY
+ CPY #128
+ BCC :RWTRY
+:RWFINISH
+ STY RWCOUNT    ; Number of distinct banks, at least one.
+:RWRESTORE
+ DEY
+ TYA
+ STA $C073
+ LDA RWORIGINAL,Y
+ STA $07FE
+ TYA
+ BNE :RWRESTORE
+ BIT $C054      ; PAGE1
+ LDA #0
+ STA $C000       ; 80STORE off
+ STA $C073       ; normal system bank
+ RTS
+RWTESTX DB 0
+RWORIGINAL DS 128
 
 RELOC_ST
  ORG STADDR ; Assemble for this origin
@@ -75,7 +132,7 @@ RELOC_ST
  JMP VSETMODE ; B80C: A=0 Videx, A=1 Soroc (does not clear)
  JMP VRAWPUT  ; B80F: raw BIOS/BDOS function 6 output
  JMP VCLS     ; B812: CLS reset terminal, clear and home
- JMP RWPROBE  ; B815: reversible RamWorks banks 0/1/2 probe
+ JMP RWPROBE  ; B815: cached physical bank count (cold probe)
  JMP RWSELECT ; B818: bank selection, A=0/1 (private Z80 caller)
  JMP VGETMODE ; B81B: return terminal personality in A (private Z80)
  JMP VSTATEPTR ; B81E: pointer to contiguous VCOL..VATTR state
@@ -312,6 +369,7 @@ RWRETURN LDA RWACTIVE
  STA $C073
  RTS
 RWACTIVE DB 0
+RWCOUNT DB 1  ; Filled by disposable loader probe before ENTRY
 
 
 ***************************************************
@@ -892,80 +950,9 @@ PRHEX CMP #10
 * 80STORE/PAGE2 routes accesses at $07FE to the selected AUX bank,
 * while instruction fetch and variables at $B8xx stay in MAIN RAM.
 * Restore all originals even on absent/aliased RamWorks hardware.
-* Call only from the MAIN-memory CCP, not from an AUX transient.
-RWPROBE
- LDA #0
- STA RWFOUND
- STA $C000    ; 80STORE off before setting up
- STA $C002    ; RAMRD MAIN
- STA $C004    ; RAMWRT MAIN
- STA $C073    ; Always begin with bank zero
- STA $C001    ; 80STORE on
- BIT $C055   ; PAGE2 => AUX for $0400-$07FF
- LDA $07FE
- STA RWSAVE0
- LDA #1
- STA $C073
- LDA $07FE
- STA RWSAVE1
- LDA #2
- STA $C073
- LDA $07FE
- STA RWSAVE2
-* Distinct markers must survive in *all three* banks concurrently.
- LDA #0
- STA $C073
- LDA #$19
- STA $07FE
- LDA #1
- STA $C073
- LDA #$53
- STA $07FE
- LDA #2
- STA $C073
- LDA #$A7
- STA $07FE
- LDA #0
- STA $C073
- LDA $07FE
- CMP #$19
- BNE :RWFAIL
- LDA #1
- STA $C073
- LDA $07FE
- CMP #$53
- BNE :RWFAIL
- LDA #2
- STA $C073
- LDA $07FE
- CMP #$A7
- BNE :RWFAIL
- LDA #3
- STA RWFOUND
-:RWFAIL
-* Restore bytes on every exit; aliasing banks may share storage.
- LDA #2
- STA $C073
- LDA RWSAVE2
- STA $07FE
- LDA #1
- STA $C073
- LDA RWSAVE1
- STA $07FE
- LDA #0
- STA $C073
- LDA RWSAVE0
- STA $07FE
- BIT $C054   ; PAGE1/main
- LDA #0
- STA $C000    ; 80STORE off
- STA $C073    ; Ensure session/video bank zero remains selected
- LDA RWFOUND
+* Cold-start bank count; no destructive runtime probe needed.
+RWPROBE LDA RWCOUNT
  RTS
-RWSAVE0 DB 0
-RWSAVE1 DB 0
-RWSAVE2 DB 0
-RWFOUND DB 0
 
 * Query terminal mode without resetting it. Used by TAB session state.
 VGETMODE LDA VMODE
