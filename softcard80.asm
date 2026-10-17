@@ -16,8 +16,8 @@
 
 ; BDOS TODOs
 ; ----------
-; TODO: Prodos file handling is SLOW. Would be good to cache file handles rather than
-;       closing/reopening every time.
+; ProDOS handles: two-slot, pathname-keyed cache (see CACHE_* near $A200).
+; Logical CP/M open state is still S2=$7E, never a leaked ProDOS FRN.
 ; TODO: Implement missing BDOS system calls:
 ;        - RS232 (A_READ, A_WRITE)
 ;        - Printer (LWRITE)
@@ -905,6 +905,9 @@ FA_VALID	LD		A,(HL)
 			DJNZ	FA_VALID
 			LD		IX,PATHBUF
 			CALL	FCB2PATH
+			CALL	CACHECLS		; Apply attributes with file physically closed
+			OR		A
+			JP		NZ,FA_ERROR
 			LD		HL,GFIMLI
 			CALL	PRODOS		; GET_FILE_INFO (param count 10)
 			OR		A
@@ -1195,6 +1198,7 @@ AUXLDONE    LD      DE,PATHBUF2
             CALL    AXSTART
             POP     AF
             LD      (CURDRV),A
+            CALL    CACHEALL        ; AUX termination also closes/flushed files
             LD      A,(AXQUIT)
             LD      (AUXEXCD),A
             ; Restore AUX low metadata (virtual DPB/ALV are not persistent).
@@ -1478,14 +1482,7 @@ BDOSWARM	DI					; Make sure interrupts are off
 			LD		(IOBYTE),A		; Initialize IOBYTE
 			LD		(CURDRV),A		; Drive A:, User 0
 			LD		(FILEBUF),A		; Zero chars in command tail
-			XOR		A				; A=0 means close all files
-			LD		(FCMLIN),A		; Store in parameter list
-			LD		HL,FCMLI		; Pass address of 6502 JSR instruction
-			CALL	PRODOS			; Invoke ProDOS MLI to close all files
-			LD		(FRN1),A		; Initialize FRNs to zero
-			LD		(FRN2),A		; ...
-			LD		(FRN3),A		; ...
-			LD		(FRN4),A		; Reserved unused slot (legacy)
+			CALL	CACHEALL		; CLOSE ALL, invalidate cache and all FRN slots
 			LD		HL,FILEBUF		; Initialize DMAADDR to 0080H
 			LD		(DMAADDR),HL		; ...
 			LD		HL,0001H		; Drive A: logged in initially
@@ -1829,15 +1826,22 @@ DSRET		LD		L,A				; Return code in L too
 ; Returns 0FFH if file not found
 ; Opening a file must NOT replace an ongoing BDOS wildcard directory search.
 ; ProDOS OPEN already checks existence; F_SFIRST is not needed here.
-F_OPEN		CALL	_F_OPEN			; Open physical ProDOS file
+F_OPEN		; Explicit CP/M OPEN replaces any cached handle for this name.
+			; This also initializes RC/CR from a fresh ProDOS GET_EOF.
+			PUSH	DE
+			LD		IX,PATHBUF
+			CALL	FCB2PATH
+			CALL	CACHECLS
+			POP		DE
 			OR		A
-			RET		NZ				; Error (already in A and L)
-			CALL	F_CLOSE			; Release ProDOS handle immediately
+			JP		NZ,FOERR
+			CALL	_F_OPEN
 			OR		A
 			RET		NZ
-			PUSH	DE
-			POP		IX
-			LD		(IX+0EH),07EH	; Virtual-open marker (bit 7 clear for dBASE II)
+			LD		A,(IY+0EH)	; New physical ProDOS reference
+			CALL	GETIOADDR	; Find its newly allocated slot
+			CALL	CACHEPUT	; Cache the pathname in PATHBUF
+			LD		(IY+0EH),07EH	; Logical CP/M open marker (dBASE-safe)
 			XOR		A
 			LD		L,A
 			RET
@@ -1851,8 +1855,7 @@ _F_OPEN		LD		IX,PATHBUF		; Destination buffer
 			POP		IY				; ... into IY
 
 			; Work out which IOBUF to allocate for this file
-			XOR		A				; Looking for FRN slot with value 0
-			CALL	GETIOADDR		; Returns FRN slot in A, IOBUF in HL
+			CALL	CACHEFREE		; Free slot or evict LRU cached file
 			CP		0FFH			; Check for error
 			JP		Z,FOFULL		; If no slots available, diagnostic
 
@@ -1947,7 +1950,20 @@ F_CLOSE		LD		H,D				; Pointer to FCB ...
 			JR		Z,FCVIRT
 			CP		0FEH			; Accept old high-bit-set marker too
 			JR		NZ,FCPHYS
-FCVIRT		LD		(HL),0			; Mark CP/M file closed
+FCVIRT		; A virtual-close request must close the matching cache entry.
+			; Names, not FCB addresses, identify cache entries (AUX staging).
+			PUSH	HL
+			PUSH	DE
+			PUSH	IX
+			LD		IX,PATHBUF
+			CALL	FCB2PATH
+			CALL	CACHECLS
+			POP		IX
+			POP		DE
+			POP		HL
+			OR		A
+			JP		NZ,FCERR
+			LD		(HL),0
 			JP		FCSUCC
 FCPHYS		CP		0				; If file reference number is zero ...
 			JR		Z,FCSUCC		; ... Nothing to do, just return
@@ -2068,13 +2084,16 @@ FD_CHKWILD	LD	A,(HL)
 			DJNZ	FD_CHKWILD
 			LD		IX,PATHBUF
 			CALL	FCB2PATH
+			CALL	CACHECLS		; ProDOS DESTROY requires no cached OPEN
+			OR		A
+			JR		NZ,FD_ERR
 			LD		HL,FDMLI
 			CALL	PRODOS
 			CP		04EH			; ProDOS access denied, not missing
 			JP		Z,ROFILE
 			OR		A
 			JR		Z,FD_OK
-			LD		A,0FFH
+FD_ERR		LD		A,0FFH
 FD_OK		LD		L,A
 			RET
 ; Wildcard delete: never mutate an open ProDOS directory while using
@@ -2092,6 +2111,9 @@ FDL1		LD		DE,DFCB
 			LD		DE,FILEBUF		; Matching FCB from F_SFIRST
 			LD		IX,PATHBUF
 			CALL	FCB2PATH
+			CALL	CACHECLS		; Close cached match before DESTROY
+			OR		A
+			JR		NZ,FDS2
 			LD		HL,FDMLI
 			CALL	PRODOS			; ProDOS DESTROY
 			CP		04EH
@@ -2124,74 +2146,6 @@ FDSDONE		PUSH	AF				; Preserve deletion status
 FDWRET		POP		AF
 			RET
 
-; CP/M files are logically open even while their ProDOS handle is closed.
-; We use S2=$FE as a virtual-open marker. _F_OPEN is deliberately used
-; here to avoid disturbing the global directory search in F_SFIRST.
-; The current extent, RC and sequential record are saved because _F_OPEN
-; refreshes the FCB size and resets the sequential record number.
-; Internal directory and CCP loader handles remain physical (S2=FRN).
-IO_BEGIN	XOR		A
-			LD		(IOVIRT),A
-			LD		A,(IX+0EH)
-			CP		07EH			; dBASE II clears S2 bit 7
-			JR		Z,IO_REOPEN
-			CP		0FEH			; Also recognize legacy marker
-			JR		Z,IO_REOPEN
-			OR		A				; Zero means not open
-			JR		Z,IO_BAD
-			XOR		A
-			RET
-IO_BAD		LD		A,9				; Invalid FCB
-			RET
-IO_REOPEN	LD		A,1
-			LD		(IOVIRT),A
-			LD		A,(IX+0FH)
-			PUSH	AF				; RC
-			LD		A,(IX+0CH)
-			PUSH	AF				; Extent
-			LD		A,(IX+20H)
-			PUSH	AF				; Current record
-			PUSH	DE
-			PUSH	IX
-			CALL	_F_OPEN
-			LD		C,A				; Preserve status across POP AFs
-			POP		IX
-			POP		DE
-			POP		AF
-			LD		(IX+20H),A
-			POP		AF
-			LD		(IX+0CH),A
-			POP		AF
-			LD		(IX+0FH),A
-			LD		A,C
-			OR		A
-			RET		Z
-			PUSH	AF				; Failed to open: no close needed
-			XOR		A
-			LD		(IOVIRT),A
-			POP		AF
-			RET
-
-; Preserve BDOS status while releasing the transient ProDOS handle.
-IO_END		PUSH	AF
-			LD		A,(IOVIRT)
-			OR		A
-			JR		Z,IO_DONE
-			PUSH	IX
-			POP		DE
-			CALL	F_CLOSE
-			OR		A
-			JR		NZ,IO_CERR
-			LD		(IX+0EH),07EH	; Still logically open to CP/M
-IO_DONE		POP		AF
-			LD		L,A
-			RET
-IO_CERR		POP		AF				; Discard saved result
-			LD		A,0FFH
-			LD		L,A
-			RET
-IOVIRT		DEFB	0
-
 ; Read next record
 ; DE is the address of the FCB describing the file from which to read
 ; Returns error codes in A and L:
@@ -2202,7 +2156,7 @@ F_READ		PUSH	DE				; Copy pointer to FCB ...
 			OR		A
 			JR		Z,F_READ_GO
 			LD		L,A				; Invalid/open-error FCB
-			JR		IO_END			; Close transient handle
+			JP		IO_END			; IO_END relocated to $A200 (out of JR range)
 F_READ_GO
 			LD		A,(IX+0EH)		; Obtain file reference num from FCB S2
 			LD		(SMMLIN),A		; Store in parameter list for SET_MARK
@@ -2388,6 +2342,11 @@ F_RENAME	CALL	DCHKRO		; Check source FCB drive
 			JP		NZ,RODENY
 			LD		IX,PATHBUF		; Destination buffer 1
 			CALL	FCB2PATH		; Populate PATHLEN and PATH for first file
+			PUSH	DE
+			CALL	CACHECLS		; Close source cached handle before RENAME
+			POP		DE
+			OR		A
+			JP		NZ,FRNERR
 			LD		IX,PATHBUF2		; Destination buffer 2
 			LD		H,D				; DE -> HL for addition
 			LD		L,E				; ...
@@ -3002,9 +2961,18 @@ FWRRO		LD		A,0FFH
 F_SIZE		PUSH	DE				; Keep FCB pointer across ProDOS calls
 			LD		IX,PATHBUF		; FCB2PATH needs its destination in IX
 			CALL	FCB2PATH
-
-			XOR		A				; Look for an unused FRN/IOBUF slot
-			CALL	GETIOADDR		; HL=free IOBUF, or A=FFH
+			CALL	CACHEFND
+			OR		A
+			JR		Z,FS_TEMP
+			LD		(CMRU),A
+			CALL	CACHEREF
+			LD		(GEMLIN),A
+			LD		HL,GEMLI
+			CALL	PRODOS
+			OR		A
+			JP		NZ,FSERRPOP
+			JP		FS_MATH
+FS_TEMP		CALL	CACHEFREE		; Only open temporarily on a miss
 			CP		0FFH
 			JP		Z,FSERRPOP
 			LD		BC,OFFSET		; Convert Z80 to 6502 buffer address
@@ -3031,7 +2999,7 @@ F_SIZE		PUSH	DE				; Keep FCB pointer across ProDOS calls
 			OR		A
 			JP		NZ,FSERRPOP	; CLOSE failed
 
-			; Shift 24-bit EOF right 7 to obtain 128-byte records.
+FS_MATH		; Shift 24-bit EOF right 7 to obtain 128-byte records.
 			; A:H:L is the 24-bit value (high:middle:low).
 			; E remembers whether the discarded low 7 bits are nonzero.
 			LD		A,(GEMLIE1)
@@ -4938,6 +4906,234 @@ RODENY	JP		RODISK		; CP/M: BDOS Err on d: R/O
 
 
 
+
+; =====================================================================
+; Two-slot ProDOS handle cache. The existing $9800/$9C00 1K buffers
+; remain the only OPEN buffers. The directory search and CCP loader
+; use uncached, pinned FRNs: cache eviction only considers CSTAT1/2=1.
+; All lookup keys are pathname length plus <=14 ProDOS pathname bytes.
+; CMRU=1/2 is last used slot; eviction prefers the other one.
+; This code occupies the otherwise unused MAIN $A200-$A3FF region.
+; =====================================================================
+            ORG     0A200H
+; Look up PATHBUF in cached slots. A=1/2 for a hit, A=0 for miss.
+CACHEFND    LD      A,(CSTAT1)
+            OR      A
+            JR      Z,CF_TWO
+            LD      DE,CNAME1
+            CALL    CACHECMP
+            JR      Z,CF_ONE
+CF_TWO      LD      A,(CSTAT2)
+            OR      A
+            JR      Z,CF_MISS
+            LD      DE,CNAME2
+            CALL    CACHECMP
+            JR      Z,CF_TWON
+CF_MISS     XOR     A
+            RET
+CF_ONE      LD      A,1
+            RET
+CF_TWON     LD      A,2
+            RET
+; Compare Pascal-style paths, including length; ignore stale trailing data.
+CACHECMP    LD      HL,PATHBUF
+            LD      A,(HL)
+            INC     A
+            LD      B,A
+CC_LOOP     LD      A,(DE)
+            CP      (HL)
+            RET     NZ
+            INC     HL
+            INC     DE
+            DJNZ    CC_LOOP
+            XOR     A
+            RET
+
+; A=1 or 2, return cached physical ProDOS reference (no register clobber).
+CACHEREF    CP      1
+            JR      Z,CR_ONE
+            LD      A,(FRN2)
+            RET
+CR_ONE      LD      A,(FRN1)
+            RET
+
+; A=slot; register a successful _F_OPEN's pathname as cached.
+CACHEPUT    LD      (CSLOT),A
+            LD      HL,PATHBUF
+            LD      DE,CNAME1
+            CP      1
+            JR      Z,CP_COPY
+            LD      DE,CNAME2
+CP_COPY     LD      BC,15
+            LDIR
+            LD      A,(CSLOT)
+            LD      (CMRU),A
+            CP      1
+            JR      NZ,CP_TWO
+            LD      (CSTAT1),A
+            RET
+CP_TWO      LD      A,1
+            LD      (CSTAT2),A
+            RET
+
+; A=1/2; physically close slot, clear its FRN and cache flag on success.
+CACHESLT    LD      (CSLOT),A
+            CALL    CACHEREF
+            LD      (FCMLIN),A
+            LD      HL,FCMLI
+            CALL    PRODOS
+            OR      A
+            RET     NZ
+            LD      A,(CSLOT)
+            CP      1
+            JR      NZ,CS_TWO
+            XOR     A
+            LD      (FRN1),A
+            LD      (CSTAT1),A
+            RET
+CS_TWO      XOR     A
+            LD      (FRN2),A
+            LD      (CSTAT2),A
+            RET
+
+; Close only a cached handle matching PATHBUF; leave raw directory FRNs.
+CACHECLS    CALL    CACHEFND
+            OR      A
+            RET     Z
+            JP      CACHESLT
+
+; When both buffers are occupied, evict only cached files (never DFCB).
+CACHEEV     LD      A,(CSTAT1)
+            OR      A
+            JR      Z,CE_SECOND
+            LD      A,(CSTAT2)
+            OR      A
+            JR      Z,CE_FIRST
+            LD      A,(CMRU)
+            CP      1
+            JR      Z,CE_SECOND
+CE_FIRST    LD      A,1
+            JP      CACHESLT
+CE_SECOND   LD      A,(CSTAT2)
+            OR      A
+            JR      Z,CE_FAIL
+            LD      A,2
+            JP      CACHESLT
+CE_FAIL     LD      A,0FFH
+            RET
+
+; Return an available IOBUF (A=slot, HL=buffer), evicting LRU if needed.
+CACHEFREE   XOR     A
+            CALL    GETIOADDR
+            CP      0FFH
+            RET     NZ
+            CALL    CACHEEV
+            OR      A
+            JR      NZ,CE_FAIL
+            XOR     A
+            JP      GETIOADDR
+
+; Warm boot / AUX termination: flush all ProDOS refs, clear slot metadata.
+CACHEALL    XOR     A
+            LD      (FCMLIN),A
+            LD      HL,FCMLI
+            CALL    PRODOS
+            XOR     A
+            LD      (FRN1),A
+            LD      (FRN2),A
+            LD      (FRN3),A
+            LD      (FRN4),A
+            LD      (DFCB+0EH),A     ; No stale physical directory reference
+            LD      (CSTAT1),A
+            LD      (CSTAT2),A
+            LD      (CMRU),A
+            RET
+
+CSTAT1      DEFB    0
+CSTAT2      DEFB    0
+CMRU        DEFB    0
+CSLOT       DEFB    0
+CNAME1      DEFS    15
+CNAME2      DEFS    15
+
+; A CP/M FCB is logically open as S2=$7E (or legacy $FE).
+; During BDOS I/O we temporarily substitute the cached physical FRN;
+; IO_END always restores $7E. Cache is keyed by canonical ProDOS path,
+; never by the FCB address (which can be a shared AUX gateway copy).
+; Directory/loader physical FCBs keep their own ProDOS FRNs unchanged.
+IO_BEGIN	XOR		A
+			LD		(IOVIRT),A
+			LD		A,(IX+0EH)
+			CP		07EH
+			JR		Z,IO_CACHE
+			CP		0FEH
+			JR		Z,IO_CACHE
+			OR		A
+			JR		Z,IO_BAD
+			XOR		A
+			RET
+IO_BAD		LD		A,9
+			RET
+IO_CACHE	LD		A,1
+			LD		(IOVIRT),A
+			PUSH	IX
+			PUSH	IX
+			POP		DE
+			LD		IX,PATHBUF
+			CALL	FCB2PATH
+			CALL	CACHEFND
+			POP		IX
+			OR		A
+			JR		Z,IO_REOPEN
+			LD		(CMRU),A	; LRU bookkeeping on cache hit
+			CALL	CACHEREF
+			LD		(IX+0EH),A
+			XOR		A
+			RET
+IO_REOPEN	; Miss: keep the caller's extent/RC/CR across _F_OPEN.
+			PUSH	IX
+			POP		DE
+			LD		A,(IX+0FH)
+			PUSH	AF
+			LD		A,(IX+0CH)
+			PUSH	AF
+			LD		A,(IX+20H)
+			PUSH	AF
+			PUSH	DE
+			PUSH	IX
+			CALL	_F_OPEN
+			LD		C,A
+			POP		IX
+			POP		DE
+			POP		AF
+			LD		(IX+20H),A
+			POP		AF
+			LD		(IX+0CH),A
+			POP		AF
+			LD		(IX+0FH),A
+			LD		A,C
+			OR		A
+			JR		NZ,IO_FAIL
+			LD		A,(IX+0EH)
+			CALL	GETIOADDR
+			CALL	CACHEPUT
+			XOR		A
+			RET
+IO_FAIL		XOR		A
+			LD		(IOVIRT),A
+			LD		A,C
+			RET
+
+; Preserve the BDOS status and keep the physical ProDOS handle cached.
+IO_END		PUSH	AF
+			LD		A,(IOVIRT)
+			OR		A
+			JR		Z,IO_DONE
+			LD		(IX+0EH),07EH
+IO_DONE		POP		AF
+			LD		L,A
+			RET
+IOVIRT		DEFB	0
 
 			ORG		0A400H
 ; Dedicated stack: the live directory buffer ends at ~$97F2.
