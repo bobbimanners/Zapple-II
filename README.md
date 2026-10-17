@@ -78,6 +78,9 @@ BP/M includes its own small **Console Command Processor (CCP)**. Commands are ca
 | `A:` … `P:` | Change the default CP/M drive | `B:` |
 | `TERM SOROC` | Select Soroc IQ-120-style terminal emulation | `TERM SOROC` |
 | `TERM VIDEX` | Select Videx/VideoTerm-style terminal emulation | `TERM VIDEX` |
+| `CLS` | Clear screen, home cursor. | `CLS` |
+| `CACHE` | Show statistics on ProDOS file handle cache | `CACHE`
+| `CACHE RESET` | Reset statistics | `CACHE RESET`
 | `BYE` | Exit BP/M to ProDOS after confirmation | `BYE` |
 | `program [args]` | Load and run a CP/M `.COM` file, passing its arguments through the CP/M command tail/FCBs | `WS TEST.TXT` |
 
