@@ -115,18 +115,18 @@ The following applications and utilities are known to work, or have been used in
 | **ASM** | Digital Research's CP/M 8080 assembler. |
 | **ZSID** | Z80-oriented symbolic debugger. |
 | **DDT** | Digital Research's CP/M debugger. |
-| **TE** | Full-screen text editor; works with the terminal emulation. |
-| **WordStar 3.3** | Full-screen word processor; a generic CP/M release works with Soroc terminal support. Other machine-specific installations may need adjustment. |
-| **Turbo Pascal 3** | Integrated Pascal editor/compiler; tested compiling to memory and generating standalone `.COM` executables that run from the CCP. |
-| **SuperCalc 1.12** | Spreadsheet; tested basic function and loading of sample files. |
-| **dBase II v2.4** | Database management system; tested opening and browsing existing files, creating a new file. |
 | **PIP** | CP/M file copier; tested copying entire directories, including large files. |
 | **STAT** | Drive/file status utility. |
 | **DUMP** | Hex dump utility. |
 | **NSWEEP** | Interactive file-management utility. |
 | **BASIC/5** | Processor Technology SOL-20 BASIC/5; example code is included in this repository. |
+| **TE** | Full-screen text editor; works with the terminal emulation. |
+| **WordStar 3.3** | Full-screen word processor; a generic CP/M release works with Soroc terminal support. Other machine-specific installations may need adjustment. |
+| **Turbo Pascal 3** | Integrated Pascal editor/compiler; tested compiling to memory and generating standalone `.COM` executables that run from the CCP. |
+| **SuperCalc 1.12** | Spreadsheet; tested basic function and loading of sample files. |
+| **dBase II v2.4** | Database management system; tested opening and browsing existing files, creating a new file. |
 
-WordStar and Turbo Pascal use full-screen control sequences, so a suitable terminal configuration is important. **Soroc** is the recommended starting point for the tested versions.
+All apps are configured to use **Soroc** terminal settings (which are the default.)
 
 ## How BP/M works
 
