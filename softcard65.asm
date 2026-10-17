@@ -160,12 +160,7 @@ ENTRY LDA #0
  JSR PRBYTE ; Print error code
  JSR PRRDERR ; Print "read error"
  JMP DONE ; Quit
-:S2 LDA RD_TC+1 ; MSB
- JSR PRBYTE ; Print it
- LDA RD_TC ; LSB
- JSR PRBYTE ; Print it
- JSR CROUT ; ...
- JSR CL ; Close file
+:S2 JSR CL ; Close file
  JSR PRSUCC ; Print success message
 
 MAINLOOP
@@ -262,7 +257,7 @@ PATH STR "SOFTCARD80.BIN"
 PAYLOAD STR "NSWEEP.COM"
 
 * Messages
-WELCOME STR "Zapple-II Loader"
+WELCOME STR "Zapple-II B/PM ... Bobbi 2019, 2026"
 OPERR STR ": Can't open "
 RDERR STR ": Read error"
 SUCCMSG STR " loaded"
@@ -353,7 +348,9 @@ HANDLR LDA #0
  BMI :C3YES ; Branch if keystroke available
  LDA #0 ; If no chars, return 0 in AREG
  JMP :C3DONE ; ...
-:C3YES LDA #1 ; Otherwise return 1 in AREG
+:C3YES LDA $C000 ; Expose keycode without consuming the key
+ STA YREG   ; AREG remains the original boolean interface
+ LDA #1
 :C3DONE STA AREG ; Store the value for the Z80
  JMP RWRETURN ; Restore transient bank
 :CMD4 JSR VBELL ; Beep for error
