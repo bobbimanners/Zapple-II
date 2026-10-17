@@ -61,9 +61,9 @@ disk: $(DISK_IMAGE)
 
 $(DISK_IMAGE): $(PRODOS65) $(PRODOS80)
 	echo 'Creating $@ with Cadius...'
+	$(CADIUS) createvolume "$@" "$(DISK_VOLUME)" 800KB
 	$(CADIUS) addfile "$@" "/$(DISK_VOLUME)" "$(PRODOS65)"
 	$(CADIUS) addfile "$@" "/$(DISK_VOLUME)" "$(PRODOS80)"
-	$(CADIUS) createvolume "$@" "$(DISK_VOLUME)" 800KB
 	$(CADIUS) createfolder "$@" "/$(DISK_VOLUME)/A"
 	$(CADIUS) createfolder "$@" "/$(DISK_VOLUME)/B"
 	$(CADIUS) createfolder "$@" "/$(DISK_VOLUME)/C"
