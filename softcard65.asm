@@ -325,7 +325,9 @@ HANDLR LDA #0
  LDA #0 ; If no chars, return 0 in AREG
  JMP :C3DONE ; ...
 :C3YES LDA $C000 ; Expose keycode without consuming the key
- STA YREG   ; AREG remains the original boolean interface
+ STA YREG
+ LDA $C061  ; Open Apple pushbutton (bit 7 = pressed)
+ STA XREG   ; modifier accompanying the peeked character
  LDA #1
 :C3DONE STA AREG ; Store the value for the Z80
  JMP RWRETURN ; Restore transient bank
@@ -813,10 +815,13 @@ VGET JSR VPEEK
 :VGWAIT LDA $C000 ; keyboard latch; bit 7 means key ready
  BPL :VGWAIT
  PHA
+ LDA $C061 ; sample Open Apple BEFORE strobe is cleared
+ STA VKMOD
  BIT $C010 ; clear keyboard strobe
  LDA VUNDER
  JSR VDRAW ; restore original character
  PLA
+ LDX VKMOD ; HANDLR returns X in XREG alongside AREG keycode
  RTS
 
 VBELL BIT $C030 ; click speaker
@@ -898,6 +903,7 @@ VSTATE DB 0 ; 0 idle, 1 ESC, 2 coord1, 3 coord2
 VCOORD DB 0
 VCRP DB 0 ; Suppress second half of CR/LF pair
 VATTR DB 0 ; Soroc ESC '(' inverse on, ESC ')' normal
+VKMOD DB 0 ; last blocking key's Open Apple state (outside saved video)
 
 * Loader diagnostics without ROM I/O.
 CROUT LDA #$0D

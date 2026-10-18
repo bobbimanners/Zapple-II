@@ -177,7 +177,7 @@ RWD_DONE    LD      A,B
             RET
 RWTOTAL     DEFB    1
 TABCOUNT    DEFB    1
-TABREQ      DEFB    0FFH         ; ^] followed by 0..9/A..F, FF = none
+TABREQ      DEFB    0FFH         ; Open Apple + 0..9/A..F/arrows; FF = none
 RWREPORT    LD      DE,RWMSG1
             CALL    C_WRITESTR
             LD      A,(RWTOTAL)
@@ -232,18 +232,17 @@ RWD_TEND    POP     AF
             JP      C_WRITE
 
             ORG     00300H
-CR_SELCMD   CALL    BIOSCONIN      ; selector after Ctrl-] at CCP
-            CALL    TABDECODE
-            JP      C,CRSL1        ; bad key: continue editing
-            LD      (TABREQ),A
-            XOR     A
-            LD      (IX+1),A       ; discard partial command line
+; A queued Open Apple hotkey returns immediately, with no key passed
+; to an application. CCP discards the current unfinished command line.
+CR_SELCMD   XOR     A
+            LD      (IX+1),A
             RET
 
-; Fullscreen CP/M programs commonly poll BDOS 11 or BIOS CONST before
-; reading a keystroke. Detect ^] here rather than waiting for a read call.
-; CMD=3 returns 0/1 in AREG and an unconsumed keycode in YREG.
-; Return FF/00 as usual; F3 is a private deferred-status marker on suspend.
+; Fullscreen applications poll BDOS 11 or BIOS CONST before reading a
+; character. CMD=3 peeks at $C000 and samples Open Apple ($C061) in XREG.
+; Valid shortcuts consume the keyboard strobe directly, without drawing
+; a cursor or waiting for another character. Ordinary keys are untouched.
+; F3 is the private deferred-status marker on suspension.
 TSKSTAT     LD      A,3
             LD      (CMD),A
             LD      (SOFTCARD),A
@@ -252,12 +251,10 @@ TSKSTAT     LD      A,3
             JR      Z,TSSTEMPTY
             LD      A,(YREG)
             AND     07FH
-            CP      01DH
-            JR      NZ,TSSTREADY
-            CALL    BIOSCONIN      ; consume ^] only, leave other keys alone
-            CALL    TSKKEY         ; get selector and queue tab switch
-            JR      NC,TSKSTAT     ; invalid selector: resume status polling
-            LD      A,0F3H        ; deferred status poll on resume
+            CALL    TSKKEY
+            JR      NC,TSSTREADY
+            LD      A,(0E010H)     ; Apple II $C010: clear just this key
+            LD      A,0F3H        ; resume the pending status poll
             LD      L,A
             RET
 TSSTREADY   LD      A,0FFH
@@ -267,11 +264,10 @@ TSSTEMPTY   XOR     A
             LD      L,A
             RET
 
-; Cold-start BANKS report also tells the user how to switch sessions.
-; Ctrl-] is ASCII $1D; Ctrl-[ is ESC and is NOT our switch key.
+; Advertise the modifier and arrows as one-keystroke shortcuts.
 RWMSG3      DEFM    ' sessions (0-9,A-F)'
             DEFB    13
-            DEFM    'Switch: ^] (Ctrl-]) then 0-9/A-F'
+            DEFM    'Switch: Open Apple+0-9/A-F, left/right arrows'
             DEFB    13,'$'
 
 ; Print the current logical session and drive: [0]A:> ... [F]P:>
@@ -299,8 +295,8 @@ CCPPRNT     LD      E,'['
 ; Phase 3A: two independent CCP contexts. TAB 0 / TAB 1 switches
 ; shell state (drive/user, IOBYTE, login/R/O vectors, terminal type).
 ; The transient for a context uses its corresponding RamWorks bank.
-; Phase 3B: Ctrl-] at supported input calls parks one transient in each
-; bank. TAB n resumes a parked transient, rather than reloading it.
+; Phase 3B: Open Apple shortcuts park a transient without reloading it.
+; TAB n resumes a parked transient, rather than reloading it.
 ; Phase 3C: full text-screen/terminal-state snapshots in reserved bank 2.
 ; Still cooperative: no switching from a CPU-bound loop.
 CCPTAB      LD      A,(FILEBUF)
@@ -392,7 +388,7 @@ CCPPRPTR    LD      A,(TABMODE)
 TABMODE     DEFB    0
 TB_PREFIX   DEFM    'TAB '
             DEFB    '$'
-TB_SUFFIX   DEFM    ' (Ctrl-] then 0-9/A-F)'
+TB_SUFFIX   DEFM    ' (OA+0-9/A-F OA+arrows)'
             DEFB    13,'$'
 
 ; Session descriptors are only seven bytes each, stored in MAIN memory.
@@ -536,25 +532,20 @@ B_DRV_RESET		EQU		25H			; Selectively reset disk drives
 ; ================================================================
 ; RamWorks Phase 3B: two parked AUX transients, cooperative switching.
 ; Resident MAIN-memory code below $1000 is outside both AUX TPAs.
-; ^] is intercepted at BDOS 1, BIOS CONIN, and BDOS 6 input, and at
-; the start of a buffered BDOS 10 input line. No interrupt preemption.
+; Open Apple is sampled alongside each keystroke or status peek.
+; It cooperatively parks applications; no interrupt preemption.
 ; ================================================================
             ORG     00800H
 ; BDOS 10 may suspend only at an empty line. A successful hotkey
 ; parks the read itself; resume restarts it, without submitting CR.
-AXLSKEY     LD      A,C
-            OR      A
-            JP      NZ,AXLNEXT
-            CALL    TSKKEY
-            JP      NC,AXLNEXT     ; invalid selector, keep waiting
-            LD      A,0FAH        ; deferred BDOS 10 input
+AXLSKEY     LD      A,0FAH        ; deferred BDOS 10 input
             LD      L,A
             RET
 
-; BDOS function 1 cooked input, with suspend hotkey and Ctrl-C.
+; Blocked BDOS 1 and BIOS CONIN sample Open Apple at key-read time.
 TSKCIN      CALL    BIOSCONIN
-            CP      01DH
-            JR      Z,TSKCIKEY
+            CALL    TSKKEY
+            JR      C,TSKCIKEY
             CP      3
             JR      NZ,TSKECHO
             LD      A,1
@@ -568,20 +559,16 @@ TSKECHO     PUSH    AF
             POP     AF
             LD      L,A
             RET
-TSKCIKEY    CALL    TSKKEY
-            JR      NC,TSKCIN      ; no switch, consume nothing
-            LD      A,0F1H        ; deferred cooked input
+TSKCIKEY    LD      A,0F1H        ; deferred cooked input
             LD      L,A
             RET
 
 TSKBIRD     CALL    BIOSCONIN
-            CP      01DH
-            JR      Z,TSKBIKEY
+            CALL    TSKKEY
+            JR      C,TSKBIKEY
             LD      L,A
             RET
-TSKBIKEY    CALL    TSKKEY
-            JR      NC,TSKBIRD
-            LD      A,0F2H        ; deferred BIOS character input
+TSKBIKEY    LD      A,0F2H        ; deferred BIOS character input
             LD      L,A
             RET
 
@@ -605,17 +592,50 @@ TSKACTIVE   CALL    TSKFLPTR
             LD      A,(HL)
             RET
 
-; ^] is a prefix. Carry=1 when a valid selector queued a switch;
-; carry=0 if invalid (caller retries its original keyboard operation).
-TSKKEY      CALL    BIOSCONIN
+; A=ASCII key, XREG=Open Apple state sampled by the 6502 at key read.
+; Carry=1 if a shortcut was queued, else carry=0 and A is unchanged.
+; Arrow keys wrap around TABCOUNT; numeric/hex keys select directly.
+; Preserve BC (TABDECODE uses C, and AXLINE holds its count there).
+TSKKEY      PUSH    BC
+            PUSH    AF
+            LD      A,(XREG)
+            BIT     7,A
+            JR      Z,TSKIGNORE
+            POP     AF
+            PUSH    AF
+            CP      08H          ; Apple IIe left-arrow
+            JR      Z,TSKPREV
+            CP      15H          ; Apple IIe right-arrow
+            JR      Z,TSKNEXT
             CALL    TABDECODE
             JR      C,TSKIGNORE
-            LD      (TABREQ),A
+            JR      TSKQUEUE
+TSKPREV     LD      A,(TABMODE)
+            OR      A
+            JR      NZ,TSKPREVB
+            LD      A,(TABCOUNT)
+TSKPREVB    DEC     A
+            JR      TSKQUEUE
+TSKNEXT     LD      A,(TABMODE)
+            INC     A
+            LD      B,A
+            LD      A,(TABCOUNT)
+            CP      B
+            JR      Z,TSKWRAP
+            JR      C,TSKWRAP
+            LD      A,B
+            JR      TSKQUEUE
+TSKWRAP     XOR     A
+TSKQUEUE    LD      (TABREQ),A
             LD      A,3
             LD      (AXQUIT),A
+            POP     BC          ; discard the original character/flags
+            POP     BC          ; restore caller's BC
             SCF
             RET
-TSKIGNORE   OR      A             ; clear carry
+TSKIGNORE   POP     AF          ; ordinary key: return it unchanged
+            POP     BC
+            OR      A           ; clear carry
             RET
 
 TSKSET      PUSH    AF
@@ -750,7 +770,7 @@ TSKRFIN     XOR     A
             LD      (AXDMAP),HL
             RET
 
-TSKMSG      DEFM    'Suspended (Ctrl-] then 0-9/A-F to switch)'
+TSKMSG      DEFM    'Suspended (Open Apple+0-9/A-F/arrows)'
             DEFB    13,'$'
 TSKBUSY     DEFM    'Session suspended: select it first'
             DEFB    13,'$'
@@ -1191,7 +1211,7 @@ AXAUXWR     XOR     A            ; no punch/list device attached
 
 ; Direct BIOS console calls use private C codes $F1..$F3 from the LC
 ; jump-table shims. Caller registers are preserved by those shims.
-AXBICON     JP      TSKSTAT     ; catch ^] while BIOS CONST polls
+AXBICON     JP      TSKSTAT     ; catch Open Apple while BIOS CONST polls
 AXBIREAD    JP      TSKBIRD    ; handler moved under $0800
 AXBIOUT     CALL    C_RAWPUT
             XOR     A
@@ -1261,9 +1281,18 @@ AXLNEXT     PUSH    BC
             POP     HL
             POP     BC
             AND     07FH
-            CP      01DH            ; only suspend at start of a new line
-            JP      Z,AXLSKEY
-            CP      13
+            ; For BDOS 10, park only at the beginning of a line.
+            ; Once characters have been entered, don't discard the line.
+            PUSH    AF
+            LD      A,C
+            OR      A
+            JR      NZ,AXLNOKEY
+            POP     AF
+            CALL    TSKKEY
+            JP      C,AXLSKEY
+            JR      AXLKEY
+AXLNOKEY    POP     AF
+AXLKEY      CP      13
             JR      Z,AXLDONE
             CP      3
             JR      Z,AXLCAN
@@ -2384,15 +2413,13 @@ AUXBDOS6    LD      A,E
             CP      0FFH
             JR      NZ,AB6OUT     ; control-character output is not input
 AB6IN       CALL    C_RAWIO
-            CP      01DH
-            RET     NZ
             CALL    TSKKEY
-            JR      NC,AB6IN      ; invalid selector, poll again
+            RET     NC           ; no shortcut: return raw character/0
             LD      A,0F6H        ; deferred BDOS 6 poll
             LD      L,A
             RET
 AB6OUT      JP      C_RAWIO
-ABDSTAT     JP      TSKSTAT     ; catch ^] while BDOS 11 polls
+ABDSTAT     JP      TSKSTAT     ; catch Open Apple while BDOS 11 polls
 AUXBDOS9    PUSH    BC
             PUSH    DE
             PUSH    HL
@@ -2782,10 +2809,10 @@ C_READSTR	LD		H,D				; HL will be the working pointer
 CRSL1		PUSH	HL
 			CALL	BIOSCONIN		; Raw key, no premature echo
 			POP		HL
+            CALL    TSKKEY         ; includes Open Apple+arrows
+            JP      C,CR_SELCMD
 			CP		3				; Preserve CP/M Ctrl-C abort
 			JP		Z,BDOSWARM
-            CP      01DH
-            JP      Z,CR_SELCMD
             CP      13
             JR      Z,CRSEND
 			CP		10
