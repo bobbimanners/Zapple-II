@@ -582,7 +582,26 @@ SMLOOP      LD      A,(TABREQ)
             LD      A,(SCHFG)
             LD      B,A
             CALL    SCHSWAP        ; restore foreground BDOS context
-            CALL    TABRESUM       ; run foreground until next yield/exit
+            ; Stage 3: a foreground .COM parked on CONIN must not
+            ; enter the blocking 6502 VGET while other jobs are runnable.
+            ; Poll the *physical* keyboard and keep running background
+            ; quanta until a key appears (or a manual tab switch arrives).
+            LD      A,(SCHFG)
+            LD      E,A
+            LD      D,0
+            LD      HL,SCHWAIT
+            ADD     HL,DE
+            LD      A,(HL)
+            OR      A
+            JR      Z,SMRUN
+            CALL    SCHHAVE
+            OR      A
+            JR      Z,SMRUN       ; no background jobs: normal VGET cursor
+            CALL    BIOSCONST
+            OR      A
+            JR      Z,SMLOOP      ; input not ready; don't enter VGET
+            CALL    SCHWAKE       ; input can complete: make task runnable
+SMRUN       CALL    TABRESUM       ; foreground until next yield/exit
             JR      SMLOOP
 
 ; Called from foreground CCP's console line editor before CONIN.
@@ -2767,18 +2786,36 @@ SCHWAKE     LD      A,(TABMODE)
 ; when an application yields or a manual tab change is requested.
 SCHSNAP     RET                 ; live screen always up-to-date
 
-; Called on entry to AUX BDOS. Background blocking reads are deferred,
-; never passed through to the 6502 wait loop. Marker is retried by
-; AXRETRY when the task is explicitly moved into the foreground.
-SCHPRE      CALL    SCHISFG
-            JR      Z,SPNO
-            LD      A,C
+; Stage 3: defer blocking console reads if this task is in the
+; background, OR if this is the foreground and another task can run
+; while waiting for a keystroke. A physical key already pending may
+; be consumed normally. With no other runnable task use VGET, which
+; preserves the ordinary visible cursor behaviour.
+; The existing AXRETRY markers re-enter the original read on resume.
+SCHPRE      LD      A,C
             CP      1             ; BDOS 1 cooked input
-            JR      Z,SPCOOK
-            CP      10            ; BDOS 10 line input
-            JR      Z,SPLINE
+            JR      Z,SPREAD
+            CP      10            ; BDOS 10 line input (at line start)
+            JR      Z,SPREAD
             CP      0F2H         ; BIOS CONIN via LC gateway
-            JR      Z,SPBIOS
+            JR      NZ,SPNO
+SPREAD      CALL    SCHISFG
+            JR      NZ,SPPARKCODE ; background: always defer input
+            PUSH    BC
+            CALL    SCHHAVE
+            OR      A
+            JR      Z,SPALLOW     ; no runnable background work
+            CALL    BIOSCONST    ; $C000 peek; never consumes keyboard
+            OR      A
+            JR      NZ,SPALLOW    ; a character is already waiting
+            POP     BC
+SPPARKCODE  LD      A,C
+            CP      1
+            JR      Z,SPCOOK
+            CP      10
+            JR      Z,SPLINE
+            JR      SPBIOS        ; validated only 1/10/F2 above
+SPALLOW     POP     BC
 SPNO        OR      A             ; clear carry
             RET
 SPCOOK      LD      A,0F1H
