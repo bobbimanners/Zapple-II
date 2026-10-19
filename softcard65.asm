@@ -135,12 +135,13 @@ RELOC_ST
  JMP RWSELECT ; B818: bank selection, A=0/1 (private Z80 caller)
  JMP VGETMODE ; B81B: return terminal personality in A (private Z80)
  JMP VSTATEPTR ; B81E: pointer to contiguous VCOL..VATTR state
+ JMP VSELECT   ; B821: A=bank, X=physical flag, Y=slot offset
 
 ENTRY LDA #0
  STA RWACTIVE
  STA $C073       ; Start all CP/M sessions from system/video bank 0
  JSR VINIT ; Initialize video hardware and clear screen
- JSR PRWELC ; Print welcome message
+* Diagnostic build: omit redundant loader greeting to make room for trace.
  LDA #$00 ; Clear ProDOS system bitmap
  LDX #$00 ;
 :L1 STA $BF58,X ;
@@ -160,7 +161,7 @@ ENTRY LDA #0
  JSR PRRDERR ; Print "read error"
  JMP DONE ; Quit
 :S2 JSR CL ; Close file
- JSR PRSUCC ; Print success message
+ JSR CROUT ; load succeeded
 
 MAINLOOP
  STA SFTCRD ; Pause Z80, resume 6502
@@ -204,15 +205,6 @@ PRMSG LDY #0 ; Initialize index
  BNE :L1 ; Loop
  RTS  ;
 
-* Print welcome message
-PRWELC LDA #<WELCOME ;
- STA $06 ;
- LDA #>WELCOME ;
- STA $07 ;
- JSR PRMSG ;
- JSR CROUT ;
- RTS  ;
-
 * Print "open error"
 PROPERR LDA #<OPERR ;
  STA $06 ;
@@ -236,28 +228,15 @@ PRRDERR LDA #<RDERR ;
  JSR CROUT ;
  RTS  ;
 
-* Print "Loaded"
-PRSUCC LDA #<PATH ;
- STA $06 ;
- LDA #>PATH ;
- STA $07 ;
- JSR PRMSG ;
- LDA #<SUCCMSG ;
- STA $06 ;
- LDA #>SUCCMSG ;
- STA $07 ;
- JSR PRMSG ;
- JSR CROUT ;
- RTS
+* Successful load: proceed directly to Z80 after newline.
 
 * File to load
 PATH STR "SOFTCARD80.BIN"
 
 * Messages
-WELCOME STR "Zapple-II B/PM ... Bobbi 2019, 2026"
-OPERR STR ": Can't open "
-RDERR STR ": Read error"
-SUCCMSG STR " loaded"
+OPERR STR ": Open "
+RDERR STR ": Read"
+* No loader success string
 
 * ProDOS Parameter List for OPEN
 OP JSR $BF00 ; ProDOS call
@@ -394,6 +373,17 @@ VINIT
  LDA #1
  STA VMODE ; Default to Soroc
  LDA #0
+ STA VVRDY
+ LDA RWCOUNT
+ CMP #3
+ BCC :VNORW
+ INC VVRDY
+:VNORW
+ LDA #2
+ LDX #1
+ LDY #$1C
+ JSR VSELECT ; bank 2, foreground, slot 0
+ LDA #0
  STA VSTATE ; Parser idle
  STA VCRP ; No pending CR/LF pair
  STA VATTR ; Reset inverse video
@@ -405,7 +395,7 @@ VINIT
  BIT $C052 ; full screen
  STA $C00D ; 80COL on
  STA $C00F ; alternate charset (lowercase)
- JSR VMBASIC ; Configure Apple CP/M BASIC console control bytes
+* VSELECT initialized the BASIC control bytes above
  JMP VCLEAR
 
 * A=0 selects Videx, A=1 selects Soroc. Ignore all other values.
@@ -763,9 +753,13 @@ VADDR LDX VROW
  LDA VROWLO,X
  STA VSTORE+1
  STA VLOAD+1
+ STA VBSTORE+1
  LDA VROWHI,X
  STA VSTORE+2
  STA VLOAD+2
+ CLC
+ ADC VVOFF
+ STA VBSTORE+2
  LDA VCOL
  LSR
  TAY
@@ -773,17 +767,49 @@ VADDR LDX VROW
  LDA VCOL
  AND #1
  BNE :VA1
+ ; Even column is physical AUX, second 1K of our snapshot.
+ LDA VBSTORE+2
+ CLC
+ ADC #4
+ STA VBSTORE+2
  BIT $C055 ; even column: auxiliary text page 1
  RTS
 :VA1 BIT $C054 ; odd column: main text page 1
  RTS
 
+* Foreground output uses physical video only (saved at manual tab switch).
+* Background output updates only that session's virtual screen snapshot.
+; The $2000-$3FFF HGR aperture maps into the selected snapshot bank.
 VDRAW PHA
  JSR VADDR
  PLA
-VSTORE STA $0400,Y ; operand updated by VADDR
- STA $C054 ; PAGE1/main selected
- STA $C000 ; 80STORE off - ProDOS-safe on return
+ LDX VPHY
+ BEQ :VBG
+VSTORE STA $0400,Y ; physical foreground text half
+ ; Foreground image is captured by VSSAVE on a manual tab switch.
+ ; Avoid touching the virtual bank while this tab owns the screen.
+ BIT $C054
+ STA $C000       ; 80STORE off
+ RTS
+:VBG PHA
+ BIT $C054
+ STA $C000       ; leave 80STORE off before snapshot window
+ LDA VVRDY
+ BEQ :VEND
+ LDA VVBANK
+ STA $C073
+ STA $C001       ; 80STORE on
+ BIT $C057       ; HIRES on
+ BIT $C055       ; PAGE2: AUX HGR snapshot window
+ PLA
+VBSTORE STA $2000,Y ; patched snapshot row/half/slot
+ PHA
+ BIT $C054       ; PAGE1
+ BIT $C056       ; HIRES off
+ STA $C000       ; 80STORE off
+ LDA #0
+ STA $C073       ; ALWAYS return physical bank 0
+:VEND PLA
  RTS
 
 VPEEK JSR VADDR
@@ -827,10 +853,17 @@ VGET JSR VPEEK
 VBELL BIT $C030 ; click speaker
  RTS
 
-* Clear BOTH physical halves of 80-column text page 1.
+* Foreground clears physical text; background clears its snapshot only.
 VCLEAR LDA #0
  STA VCOL
  STA VROW
+ LDX VPHY
+ BNE :VCPHY
+ LDA VVRDY
+ BEQ :VCDONE
+ JSR VBCLR
+ JMP :VCDONE
+:VCPHY LDA #0
  STA $C001 ; 80STORE on
  BIT $C054 ; main
  JSR VCLRBANK
@@ -838,6 +871,40 @@ VCLEAR LDA #0
  JSR VCLRBANK
  BIT $C054 ; main again
  STA $C000 ; 80STORE off
+:VCDONE RTS
+
+* Clear the whole 2KB of the selected session's snapshot: main+aux.
+* Both halves occupy [VVOFF .. VVOFF+7]; old +4 overwrote NEXT tab.
+* Clear 2KB via a zero-page pointer, no unrolled writes.
+* $EB/$EC is the 6502 ADDR dispatch pointer. It is scratch after
+* the indirect JMP into VPUT/VCLS; Z80 resets it before its next call.
+VBCLR LDA VVBANK
+ STA $C073
+ STA $C001
+ BIT $C057
+ BIT $C055
+ LDA #0
+ STA $EB
+ LDA VVOFF       ; high-byte OFFSET from $0400, not absolute address
+ CLC
+ ADC #4           ; $0400 + VVOFF*256 = backing screen base
+ STA $EC
+ LDX #8
+ LDY #0
+:VBPAGE
+ LDA #$A0
+:VBLOOP
+ STA ($EB),Y
+ INY
+ BNE :VBLOOP
+ INC $EC
+ DEX
+ BNE :VBPAGE
+ BIT $C054
+ BIT $C056
+ STA $C000
+ LDA #0
+ STA $C073
  RTS
 
 VCLRBANK LDA #$A0 ; normal video space
@@ -850,8 +917,34 @@ VCLRBANK LDA #$A0 ; normal video space
  BNE :VCL1
  RTS
 
-* Scroll main and auxiliary halves, 23 rows up, clear row 23.
-VSCROLL LDA #0
+* Scroll only the active destination: physical if fg, snapshot if bg.
+* VSHIFT is the high-byte delta from the physical $0400 text page.
+VSCROLL LDX VPHY
+ BNE :VSPHY
+ LDA VVRDY
+ BEQ :VSEND
+ LDA VVBANK
+ STA $C073
+ STA $C001
+ BIT $C057
+ BIT $C055
+ LDA VVOFF
+ STA VSHIFT
+ JSR VSCBANK ; first stored 1K: main
+ LDA VVOFF
+ CLC
+ ADC #4
+ STA VSHIFT
+ JSR VSCBANK ; second stored 1K: auxiliary
+ BIT $C054
+ BIT $C056
+ LDA #0
+ STA $C000
+ STA $C073
+ RTS             ; background scroll MUST NOT fall into physical path
+:VSPHY
+ LDA #0
+ STA VSHIFT
  STA $C001 ; 80STORE on
  BIT $C054
  JSR VSCBANK
@@ -859,16 +952,20 @@ VSCROLL LDA #0
  JSR VSCBANK
  BIT $C054
  STA $C000 ; 80STORE off
- RTS
+:VSEND RTS
 
 VSCBANK LDX #0
 VSR1 LDA VROWLO+1,X ; row below, source
  STA VSRC+1
  LDA VROWHI+1,X
+ CLC
+ ADC VSHIFT
  STA VSRC+2
  LDA VROWLO,X ; current row, destination
  STA VDST+1
  LDA VROWHI,X
+ CLC
+ ADC VSHIFT
  STA VDST+2
  LDY #39
 VSR2
@@ -879,9 +976,14 @@ VDST STA $0400,Y ; patched destination
  INX
  CPX #23
  BNE VSR1
+ LDA VSHIFT
+ CLC
+ ADC #7
+ STA VSBOT+2
  LDA #$A0
  LDY #39
-:VSR3 STA $07D0,Y ; bottom text row (row 23)
+:VSR3
+VSBOT STA $07D0,Y ; bottom text row (row 23)
  DEY
  BPL :VSR3
  RTS
@@ -904,6 +1006,20 @@ VCOORD DB 0
 VCRP DB 0 ; Suppress second half of CR/LF pair
 VATTR DB 0 ; Soroc ESC '(' inverse on, ESC ')' normal
 VKMOD DB 0 ; last blocking key's Open Apple state (outside saved video)
+VPHY DB 1 ; running session owns physical screen
+VVBANK DB 2 ; reserved RamWorks snapshot bank
+VVOFF DB $1C ; high-byte delta for first snapshot half
+VSHIFT DB 0 ; scroll destination high-byte delta
+VVRDY DB 0 ; nonzero when physical bank 2 exists
+* Diagnostic trace, must follow the 15-byte VCOL...VVRDY block:
+* Z80 VSPTR+15=seen, +16=off-row flag, +17=row, +18=column,
+* +19/+20=actual patched VBSTORE low/high destination.
+VDBSEEN DB 0
+VDBFLAG DB 0
+VDBROW DB 0
+VDBCOL DB 0
+VDBLO DB 0
+VDBHI DB 0
 
 * Loader diagnostics without ROM I/O.
 CROUT LDA #$0D
@@ -938,5 +1054,12 @@ VGETMODE LDA VMODE
 VSTATEPTR LDA #<VCOL
  LDX #>VCOL
  RTS
+
+* B821: A=snapshot bank, X=foreground flag, Y=slot high delta.
+* No screen copy; caller computes addressing from its TABMODE.
+VSELECT STA VVBANK
+ STX VPHY
+ STY VVOFF
+ JMP VMBASIC      ; refresh per-task MBASIC control bytes
 
 RELOC_EN
