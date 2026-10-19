@@ -137,7 +137,8 @@ RELOC_ST
  JMP VSTATEPTR ; B81E: pointer to contiguous VCOL..VATTR state
  JMP VSELECT   ; B821: A=bank, X=physical flag, Y=slot offset
 
-ENTRY LDA #0
+ENTRY CLD             ; ProDOS/loader entry always uses binary arithmetic
+ LDA #0
  STA RWACTIVE
  STA $C073       ; Start all CP/M sessions from system/video bank 0
  JSR VINIT ; Initialize video hardware and clear screen
@@ -268,7 +269,8 @@ CL_PL DB 1 ; Start of param list; 1 parameter
 CL_N DB 0 ; File ref num (0 close all)
 
 * Handle calls made by Z80 code
-HANDLR LDA #0
+HANDLR CLD           ; Don't inherit decimal mode from preceding calls
+ LDA #0
  STA $C073   ; MLI/video/keyboard always use physical AUX bank 0
  LDA CMD
  CMP #0 ; CMD=0 means continue running 6502 code
@@ -281,6 +283,11 @@ HANDLR LDA #0
  LDA FLAGS ; Load the flags
  PHA  ; Use stack to move A to status
  PLP  ; ...
+* Bit 3 of the incoming status byte can SET the 6502 decimal flag.
+* That makes ADC $1C to $04 produce $26 instead of $20, putting
+* background characters into row 4 of the saved AUX screen.  Clear
+* decimal mode AFTER PLP, preserving incoming carry/other flags.
+ CLD
  LDA AREG ; Load the registers
  LDX XREG ; ...
  LDY YREG ; ...
@@ -792,6 +799,26 @@ VSTORE STA $0400,Y ; physical foreground text half
  STA $C000       ; 80STORE off
  RTS
 :VBG PHA
+* The row table / physical operand are correct, but trace showed
+* a stale VBSTORE high byte ($26 vs expected $20 for row 0, col 1).
+* Rebuild the backing operand immediately before the banked STORE,
+* using the PHYSICAL operand already computed by VADDR.  Avoid
+* relying on a persistent self-modifying virtual operand across calls.
+* Preserve A (character) on stack and Y (screen byte index) unchanged.
+ LDA VSTORE+1
+ STA VBSTORE+1
+ LDA VSTORE+2
+ CLC
+ ADC VVOFF
+ STA VBSTORE+2
+ LDA VCOL
+ AND #1
+ BNE :VBADDRDONE
+ LDA VBSTORE+2
+ CLC
+ ADC #4         ; even column: AUX half of saved 80-col screen
+ STA VBSTORE+2
+:VBADDRDONE
  BIT $C054
  STA $C000       ; leave 80STORE off before snapshot window
  LDA VVRDY
@@ -1011,15 +1038,6 @@ VVBANK DB 2 ; reserved RamWorks snapshot bank
 VVOFF DB $1C ; high-byte delta for first snapshot half
 VSHIFT DB 0 ; scroll destination high-byte delta
 VVRDY DB 0 ; nonzero when physical bank 2 exists
-* Diagnostic trace, must follow the 15-byte VCOL...VVRDY block:
-* Z80 VSPTR+15=seen, +16=off-row flag, +17=row, +18=column,
-* +19/+20=actual patched VBSTORE low/high destination.
-VDBSEEN DB 0
-VDBFLAG DB 0
-VDBROW DB 0
-VDBCOL DB 0
-VDBLO DB 0
-VDBHI DB 0
 
 * Loader diagnostics without ROM I/O.
 CROUT LDA #$0D

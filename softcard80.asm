@@ -382,7 +382,10 @@ TB_SWITCH   LD      A,(TABMODE)
             CALL    VSSELECT       ; renders new tab to hardware
             CALL    VSREST         ; copy ALWAYS-LIVE snapshot to video
             JR      TB_GO
-TB_RESUM    CALL    TSKACTIVE
+; A direct TAB command aimed at the current tab should beep too.
+; Open Apple+current is already consumed and beeped by TSKSAME.
+TB_RESUM    CALL    UNIMP          ; bell, no spurious CCP output
+            CALL    TSKACTIVE
             OR      A
             CALL    NZ,VSREST
 TB_GO       LD      A,(TABMODE)
@@ -397,7 +400,7 @@ TB_STAT     LD      DE,TB_PREFIX
             CALL    PHNYB
             LD      DE,TB_SUFFIX
             CALL    C_WRITESTR
-            JP      VDIAG
+            RET                 ; TAB status only (write probe retired)
 ; One byte per CCP session. Saved display may already contain the
 ; A> prompt, so do not print it again after restoring that screen.
 CCPPRPTR    LD      A,(TABMODE)
@@ -1136,9 +1139,24 @@ VSSBANK     LD      A,(TABMODE)
 VSB_FIRST   LD      A,2
             RET
 
-; Set bank 2 + 80STORE HIRES PAGE2: map AUX HGR $2000-$3FFF
-; into $1000-$2FFF, without disturbing this code or Z80 stack.
-VSWINDOW    CALL    VSSBANK
+; Explicitly normalise main/aux CPU access before copying video.
+; The scheduler and virtual-terminal code remain untouched.
+VSPREP      XOR     A
+            LD      (SW80OFF),A
+            LD      (RDMAIN),A
+            LD      (WRMAIN),A
+            LD      A,(VSHIRES0)
+            LD      A,(VSPAGE1)
+            RET
+
+; The live physical screen is always in RamWorks bank 0.
+VSPREP0     XOR     A
+            CALL    AXBANK
+            JP      VSPREP
+
+; Open AUX HGR window for the current session's backing screen.
+VSWINDOW    CALL    VSPREP
+            CALL    VSSBANK
             CALL    AXBANK
             XOR     A
             LD      (VS80ON),A
@@ -1146,31 +1164,29 @@ VSWINDOW    CALL    VSSBANK
             LD      A,(VSPAGE2)
             RET
 
-; Restore safe text-mode addressing and return to AUX bank 0.
-VSUNWIN     LD      A,(VSPAGE1)
-            LD      A,(VSHIRES0)
+; Close AUX HGR window and return to bank 0 with MAIN reads/writes.
+VSUNWIN     CALL    VSPREP
             XOR     A
-            LD      (SW80OFF),A
             CALL    AXBANK
             RET
 
-; HL=source into MAIN staging scratch. Video bank 0 selected.
-VSFROMMAIN  LD      HL,VSTEXT
+; Read physical MAIN text page from bank 0, not inherited mapping.
+VSFROMMAIN  CALL    VSPREP0
+            LD      HL,VSTEXT
             LD      DE,VSSCRATCH
             LD      BC,VSMINSIZE
             LDIR
             RET
-VSFROMAUX   XOR     A
+; Only TEXT1 is AUX; the copy scratch stays MAIN.
+VSFROMAUX   CALL    VSPREP0
+            XOR     A
             LD      (VS80ON),A
             LD      A,(VSPAGE2)
             LD      HL,VSTEXT
             LD      DE,VSSCRATCH
             LD      BC,VSMINSIZE
             LDIR
-            LD      A,(VSPAGE1)
-            XOR     A
-            LD      (SW80OFF),A
-            RET
+            JP      VSPREP
 
 ; A=half (0 main, 1 aux): copy staged 1K to bank2 snapshot.
 VSWRITE     CALL    VSSLOT
@@ -1224,12 +1240,14 @@ VSREST      LD      A,(VSOK)
             JP      VSSTSAVE       ; save current cursor/parser state
 VRDRAW      XOR     A
             CALL    VSREAD
+            CALL    VSPREP0       ; MAIN screen target, bank 0
             LD      HL,VSSCRATCH
             LD      DE,VSTEXT
             LD      BC,VSMINSIZE
             LDIR
             LD      A,1
             CALL    VSREAD
+            CALL    VSPREP0       ; reset RAMRD/RAMWRT/PAGE1
             XOR     A
             LD      (VS80ON),A
             LD      A,(VSPAGE2)
@@ -1237,10 +1255,7 @@ VRDRAW      XOR     A
             LD      DE,VSTEXT
             LD      BC,VSMINSIZE
             LDIR
-            LD      A,(VSPAGE1)
-            XOR     A
-            LD      (SW80OFF),A
-            RET
+            JP      VSPREP
 
 VSPTR       DEFW    0
 VSOK        DEFB    0
@@ -2867,62 +2882,6 @@ VSSEBG      LD      (XREG),A       ; physical output enabled when fg
             POP     BC
             RET
 
-; Diagnostic: inspect the BACKING IMAGE of session 0, row 5, before
-; switching back to it. Read four bytes of each 80-column text half.
-; No VSSAVE or VSREST takes place here, and no screen state is changed.
-; In bank 2 slot 0: Z80 $1080 = MAIN row 5, $1480 = AUX row 5.
-; Expected on an untouched row is A0 for all eight bytes.
-; This block must fit in $8090..$80FF (BIOS starts at $8100).
-            ORG     08090H
-VDIAG       PUSH    BC
-            PUSH    DE
-            PUSH    HL
-            LD      A,2          ; reserved screen bank for sessions 0..3
-            CALL    AXBANK
-            XOR     A
-            LD      (VS80ON),A
-            LD      A,(VSHIRES1)
-            LD      A,(VSPAGE2)
-            LD      HL,01080H    ; session 0, MAIN row 5
-            LD      DE,VDBUF
-            LD      BC,4
-            LDIR
-            LD      HL,01480H    ; session 0, AUX row 5
-            LD      BC,4
-            LDIR
-            CALL    VSUNWIN     ; restore 80STORE, HIRES, bank 0
-            LD      DE,VDMSG
-            CALL    C_WRITESTR
-            LD      HL,VDBUF
-            LD      B,8
-VDLOOP      LD      A,(HL)
-            CALL    VDHX8
-            INC     HL
-            PUSH    HL          ; C_WRITE overwrites HL with COUT address
-            LD      E,' '
-            CALL    C_WRITE
-            POP     HL
-            DJNZ    VDLOOP
-            LD      E,13
-            CALL    C_WRITE
-            POP     HL
-            POP     DE
-            POP     BC
-            RET
-VDHX8       PUSH    HL
-            PUSH    AF
-            RRCA
-            RRCA
-            RRCA
-            RRCA
-            CALL    PHNYB
-            POP     AF
-            CALL    PHNYB
-            POP     HL
-            RET
-VDMSG       DEFM    'S0 row5: '
-            DEFB    '$'
-VDBUF       DEFS    8
 
 			ORG		BDOSADDR
 
@@ -5353,8 +5312,15 @@ PHOUT		LD		E,A
 
 ; Get a line of text from the console & handle it
 CCP			
-CCPL1       CALL    TBAUTOSW
-            CALL    SCHMAIN       ; run foreground program + background slices
+; A foreground .COM may yield after a scheduler quantum without
+; actually exiting.  Nor may CCP draw a prompt when SCHMAIN returns
+; with a pending hotkey.  Dispatch that hotkey, then restart the
+; scheduler if the newly selected foreground still has a live .COM.
+CCPL1       CALL    SCHMAIN       ; run foreground program + background slices
+            CALL    TBAUTOSW     ; drain hotkeys raised INSIDE SCHMAIN
+            CALL    TSKACTIVE
+            OR      A
+            JR      NZ,CCPL1     ; no CCP prompt over WordStar's cursor
             CALL    CCPPRPTR
             LD      A,(HL)
             OR      A
