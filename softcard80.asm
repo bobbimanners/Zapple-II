@@ -392,6 +392,8 @@ TB_GO       LD      A,(TABMODE)
             LD      (SCHFG),A
             CALL    VSSELECT       ; update 6502 foreground ownership
             CALL    SCHWAKE       ; this tab may be waiting for CONIN
+            LD      A,SCHFGQ
+            LD      (SCHQLEFT),A  ; a newly selected tab is foreground
             CALL    TABRESUM
             RET
 TB_STAT     LD      DE,TB_PREFIX
@@ -560,6 +562,13 @@ B_DRV_RESET		EQU		25H			; Selectively reset disk drives
 ; Open Apple is sampled alongside each keystroke or status peek.
 ; It cooperatively parks applications; no interrupt preemption.
 ; ================================================================
+; Foreground-biased scheduler.  Quanta count completed BIOS/BDOS calls,
+; not CPU time.  A busy foreground gets long uninterrupted bursts;
+; background work gets a short turn.  When foreground is idle/blocked,
+; background uses the original 32-call quantum.
+SCHFGQ      EQU     128
+SCHBGQ      EQU     8
+SCHIDLEQ    EQU     32
             ORG     00600H
 ; Stage 1 scheduler. RUNTASK is TABMODE; SCHFG owns the physical screen.
 ; These are cooperative slices: no call is interrupted mid-operation.
@@ -601,7 +610,9 @@ SMLOOP      LD      A,(TABREQ)
             OR      A
             JR      Z,SMLOOP      ; input not ready; don't enter VGET
             CALL    SCHWAKE       ; input can complete: make task runnable
-SMRUN       CALL    TABRESUM       ; foreground until next yield/exit
+SMRUN       LD      A,SCHFGQ
+            LD      (SCHQLEFT),A  ; foreground receives longer quantum
+            CALL    TABRESUM       ; foreground until next yield/exit
             JR      SMLOOP
 
 ; Called from foreground CCP's console line editor before CONIN.
@@ -662,6 +673,26 @@ SOIDX       LD      A,(SCHFG)
             LD      (SCHNEXT),A
             LD      B,C
             CALL    SCHSWAP
+            ; A busy foreground needs quick redraws; give background
+            ; only a few calls.  When foreground is at CCP or blocked
+            ; on input, allow full-sized background quanta instead.
+            LD      A,(SCHFG)
+            LD      E,A
+            LD      D,0
+            LD      HL,TSKFLAGS
+            ADD     HL,DE
+            LD      A,(HL)
+            OR      A
+            JR      Z,SOFULL
+            LD      HL,SCHWAIT
+            ADD     HL,DE
+            LD      A,(HL)
+            OR      A
+            JR      NZ,SOFULL
+            LD      A,SCHBGQ
+            JR      SOQUANT
+SOFULL      LD      A,SCHIDLEQ
+SOQUANT     LD      (SCHQLEFT),A
             CALL    TABRESUM
             LD      A,(SCHFG)
             LD      B,A
@@ -773,7 +804,7 @@ TSKINIT     LD      HL,SCHWAIT
             LDIR
             LD      (SCHFG),A
             LD      (SCHNEXT),A
-            LD      A,32
+            LD      A,SCHFGQ
             LD      (SCHQLEFT),A
             LD      A,(TABCOUNT)
             CP      2
@@ -1289,7 +1320,7 @@ CCPPROMS    DEFS    16           ; 1 if restored CCP screen includes prompt
 SCHWAIT     DEFS    16           ; background task parked on input
 SCHFG       DEFB    0            ; visible/keyboard-owning session
 SCHNEXT     DEFB    0            ; round-robin background cursor
-SCHQLEFT    DEFB    32           ; syscall quantum remaining
+SCHQLEFT    DEFB    SCHFGQ       ; syscall quantum remaining
 SCHEN       DEFB    0            ; enabled if >=2 sessions
 
             ORG     07000H
@@ -2847,7 +2878,7 @@ SCHTICK     LD      A,(AXQUIT)
             DEC     A
             LD      (SCHQLEFT),A
             RET     NZ
-            LD      A,32
+            LD      A,SCHFGQ
             LD      (SCHQLEFT),A
             CALL    SCHISFG
             JR      NZ,STYIELD    ; background must release CPU
