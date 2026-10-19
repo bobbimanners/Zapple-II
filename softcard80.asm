@@ -47,6 +47,7 @@ COUT		EQU		0B803H			; Direct video output entry (B803)
 RDKEY		EQU		0B806H			; Direct keyboard/cursor entry (B806)
 BELL		EQU		0B809H			; Direct speaker click entry (B809)
 RAWOUT		EQU		0B80FH			; Raw BIOS console entry (B80F)
+VTASK       EQU     0B821H          ; 6502 select running/foreground display
 ; TERM.COM (separate transient utility) calls 6502 B80C to switch terminal.
 ; Only a 6-byte raw-output shim is added to the resident BDOS.
 
@@ -243,7 +244,12 @@ CR_SELCMD   XOR     A
 ; Valid shortcuts consume the keyboard strobe directly, without drawing
 ; a cursor or waiting for another character. Ordinary keys are untouched.
 ; F3 is the private deferred-status marker on suspension.
-TSKSTAT     LD      A,3
+TSKSTAT     CALL    SCHISFG
+            JR      Z,TSSTFG
+            XOR     A
+            LD      L,A
+            RET
+TSSTFG      LD      A,3
             LD      (CMD),A
             LD      (SOFTCARD),A
             LD      A,(AREG)
@@ -252,8 +258,11 @@ TSKSTAT     LD      A,3
             LD      A,(YREG)
             AND     07FH
             CALL    TSKKEY
-            JR      NC,TSSTREADY
-            LD      A,(0E010H)     ; Apple II $C010: clear just this key
+            JR      C,TSSTSWITCH
+            OR      A            ; OA-current was consumed, no input
+            JR      Z,TSSTEMPTY
+            JR      TSSTREADY
+TSSTSWITCH  LD      A,(0E010H)     ; Apple II $C010: clear just this key
             LD      A,0F3H        ; resume the pending status poll
             LD      L,A
             RET
@@ -355,28 +364,45 @@ TB_SWITCH   LD      A,(TABMODE)
             CP      B
             JR      Z,TB_RESUM
             PUSH    BC
-            CALL    TSKACTIVE
-            OR      A
-            CALL    Z,VSSAVE       ; otherwise snapshot current CCP screen
+            CALL    VSSTSAVE       ; save active 6502 parser/cursor state
+            ; Diagnostic: force the original reliable Stage 1 physical
+            ; 80-column capture before leaving the foreground tab.
+            ; This MUST happen before TABMODE changes, and is deliberately
+            ; limited to manual foreground switches (not scheduler ticks).
+            CALL    SCHISFG
+            CALL    Z,VSSAVE
             CALL    TABSAVE
             CALL    CACHEALL
             POP     BC
             LD      A,B
             LD      (TABMODE),A
+            LD      (SCHFG),A      ; manual TAB changes visible session
             CALL    TABLOAD
-            CALL    VSREST
+            CALL    VSSTLOAD
+            CALL    VSSELECT       ; renders new tab to hardware
+            CALL    VSREST         ; copy ALWAYS-LIVE snapshot to video
             JR      TB_GO
-TB_RESUM    CALL    TSKACTIVE
+; A direct TAB command aimed at the current tab should beep too.
+; Open Apple+current is already consumed and beeped by TSKSAME.
+TB_RESUM    CALL    UNIMP          ; bell, no spurious CCP output
+            CALL    TSKACTIVE
             OR      A
             CALL    NZ,VSREST
-TB_GO       CALL    TABRESUM
+TB_GO       LD      A,(TABMODE)
+            LD      (SCHFG),A
+            CALL    VSSELECT       ; update 6502 foreground ownership
+            CALL    SCHWAKE       ; this tab may be waiting for CONIN
+            LD      A,SCHFGQ
+            LD      (SCHQLEFT),A  ; a newly selected tab is foreground
+            CALL    TABRESUM
             RET
 TB_STAT     LD      DE,TB_PREFIX
             CALL    C_WRITESTR
             LD      A,(TABMODE)
             CALL    PHNYB
             LD      DE,TB_SUFFIX
-            JP      C_WRITESTR
+            CALL    C_WRITESTR
+            RET                 ; TAB status only (write probe retired)
 ; One byte per CCP session. Saved display may already contain the
 ; A> prompt, so do not print it again after restoring that screen.
 CCPPRPTR    LD      A,(TABMODE)
@@ -473,6 +499,7 @@ TI_NEXT     XOR     A
             INC     HL
             DJNZ    TI_NEXT
             CALL    VSINIT
+            CALL    VSSAVE          ; seed tab 0 backing with startup text
             LD      HL,CCPPROMS
             LD      DE,CCPPROMS+1
             LD      BC,15
@@ -535,6 +562,199 @@ B_DRV_RESET		EQU		25H			; Selectively reset disk drives
 ; Open Apple is sampled alongside each keystroke or status peek.
 ; It cooperatively parks applications; no interrupt preemption.
 ; ================================================================
+; Foreground-biased scheduler.  Quanta count completed BIOS/BDOS calls,
+; not CPU time.  A busy foreground gets long uninterrupted bursts;
+; background work gets a short turn.  When foreground is idle/blocked,
+; background uses the original 32-call quantum.
+SCHFGQ      EQU     128
+SCHBGQ      EQU     8
+SCHIDLEQ    EQU     32
+            ORG     00600H
+; Stage 1 scheduler. RUNTASK is TABMODE; SCHFG owns the physical screen.
+; These are cooperative slices: no call is interrupted mid-operation.
+; SCHMAIN is called with MAIN/CCP stack active after a transient yields.
+SCHMAIN     LD      A,(SCHEN)
+            OR      A
+            RET     Z
+SMLOOP      LD      A,(TABREQ)
+            CP      0FFH
+            RET     NZ             ; manual tab switch has priority
+            LD      A,(SCHFG)
+            LD      E,A
+            LD      D,0
+            LD      HL,TSKFLAGS
+            ADD     HL,DE
+            LD      A,(HL)
+            OR      A
+            RET     Z              ; foreground is at CCP, not in .COM
+            CALL    SCHONE         ; optional background quantum
+            LD      A,(SCHFG)
+            LD      B,A
+            CALL    SCHSWAP        ; restore foreground BDOS context
+            ; Stage 3: a foreground .COM parked on CONIN must not
+            ; enter the blocking 6502 VGET while other jobs are runnable.
+            ; Poll the *physical* keyboard and keep running background
+            ; quanta until a key appears (or a manual tab switch arrives).
+            LD      A,(SCHFG)
+            LD      E,A
+            LD      D,0
+            LD      HL,SCHWAIT
+            ADD     HL,DE
+            LD      A,(HL)
+            OR      A
+            JR      Z,SMRUN
+            CALL    SCHHAVE
+            OR      A
+            JR      Z,SMRUN       ; no background jobs: normal VGET cursor
+            CALL    BIOSCONST
+            OR      A
+            JR      Z,SMLOOP      ; input not ready; don't enter VGET
+            CALL    SCHWAKE       ; input can complete: make task runnable
+SMRUN       LD      A,SCHFGQ
+            LD      (SCHQLEFT),A  ; foreground receives longer quantum
+            CALL    TABRESUM       ; foreground until next yield/exit
+            JR      SMLOOP
+
+; Called from foreground CCP's console line editor before CONIN.
+; When background work exists, poll keyboard and run background slices.
+; Preserve the editor's live IX, BC, DE and flags across task execution.
+SCHIDLE     PUSH    AF
+            PUSH    BC
+            PUSH    DE
+            PUSH    IX
+            PUSH    IY
+SIAGAIN     CALL    SCHHAVE
+            OR      A
+            JR      Z,SIDONE      ; no background jobs: normal VGET
+            LD      A,3
+            LD      (CMD),A
+            LD      (SOFTCARD),A
+            LD      A,(AREG)
+            OR      A
+            JR      NZ,SIDONE     ; physical key waiting, let VGET read
+            CALL    SCHONE
+            JR      SIAGAIN
+SIDONE      POP     IY
+            POP     IX
+            POP     DE
+            POP     BC
+            POP     AF
+            RET
+
+; Pick a runnable background tab. Does not touch the screen or terminal
+; personality. Run for one quantum; then restore foreground CCP context.
+SCHONE      LD      A,(SCHEN)
+            OR      A
+            RET     Z
+            LD      A,(SCHNEXT)
+            LD      C,A
+            LD      B,16
+SOSCAN      LD      A,(TABCOUNT)
+            CP      C
+            JR      NZ,SOIDX
+            LD      C,0
+SOIDX       LD      A,(SCHFG)
+            CP      C
+            JR      Z,SOADV
+            LD      E,C
+            LD      D,0
+            LD      HL,TSKFLAGS
+            ADD     HL,DE
+            LD      A,(HL)
+            OR      A
+            JR      Z,SOADV
+            LD      HL,SCHWAIT
+            ADD     HL,DE
+            LD      A,(HL)
+            OR      A
+            JR      NZ,SOADV
+            LD      A,C
+            INC     A
+            LD      (SCHNEXT),A
+            LD      B,C
+            CALL    SCHSWAP
+            ; A busy foreground needs quick redraws; give background
+            ; only a few calls.  When foreground is at CCP or blocked
+            ; on input, allow full-sized background quanta instead.
+            LD      A,(SCHFG)
+            LD      E,A
+            LD      D,0
+            LD      HL,TSKFLAGS
+            ADD     HL,DE
+            LD      A,(HL)
+            OR      A
+            JR      Z,SOFULL
+            LD      HL,SCHWAIT
+            ADD     HL,DE
+            LD      A,(HL)
+            OR      A
+            JR      NZ,SOFULL
+            LD      A,SCHBGQ
+            JR      SOQUANT
+SOFULL      LD      A,SCHIDLEQ
+SOQUANT     LD      (SCHQLEFT),A
+            CALL    TABRESUM
+            LD      A,(SCHFG)
+            LD      B,A
+            CALL    SCHSWAP
+            LD      A,1
+            RET
+SOADV       INC     C
+            DJNZ    SOSCAN
+            XOR     A
+            RET
+
+; Boolean: is there any runnable background task? Preserves BC, DE.
+SCHHAVE     PUSH    BC
+            PUSH    DE
+            PUSH    HL
+            LD      A,(SCHNEXT)
+            LD      C,A
+            LD      B,16
+SHSCAN      LD      A,(TABCOUNT)
+            CP      C
+            JR      NZ,SHIDX
+            LD      C,0
+SHIDX       LD      A,(SCHFG)
+            CP      C
+            JR      Z,SHADV
+            LD      E,C
+            LD      D,0
+            LD      HL,TSKFLAGS
+            ADD     HL,DE
+            LD      A,(HL)
+            OR      A
+            JR      Z,SHADV
+            LD      HL,SCHWAIT
+            ADD     HL,DE
+            LD      A,(HL)
+            OR      A
+            JR      NZ,SHADV
+            LD      A,1
+            JR      SHDONE
+SHADV       INC     C
+            DJNZ    SHSCAN
+            XOR     A
+SHDONE      POP     HL
+            POP     DE
+            POP     BC
+            RET
+
+; No terminal snapshot and no physical terminal-mode changes on a
+; background context switch; only COMMON BDOS drive state is exchanged.
+SCHSWAP     LD      A,(TABMODE)
+            CP      B
+            RET     Z
+            PUSH    BC
+            CALL    VSSTSAVE       ; flush active terminal state to descriptor
+            CALL    SCHSAVE
+            POP     BC
+            LD      A,B
+            LD      (TABMODE),A
+            CALL    SCHLOAD
+            CALL    VSSTLOAD       ; restore cursor/escape parser/mode
+            JP      VSSELECT       ; 6502 maps backing screen for this task
+
             ORG     00800H
 ; BDOS 10 may suspend only at an empty line. A successful hotkey
 ; parks the read itself; resume restarts it, without submitting CR.
@@ -546,6 +766,8 @@ AXLSKEY     LD      A,0FAH        ; deferred BDOS 10 input
 TSKCIN      CALL    BIOSCONIN
             CALL    TSKKEY
             JR      C,TSKCIKEY
+            OR      A
+            JR      Z,TSKCIN     ; OA-current was consumed
             CP      3
             JR      NZ,TSKECHO
             LD      A,1
@@ -566,13 +788,31 @@ TSKCIKEY    LD      A,0F1H        ; deferred cooked input
 TSKBIRD     CALL    BIOSCONIN
             CALL    TSKKEY
             JR      C,TSKBIKEY
+            OR      A
+            JR      Z,TSKBIRD    ; OA-current was consumed
             LD      L,A
             RET
 TSKBIKEY    LD      A,0F2H        ; deferred BIOS character input
             LD      L,A
             RET
 
-TSKINIT     LD      HL,TSKFLAGS
+TSKINIT     LD      HL,SCHWAIT
+            LD      DE,SCHWAIT+1
+            LD      BC,15
+            XOR     A
+            LD      (HL),A
+            LDIR
+            LD      (SCHFG),A
+            LD      (SCHNEXT),A
+            LD      A,SCHFGQ
+            LD      (SCHQLEFT),A
+            LD      A,(TABCOUNT)
+            CP      2
+            LD      A,0
+            JR      C,SKINIT0
+            INC     A
+SKINIT0     LD      (SCHEN),A
+            LD      HL,TSKFLAGS
             LD      DE,TSKFLAGS+1
             LD      BC,15
             XOR     A
@@ -593,7 +833,8 @@ TSKACTIVE   CALL    TSKFLPTR
             RET
 
 ; A=ASCII key, XREG=Open Apple state sampled by the 6502 at key read.
-; Carry=1 if a shortcut was queued, else carry=0 and A is unchanged.
+; Carry=1 if a DIFFERENT tab was queued. OA+current beeps and returns
+; carry=0, A=0 (consumed), so callers don't suspend or pass the key.
 ; Arrow keys wrap around TABCOUNT; numeric/hex keys select directly.
 ; Preserve BC (TABDECODE uses C, and AXLINE holds its count there).
 TSKKEY      PUSH    BC
@@ -626,12 +867,25 @@ TSKNEXT     LD      A,(TABMODE)
             LD      A,B
             JR      TSKQUEUE
 TSKWRAP     XOR     A
-TSKQUEUE    LD      (TABREQ),A
+TSKQUEUE    LD      B,A           ; B is saved by TSKKEY prologue
+            LD      A,(SCHFG)
+            CP      B
+            JR      Z,TSKSAME
+            LD      A,B
+            LD      (TABREQ),A
             LD      A,3
             LD      (AXQUIT),A
             POP     BC          ; discard the original character/flags
             POP     BC          ; restore caller's BC
             SCF
+            RET
+TSKSAME     PUSH    HL          ; UNIMP changes HL (6502 vector)
+            CALL    UNIMP        ; beep: Open Apple + current tab
+            POP     HL
+            LD      A,(0E010H)   ; clear physical key strobe (status path)
+            POP     BC          ; discard saved character/flags
+            POP     BC          ; restore caller BC
+            XOR     A           ; consumed: no input, no suspension
             RET
 TSKIGNORE   POP     AF          ; ordinary key: return it unchanged
             POP     BC
@@ -692,7 +946,15 @@ TASKSAVE    LD      (TSKBC),BC
             LD      (TSKRE),A
             LD      HL,(AXLIP)
             LD      (TSKLI),HL
-            LD      A,1
+            LD      A,(AXRES)
+            CP      0F1H        ; cooked CONIN deferred by Open Apple
+            JR      Z,TSKWAIT
+            CP      0F2H        ; raw BIOS CONIN deferred
+            JR      Z,TSKWAIT
+            CP      0FAH        ; BDOS 10 read deferred
+            JR      NZ,TSKNOWT
+TSKWAIT     CALL    SCHBLCK      ; background must not retry VGET
+TSKNOWT     LD      A,1
             CALL    TSKSET
             LD      HL,TSKBUFF
             CALL    TSKSLOTP
@@ -763,7 +1025,7 @@ TSKRFIN     XOR     A
             CALL    AXBANK
             LD      A,(AXQUIT)
             CP      3
-            CALL    Z,VSSAVE       ; screen changed since previous resume
+            ; Backing display is live; no snapshot at suspension.
             LD      HL,FILEBUF
             LD      (DMAADDR),HL
             LD      HL,0080H
@@ -830,8 +1092,8 @@ ARDONE      LD      (AXRES),A
             JP      AXGO
 
 ; ================================================================
-; RamWorks Phase 3C: save/restore full 80-column video memory.
-; Uses AUX bank 2 as an out-of-band backing store for both sessions.
+; RamWorks Stage 2: 6502 renderer maintains live screen backing.
+; VSSAVE seeds session 0 once; VSREST redraws a selected snapshot.
 ; Physical 6502 $2000-$2FFF in bank 2 (Z80 $1000-$1FFF) holds
 ; 1KB MAIN + 1KB AUX video page for each session.
 ;
@@ -927,9 +1189,24 @@ VSSBANK     LD      A,(TABMODE)
 VSB_FIRST   LD      A,2
             RET
 
-; Set bank 2 + 80STORE HIRES PAGE2: map AUX HGR $2000-$3FFF
-; into $1000-$2FFF, without disturbing this code or Z80 stack.
-VSWINDOW    CALL    VSSBANK
+; Explicitly normalise main/aux CPU access before copying video.
+; The scheduler and virtual-terminal code remain untouched.
+VSPREP      XOR     A
+            LD      (SW80OFF),A
+            LD      (RDMAIN),A
+            LD      (WRMAIN),A
+            LD      A,(VSHIRES0)
+            LD      A,(VSPAGE1)
+            RET
+
+; The live physical screen is always in RamWorks bank 0.
+VSPREP0     XOR     A
+            CALL    AXBANK
+            JP      VSPREP
+
+; Open AUX HGR window for the current session's backing screen.
+VSWINDOW    CALL    VSPREP
+            CALL    VSSBANK
             CALL    AXBANK
             XOR     A
             LD      (VS80ON),A
@@ -937,31 +1214,29 @@ VSWINDOW    CALL    VSSBANK
             LD      A,(VSPAGE2)
             RET
 
-; Restore safe text-mode addressing and return to AUX bank 0.
-VSUNWIN     LD      A,(VSPAGE1)
-            LD      A,(VSHIRES0)
+; Close AUX HGR window and return to bank 0 with MAIN reads/writes.
+VSUNWIN     CALL    VSPREP
             XOR     A
-            LD      (SW80OFF),A
             CALL    AXBANK
             RET
 
-; HL=source into MAIN staging scratch. Video bank 0 selected.
-VSFROMMAIN  LD      HL,VSTEXT
+; Read physical MAIN text page from bank 0, not inherited mapping.
+VSFROMMAIN  CALL    VSPREP0
+            LD      HL,VSTEXT
             LD      DE,VSSCRATCH
             LD      BC,VSMINSIZE
             LDIR
             RET
-VSFROMAUX   XOR     A
+; Only TEXT1 is AUX; the copy scratch stays MAIN.
+VSFROMAUX   CALL    VSPREP0
+            XOR     A
             LD      (VS80ON),A
             LD      A,(VSPAGE2)
             LD      HL,VSTEXT
             LD      DE,VSSCRATCH
             LD      BC,VSMINSIZE
             LDIR
-            LD      A,(VSPAGE1)
-            XOR     A
-            LD      (SW80OFF),A
-            RET
+            JP      VSPREP
 
 ; A=half (0 main, 1 aux): copy staged 1K to bank2 snapshot.
 VSWRITE     CALL    VSSLOT
@@ -1009,19 +1284,20 @@ VSREST      LD      A,(VSOK)
             CALL    VSMETA
             LD      A,(HL)
             OR      A
-            JP      Z,CCPCLS
-            INC     HL
-            LD      DE,(VSPTR)
-            LD      BC,VSTLEN
-            LDIR
-            XOR     A
+            JR      NZ,VRDRAW
+            CALL    CCPCLS         ; new tab: clear physical screen
+            CALL    VSSAVE         ; seed BOTH halves from clean physical screen
+            JP      VSSTSAVE       ; save current cursor/parser state
+VRDRAW      XOR     A
             CALL    VSREAD
+            CALL    VSPREP0       ; MAIN screen target, bank 0
             LD      HL,VSSCRATCH
             LD      DE,VSTEXT
             LD      BC,VSMINSIZE
             LDIR
             LD      A,1
             CALL    VSREAD
+            CALL    VSPREP0       ; reset RAMRD/RAMWRT/PAGE1
             XOR     A
             LD      (VS80ON),A
             LD      A,(VSPAGE2)
@@ -1029,10 +1305,7 @@ VSREST      LD      A,(VSOK)
             LD      DE,VSTEXT
             LD      BC,VSMINSIZE
             LDIR
-            LD      A,(VSPAGE1)
-            XOR     A
-            LD      (SW80OFF),A
-            RET
+            JP      VSPREP
 
 VSPTR       DEFW    0
 VSOK        DEFB    0
@@ -1044,10 +1317,17 @@ TSKFLAGS    DEFS    16           ; one parked flag per logical session
 TSKREGS     DEFS    432          ; 16 * 27-byte saved Z80 contexts
 VSMETAS     DEFS    160          ; 16 * (valid + 9 terminal bytes)
 CCPPROMS    DEFS    16           ; 1 if restored CCP screen includes prompt
+SCHWAIT     DEFS    16           ; background task parked on input
+SCHFG       DEFB    0            ; visible/keyboard-owning session
+SCHNEXT     DEFB    0            ; round-robin background cursor
+SCHQLEFT    DEFB    SCHFGQ       ; syscall quantum remaining
+SCHEN       DEFB    0            ; enabled if >=2 sessions
 
             ORG     07000H
 
-AXBDOS      LD      A,C
+AXBDOS      CALL    SCHPRE        ; park background blocking input
+            RET     C
+            LD      A,C
             CP      0F0H          ; BP/M private: set terminal (E=0/1)
             JP      Z,AXTMODE
             OR      A
@@ -1138,10 +1418,8 @@ AXBAD       LD      A,2
 ; the 6502 console lives at MAIN $B800. This dispatcher is called by
 ; LCGATE with MAIN RAM selected, and the original LC/stack are restored
 ; automatically on return. Private BDOS $F0: E=0 Videx / E=1 Soroc.
-AXTMODE     LD      A,E
-            CP      2
-            JR      NC,AXTMERR
-            LD      (AREG),A
+AXTMODE     JP      SCHTMCHK
+AXTMRUN     LD      (AREG),A
             LD      HL,0B80CH     ; 6502 VSETMODE public entry
             LD      (ADDR),HL
             LD      A,1
@@ -1999,6 +2277,7 @@ AXGATE      LD      (AXASP),SP    ; user's stack may itself be in AUX LC
             CALL    AUXBDOS
             LD      (AXRES),A
             LD      (AXRHL),HL
+            CALL    SCHTICK        ; never schedules INSIDE a syscall
             LD      A,(AXQUIT)
             CP      3
             CALL    Z,TASKSAVE     ; save before the CCP/other session runs
@@ -2308,7 +2587,7 @@ AUXSUSP     CALL    CACHEALL
             CALL    AXMAINLC        ; restore ProDOS MAIN LC, keep AUX LC
             XOR     A
             CALL    AXBANK          ; 6502/video service bank 0
-            CALL    VSSAVE          ; capture program BEFORE CCP message
+            ; Backing display is live; no snapshot at suspension.
             LD      HL,FILEBUF
             LD      (DMAADDR),HL
             LD      HL,0080H
@@ -2412,7 +2691,12 @@ AUXBDOS2    PUSH    DE
 AUXBDOS6    LD      A,E
             CP      0FFH
             JR      NZ,AB6OUT     ; control-character output is not input
-AB6IN       CALL    C_RAWIO
+AB6IN       CALL    SCHISFG
+            JR      Z,AB6KEY
+            XOR     A
+            LD      L,A
+            RET
+AB6KEY      CALL    C_RAWIO
             CALL    TSKKEY
             RET     NC           ; no shortcut: return raw character/0
             LD      A,0F6H        ; deferred BDOS 6 poll
@@ -2438,6 +2722,232 @@ AB9DONE     POP     HL
             POP     BC
             XOR     A
             LD      L,A
+            RET
+
+
+            ORG     07EC0H
+; Stage 1 scheduler helpers in unused MAIN $7EC0-$7FFF.
+; Keep clear of the resident BDOS, which now reaches roughly $9760.
+; Foreground runs original VSETMODE; background remembers the mode.
+SCHTMCHK    LD      A,E
+            CP      2
+            JP      NC,AXTMERR
+            JP      AXTMRUN        ; per-task 6502 mode is now virtual
+
+; Basic six-byte per-session BDOS state without touching 6502 VMODE.
+; TASKSAVE/TASKLOAD already handle each program's DMA and register state.
+SCHSAVE     CALL    TABPICK
+            LD      A,(CURDRV)
+            LD      (IX+0),A
+            LD      A,(IOBYTE)
+            LD      (IX+1),A
+            LD      HL,(LOGVEC)
+            LD      (IX+2),L
+            LD      (IX+3),H
+            LD      HL,(ROVEC)
+            LD      (IX+4),L
+            LD      (IX+5),H
+            RET
+SCHLOAD     CALL    TABPICK
+            LD      A,(IX+0)
+            LD      (CURDRV),A
+            LD      A,(IX+1)
+            LD      (IOBYTE),A
+            LD      L,(IX+2)
+            LD      H,(IX+3)
+            LD      (LOGVEC),HL
+            LD      L,(IX+4)
+            LD      H,(IX+5)
+            LD      (ROVEC),HL
+            RET
+
+; Save a background terminal personality without changing the visible
+; application's 6502 terminal parser state.
+SCHTERM     PUSH    AF
+            CALL    SCHISFG
+            JR      NZ,STBG
+            POP     AF
+            OR      A
+            RET
+STBG        POP     AF
+            PUSH    BC
+            PUSH    DE
+            PUSH    IX
+            PUSH    AF
+            CALL    TABPICK
+            POP     AF
+            LD      (IX+6),A
+            POP     IX
+            POP     DE
+            POP     BC
+            XOR     A
+            LD      L,A
+            SCF
+            RET
+
+; Z flag: this task owns foreground screen/keyboard.
+SCHISFG     PUSH    BC
+            LD      A,(TABMODE)
+            LD      B,A
+            LD      A,(SCHFG)
+            CP      B
+            POP     BC
+            RET
+
+; Mark current session as blocked on input. Both original foreground
+; hotkey deferrals and new background input deferrals use this state.
+SCHBLCK     LD      A,(TABMODE)
+            LD      E,A
+            LD      D,0
+            LD      HL,SCHWAIT
+            ADD     HL,DE
+            LD      (HL),1
+            RET
+
+; Reactivate a task blocked on background console input when selected.
+SCHWAKE     LD      A,(TABMODE)
+            LD      E,A
+            LD      D,0
+            LD      HL,SCHWAIT
+            ADD     HL,DE
+            LD      (HL),0
+            RET
+
+; The virtual display is live, so no physical screen snapshot is needed
+; when an application yields or a manual tab change is requested.
+SCHSNAP     RET                 ; live screen always up-to-date
+
+; Stage 3: defer blocking console reads if this task is in the
+; background, OR if this is the foreground and another task can run
+; while waiting for a keystroke. A physical key already pending may
+; be consumed normally. With no other runnable task use VGET, which
+; preserves the ordinary visible cursor behaviour.
+; The existing AXRETRY markers re-enter the original read on resume.
+SCHPRE      LD      A,C
+            CP      1             ; BDOS 1 cooked input
+            JR      Z,SPREAD
+            CP      10            ; BDOS 10 line input (at line start)
+            JR      Z,SPREAD
+            CP      0F2H         ; BIOS CONIN via LC gateway
+            JR      NZ,SPNO
+SPREAD      CALL    SCHISFG
+            JR      NZ,SPPARKCODE ; background: always defer input
+            PUSH    BC
+            CALL    SCHHAVE
+            OR      A
+            JR      Z,SPALLOW     ; no runnable background work
+            CALL    BIOSCONST    ; $C000 peek; never consumes keyboard
+            OR      A
+            JR      NZ,SPALLOW    ; a character is already waiting
+            POP     BC
+SPPARKCODE  LD      A,C
+            CP      1
+            JR      Z,SPCOOK
+            CP      10
+            JR      Z,SPLINE
+            JR      SPBIOS        ; validated only 1/10/F2 above
+SPALLOW     POP     BC
+SPNO        OR      A             ; clear carry
+            RET
+SPCOOK      LD      A,0F1H
+            JR      SPPARK
+SPBIOS      LD      A,0F2H
+            JR      SPPARK
+SPLINE      LD      (AXLIP),DE
+            LD      A,0FAH
+SPPARK      PUSH    AF
+            PUSH    DE
+            CALL    SCHBLCK
+            LD      A,3
+            LD      (AXQUIT),A
+            POP     DE
+            POP     AF
+            LD      L,A
+            SCF
+            RET
+
+; Trigger only at an outer AUX BDOS/BIOS completion in AXGATE.
+; AXQUIT=3 follows the preexisting TASKSAVE -> AUXSUSP/TABRESUM route.
+SCHTICK     LD      A,(AXQUIT)
+            OR      A
+            RET     NZ
+            LD      A,(SCHEN)
+            OR      A
+            RET     Z
+            LD      A,(SCHQLEFT)
+            DEC     A
+            LD      (SCHQLEFT),A
+            RET     NZ
+            LD      A,SCHFGQ
+            LD      (SCHQLEFT),A
+            CALL    SCHISFG
+            JR      NZ,STYIELD    ; background must release CPU
+            CALL    SCHHAVE
+            OR      A
+            RET     Z             ; no background work: stay in .COM
+STYIELD     LD      A,3
+            LD      (AXQUIT),A
+            RET
+
+
+; Stage 2: keep 6502 parser/cursor state coherent across scheduler
+; and manual TAB switches. VSMETAS retains the nine original bytes.
+; This helper block lives in MAIN $8000-$80FF before BIOS $8100.
+            ORG     08000H
+VSSTSAVE    LD      A,(VSOK)
+            OR      A
+            RET     Z
+            CALL    VSMETA
+            LD      (HL),1         ; initialized backing display
+            INC     HL
+            EX      DE,HL
+            LD      HL,(VSPTR)
+            LD      BC,VSTLEN
+            LDIR
+            RET
+
+VSSTLOAD    LD      A,(VSOK)
+            OR      A
+            RET     Z
+            CALL    VSMETA
+            LD      A,(HL)
+            INC     HL
+            OR      A
+            JR      Z,VSTNEW
+            LD      DE,(VSPTR)
+            LD      BC,VSTLEN
+            LDIR
+            RET
+VSTNEW      LD      DE,(VSPTR)
+            LD      HL,VSDEFAULT
+            LD      BC,VSTLEN
+            LDIR
+            RET
+VSDEFAULT   DEFB    0,0,0,0,1,0,0,0,0 ; cursor 0,0 and Soroc
+
+; B821: A=snapshot bank, X=physical flag, Y=offset. 6502 updates routing
+; and Microsoft BASIC's current terminal control-byte table.
+VSSELECT    PUSH    BC
+            CALL    VSSBANK         ; bank 2 / 5 / 10 / 15
+            LD      (AREG),A
+            CALL    SCHISFG
+            LD      A,0
+            JR      NZ,VSSEBG
+            INC     A
+VSSEBG      LD      (XREG),A       ; physical output enabled when fg
+            LD      A,(TABMODE)
+            AND     3
+            ADD     A,A
+            ADD     A,A
+            ADD     A,A
+            ADD     A,01CH        ; high-byte delta from $0400
+            LD      (YREG),A
+            LD      HL,VTASK
+            LD      (ADDR),HL
+            LD      A,1
+            LD      (CMD),A
+            LD      (SOFTCARD),A
+            POP     BC
             RET
 
 
@@ -2725,10 +3235,10 @@ C_WRITE		LD		A,E
 
 ; Shared low-level output path for cooked and direct console writes.
 ; E = ASCII character; 6502 console driver accepts bit 7 set or clear.
-C_RAWPUT	LD		A,E			; Raw output retains correct CR/LF meaning
+C_RAWPUT    LD      A,E          ; raw output also updates virtual display
 			LD		HL,RAWOUT	; B80F raw 6502 vector
 			JR		C_SENDA
-C_PUT		LD		A,80H			; Cooked BDOS function 2
+C_PUT       LD      A,80H       ; cooked output, both background/foreground
 			OR		E
 			LD		HL,COUT		; B803 cooked 6502 vector
 C_SENDA		LD		(AREG),A
@@ -2806,11 +3316,14 @@ C_READSTR	LD		H,D				; HL will be the working pointer
 ; The console input routine must NOT echo before we know whether
 ; editing is legal. In particular, backspace on an empty line must not
 ; move the cursor into the CCP's A> prompt.  Both ^H and DEL erase one.
-CRSL1		PUSH	HL
-			CALL	BIOSCONIN		; Raw key, no premature echo
+CRSL1       PUSH    HL
+            CALL    SCHIDLE       ; allow background jobs while CCP idle
+            CALL    BIOSCONIN		; Raw key, no premature echo
 			POP		HL
             CALL    TSKKEY         ; includes Open Apple+arrows
             JP      C,CR_SELCMD
+            OR      A
+            JP      Z,CRSL1       ; OA-current beep: no CCP input
 			CP		3				; Preserve CP/M Ctrl-C abort
 			JP		Z,BDOSWARM
             CP      13
@@ -4867,7 +5380,15 @@ PHOUT		LD		E,A
 
 ; Get a line of text from the console & handle it
 CCP			
-CCPL1       CALL    TBAUTOSW
+; A foreground .COM may yield after a scheduler quantum without
+; actually exiting.  Nor may CCP draw a prompt when SCHMAIN returns
+; with a pending hotkey.  Dispatch that hotkey, then restart the
+; scheduler if the newly selected foreground still has a live .COM.
+CCPL1       CALL    SCHMAIN       ; run foreground program + background slices
+            CALL    TBAUTOSW     ; drain hotkeys raised INSIDE SCHMAIN
+            CALL    TSKACTIVE
+            OR      A
+            JR      NZ,CCPL1     ; no CCP prompt over WordStar's cursor
             CALL    CCPPRPTR
             LD      A,(HL)
             OR      A
