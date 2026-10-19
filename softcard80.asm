@@ -299,6 +299,32 @@ CCPPRNT     LD      E,'['
 
 ; Keep TAB's address unchanged. No special ALTZP copy is needed:
 ; SoftCard Z80 $0000 maps to Apple II $1000, where WRAUX works.
+            ORG     003B0H
+; Kill only an inactive saved context. No CPU instruction is preempted.
+; FCB cache has already been flushed by the cooperative park path.
+TB_KILL     LD      A,B
+            CALL    TB_HPTR
+            LD      (HL),0
+            LD      A,B
+            CALL    TB_FPTR
+            LD      (HL),0
+            LD      HL,SCHWAIT
+            ADD     HL,DE
+            LD      (HL),0
+            LD      HL,CCPPROMS
+            ADD     HL,DE
+            LD      (HL),0
+            ; Mark backing screen invalid, so the next selection clears it.
+            LD      A,B
+            CALL    TB_METAP
+            LD      (HL),0
+            RET
+TB_FPTR   LD      E,A
+            LD      D,0
+            LD      HL,TSKFLAGS
+            ADD     HL,DE
+            RET
+
             ORG     00400H
 
 ; Phase 3A: two independent CCP contexts. TAB 0 / TAB 1 switches
@@ -308,19 +334,7 @@ CCPPRNT     LD      E,'['
 ; TAB n resumes a parked transient, rather than reloading it.
 ; Phase 3C: full text-screen/terminal-state snapshots in reserved bank 2.
 ; Still cooperative: no switching from a CPU-bound loop.
-CCPTAB      LD      A,(FILEBUF)
-            OR      A
-            JP      Z,TB_STAT
-            CP      3                 ; " n " tail
-            JP      NZ,CCPBAD
-            LD      A,(FILEBUF+3)
-            CP      ' '
-            JP      NZ,CCPBAD
-            LD      A,(FILEBUF+2)
-            CALL    TABDECODE
-            JP      C,CCPBAD
-            LD      B,A
-            JP      TB_SWITCH
+CCPTAB      JP      TBCMD          ; extended TAB command parser
 
 ; Convert a hexadecimal ASCII tab selector to A=0..15, carry on error.
 ; Check the detected bank count so an unavailable tab is never touched.
@@ -360,7 +374,11 @@ TBAUTOSW    LD      A,(TABREQ)
             LD      (TABREQ),A
             CALL    TB_SWITCH
             JR      TBAUTOSW
-TB_SWITCH   LD      A,(TABMODE)
+TB_SWITCH   PUSH    BC
+            LD      A,B
+            CALL    TBCLEARH       ; switching always wakes a held tab
+            POP     BC
+            LD      A,(TABMODE)
             CP      B
             JR      Z,TB_RESUM
             PUSH    BC
@@ -506,6 +524,31 @@ TI_NEXT     XOR     A
             XOR     A
             LD      (HL),A
             LDIR
+            RET
+
+; Map a logical tab A to its manual hold flag; preserves B.
+TB_HPTR     LD      E,A
+            LD      D,0
+            LD      HL,TBHOLD
+            ADD     HL,DE
+            RET
+TBCLEARH    CALL    TB_HPTR
+            LD      (HL),0
+            RET
+TB_TFL  LD      E,A
+            LD      D,0
+            LD      HL,TSKFLAGS
+            ADD     HL,DE
+            LD      A,(HL)
+            RET
+; 8-byte saved executable name for tab A.
+TBNPTR      LD      L,A
+            LD      H,0
+            ADD     HL,HL
+            ADD     HL,HL
+            ADD     HL,HL
+            LD      DE,TBNAMES
+            ADD     HL,DE
             RET
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -668,6 +711,11 @@ SOIDX       LD      A,(SCHFG)
             LD      A,(HL)
             OR      A
             JR      NZ,SOADV
+            LD      HL,TBHOLD
+            ADD     HL,DE
+            LD      A,(HL)
+            OR      A
+            JR      NZ,SOADV
             LD      A,C
             INC     A
             LD      (SCHNEXT),A
@@ -730,6 +778,11 @@ SHIDX       LD      A,(SCHFG)
             LD      A,(HL)
             OR      A
             JR      NZ,SHADV
+            LD      HL,TBHOLD
+            ADD     HL,DE
+            LD      A,(HL)
+            OR      A
+            JR      NZ,SHADV
             LD      A,1
             JR      SHDONE
 SHADV       INC     C
@@ -754,6 +807,12 @@ SCHSWAP     LD      A,(TABMODE)
             CALL    SCHLOAD
             CALL    VSSTLOAD       ; restore cursor/escape parser/mode
             JP      VSSELECT       ; 6502 maps backing screen for this task
+
+            ORG     00770H
+; 16 eight-character executable names, only valid while TSKFLAGS is set.
+TBNAMES     DEFS    128
+; Explicit manual pause is separate from SCHWAIT (console-read parking).
+TBHOLD      DEFS    16
 
             ORG     00800H
 ; BDOS 10 may suspend only at an empty line. A successful hotkey
@@ -820,6 +879,12 @@ SKINIT0     LD      (SCHEN),A
             LDIR
             LD      A,0FFH
             LD      (TABREQ),A
+            LD      HL,TBHOLD
+            LD      DE,TBHOLD+1
+            LD      BC,15
+            XOR     A
+            LD      (HL),A
+            LDIR
             RET
 
 TSKFLPTR    LD      A,(TABMODE)
@@ -1311,6 +1376,55 @@ VSPTR       DEFW    0
 VSOK        DEFB    0
 
 ; Shared MAIN descriptors; never in the application's switchable AUX RAM.
+            ORG     00C70H
+; Extended TAB commands.  Parsed CCP tail is " N ACTION " or " LIST ".
+TBCMD       LD      A,(FILEBUF)
+            OR      A
+            JP      Z,TB_STAT
+            LD      A,(FILEBUF+2)
+            CP      'L'
+            JR      NZ,TC_NUM
+            LD      HL,FILEBUF+2
+            LD      DE,TCLIST
+            CALL    TCMATCH
+            JP      Z,TB_LIST
+            JP      CCPBAD
+TC_NUM      CALL    TABDECODE
+            JP      C,CCPBAD
+            LD      B,A
+            LD      A,(FILEBUF+3)
+            CP      ' '
+            JP      NZ,CCPBAD
+            LD      A,(FILEBUF+4)
+            OR      A
+            JP      Z,TB_SWITCH
+            LD      HL,FILEBUF+4
+            LD      DE,TCSUSP
+            CALL    TCMATCH
+            JP      Z,TB_PAUSE
+            LD      HL,FILEBUF+4
+            LD      DE,TCRESUM
+            CALL    TCMATCH
+            JP      Z,TB_UNPS
+            LD      HL,FILEBUF+4
+            LD      DE,TCEXCL
+            CALL    TCMATCH
+            JP      Z,TB_EXCL
+            LD      HL,FILEBUF+4
+            LD      DE,TCKILL
+            CALL    TCMATCH
+            JP      Z,TB_KILL
+            JP      CCPBAD
+TCMATCH     LD      A,(DE)
+            CP      (HL)
+            RET     NZ
+            OR      A
+            RET     Z
+            INC     DE
+            INC     HL
+            JR      TCMATCH
+
+
             ORG     00D00H
 TABCTXS     DEFS    112          ; 16 * 7 bytes
 TSKFLAGS    DEFS    16           ; one parked flag per logical session
@@ -2019,6 +2133,20 @@ BYEASK     DEFM    'Y/N? $'
 ; CCP's built-in command table and terminal selector live in the unused
 ; MAIN-memory TPA.  $7600-$77FF is free of AXBDOS ($7000-$73xx)
 ; and the permanent AUX bridge staging region ($7800 onward).
+            ORG     07590H
+TCLIST      DEFM    'LIST '
+            DEFB    0
+TCSUSP      DEFM    'SUSPEND '
+            DEFB    0
+TCRESUM     DEFM    'RESUME '
+            DEFB    0
+TCEXCL      DEFM    'EXCLUSIVE '
+            DEFB    0
+TCKILL      DEFM    'KILL '
+            DEFB    0
+TL_CCP      DEFM    'CCP$'
+TL_HOLD     DEFM    ' [SUSPENDED]$'
+
             ORG     07600H
 BITABLE    DEFM    'DIR  '
            DEFB    081H
@@ -2051,7 +2179,7 @@ BITABLE    DEFM    'DIR  '
            DEFB    0
            DEFW    CCPBANKS
            DEFM    'TAB  '
-           DEFB    081H             ; optional 0 or 1
+           DEFB    0FEH             ; TAB's variable argument syntax
            DEFW    CCPTAB
 
 ; Native CCP terminal selector.  This code runs with MAIN RAM visible,
@@ -2398,6 +2526,34 @@ CCEVMSG     DEFM    ' evictions='
 
 CCPBANKS    JP      RWREPORT
 
+; TAB n SUSPEND/RESUME/EXCLUSIVE operate on manually runnable state.
+TB_PAUSE    LD      A,(SCHFG)
+            CP      B
+            JP      Z,TB_NOBG         ; background only
+            LD      A,B
+            CALL    TB_HPTR
+            LD      (HL),1
+            RET
+TB_UNPS  LD      A,B
+            CALL    TBCLEARH
+            RET
+TB_NOBG     JP      UNIMP           ; a foreground tab cannot be paused
+TB_EXCL
+            PUSH    BC             ; LDIR consumes BC; B is target tab
+            LD      HL,TBHOLD
+            LD      DE,TBHOLD+1
+            LD      BC,15
+            LD      A,1
+            LD      (HL),A
+            LDIR
+            POP     BC
+            LD      A,B
+            CALL    TBCLEARH
+            LD      A,(TABMODE)
+            CP      B
+            JP      NZ,TB_SWITCH
+            RET
+
             ORG     07C00H
 
 ; LC entry points are absolute RUNTIME addresses, not source image labels.
@@ -2543,6 +2699,7 @@ AUXLDONE    LD      DE,PATHBUF2
             LD      DE,0F396H
             LD      BC,9
             CALL    AXM2A
+            CALL    TBEXE       ; remember the launched .COM name
             LD      A,(CURDRV)
             PUSH    AF
             CALL    AXSTART
@@ -2951,7 +3108,58 @@ VSSEBG      LD      (XREG),A       ; physical output enabled when fg
             RET
 
 
-			ORG		BDOSADDR
+            ORG     08080H
+; Listing does not switch banks or enter the paused applications.
+TB_LIST     LD      B,0
+TL_NEXT     PUSH    BC
+            LD      A,(SCHFG)
+            CP      B
+            LD      E,' '
+            JR      NZ,TL_MARK
+            LD      E,'*'
+TL_MARK     CALL    C_WRITE
+            LD      A,B
+            CALL    PHNYB
+            LD      E,' '
+            CALL    C_WRITE
+            LD      A,B
+            CALL    TB_TFL
+            OR      A
+            JR      NZ,TL_PROG
+            LD      DE,TL_CCP
+            JR      TL_NAME
+TL_PROG     LD      A,B
+            CALL    TBNPTR
+            LD      C,8
+TL_CHAR     LD      E,(HL)
+            PUSH    BC
+            PUSH    HL
+            CALL    C_WRITE
+            POP     HL
+            POP     BC
+            INC     HL
+            DEC     C
+            JR      NZ,TL_CHAR
+            JR      TL_STATE
+TL_NAME     CALL    C_WRITESTR
+TL_STATE    LD      A,B
+            CALL    TB_HPTR
+            LD      A,(HL)
+            OR      A
+            JR      Z,TL_EOL
+            LD      DE,TL_HOLD
+            CALL    C_WRITESTR
+TL_EOL      LD      E,13
+            CALL    C_WRITE
+            POP     BC
+            INC     B
+            LD      A,(TABCOUNT)
+            CP      B
+            JR      NZ,TL_NEXT
+            RET
+
+
+            ORG     BDOSADDR
 
 ; CP/M 2.2 BIOS jump table (17 entries, three bytes each).
 ; Applications discover the BIOS WBOOT entry from the 16-bit operand
@@ -5371,7 +5579,7 @@ PHOUT		LD		E,A
 ; - TERM VIDEX/SOROC - Set terminal personality (no .COM needed)
 ; - CACHE        - Show ProDOS handle-cache counters (CACHE RESET to zero)
 ; - CLS          - Reset video state, clear screen and home cursor
-; - TAB 0..F      - Switch CCP contexts or resume parked .COM (Phase 3B)
+; - TAB [LIST|N [SUSPEND|RESUME|EXCLUSIVE|KILL]]: session manager
 ; - FILENAME.COM - Load and run FILENAME.COM at 0100H
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -5651,6 +5859,8 @@ BICMP      LD      A,(DE)
            CALL    CCPARGC
            LD      B,A
            LD      A,(BIREQ)
+           CP      0FEH        ; TAB validates 0, 1 or 2 arguments itself
+           JR      Z,BIRUN
            AND     0FH
            CP      B
            JR      Z,BIRUN
@@ -6711,7 +6921,27 @@ COPENS      DEFW    0
 CHITS       DEFW    0
 CEVICTS     DEFW    0
 
-			ORG		0A400H
+            ORG     0A3D0H
+; Executable base name (8 bytes) is in PATHBUF2+1 after PARSE.
+TBEXE   LD      A,(TABMODE)
+            CALL    TBNPTR
+            EX      DE,HL
+            LD      HL,PATHBUF2+1
+            LD      BC,8
+            LDIR
+            RET
+; Return HL -> first byte of tab B's 10-byte virtual video metadata.
+TB_METAP    LD      HL,VSMETAS
+            LD      DE,10
+            LD      A,B
+            OR      A
+            RET     Z
+TM_NEXT     ADD     HL,DE
+            DEC     A
+            JR      NZ,TM_NEXT
+            RET
+
+            ORG		0A400H
 ; Dedicated stack: the live directory buffer ends at ~$97F2.
 ; Z80 SP=$A800, grows down into $A400-$A7FF, not DIRBUF.
 ; This intentionally limits simultaneously open ProDOS files to two.
