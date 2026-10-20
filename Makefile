@@ -74,6 +74,9 @@ $(DISK_IMAGE): $(PRODOS65) $(PRODOS80)
 	$(CADIUS) createfolder "$@" "/$(DISK_VOLUME)/F"
 	$(CADIUS) createfolder "$@" "/$(DISK_VOLUME)/G"
 	$(CADIUS) createfolder "$@" "/$(DISK_VOLUME)/H"
+	$(CADIUS) createfolder "$@" "/$(DISK_VOLUME)/I"
+	$(CADIUS) createfolder "$@" "/$(DISK_VOLUME)/J"
+	$(CADIUS) createfolder "$@" "/$(DISK_VOLUME)/K"
 	cd cpm-apps/CPM-2.2 && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/A" .
 	cd cpm-apps/Utils && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/B" .
 	cd cpm-apps/TP3 && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/B" .
@@ -83,6 +86,7 @@ $(DISK_IMAGE): $(PRODOS65) $(PRODOS80)
 	cd cpm-apps/Fortran-80 && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/E" .
 	cd cpm-apps/Zork && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/F" .
 	cd cpm-apps/HiTechC && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/G" .
+	cd cpm-apps/BBC_BASIC && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/H" .
 
 # The original script launched MAME with its debugger enabled.
 # `make run` launches without -debug; `make debug` (or `make mame`) matches it.

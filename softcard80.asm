@@ -1558,6 +1558,7 @@ SCHEN       DEFB    0            ; enabled if >=2 sessions
 AXBDOS      CALL    SCHPRE        ; park background blocking input
             RET     C
             LD      A,C
+            LD      (AXBADFN),A    ; diagnostic: remember original BDOS C
             CP      0F0H          ; BP/M private: set terminal (E=0/1)
             JP      Z,AXTMODE
             OR      A
@@ -2510,6 +2511,8 @@ AXSRCH      DEFS    36
 AXDATA      DEFS    128
 AXLIP       DEFW    0
 AXLBUF      DEFS    260
+AXBADFN     DEFB    0            ; last AUX BDOS function for diagnostics
+BDOSFN      DEFB    0            ; last MAIN BDOS function for diagnostics
 
  ; MAIN-to-AUX-LC resident transition helper, entirely in ordinary MAIN RAM.
  ; ALTZP can switch without changing the instruction fetch at $7Axx.
@@ -2916,6 +2919,9 @@ AUXLDONE    LD      DE,PATHBUF2
             JR      NZ,AUXEXOK
             LD      DE,AUXBADMSG
             CALL    C_WRITESTR
+            LD      A,(AXBADFN)
+            LD      C,A
+            CALL    PRHEX         ; original call in [XX] format
 AUXEXOK     LD      E,13
             CALL    C_WRITE
             RET
@@ -3542,8 +3548,9 @@ BDOSIMP
 ;;			CALL	PRHEX			; Print sys call number
 
 			LD		A,C				; Prepare to check C is in range
+            LD      (BDOSFN),A    ; preserve function before SLA C / vector lookup
 			CP		41				; Max syscall# for CP/M 2.2 is 40
-			JP		NC,UNIMP		; If >41 then call UNIMP
+            JP      NC,BDOSUNSP   ; unsupported function; report it
 			LD		HL,BDOSVEC		; Start of vector table
 			SLA		C				; Multiply C by 2
 			LD		B,0				; MSB of BC is zero
@@ -3558,9 +3565,9 @@ BDOSIMP
 BDOSVEC		DEFW	C_TERMCPM		; C=00H
 			DEFW	C_READ			; C=01H
 			DEFW	C_WRITE			; C=02H
-			DEFW	UNIMP			; C=03H  (A_READ)   AUX
-			DEFW	UNIMP			; C=04H  (A_WRITE)  AUX
-			DEFW	UNIMP			; C=05H  (L_WRITE)  PRN
+			DEFW	BDOSUNSP			; C=03H  (A_READ)   AUX
+			DEFW	BDOSUNSP			; C=04H  (A_WRITE)  AUX
+			DEFW	BDOSUNSP			; C=05H  (L_WRITE)  PRN
 			DEFW	C_RAWIO			; C=06H
 			DEFW	GET_IOB			; C=07H
 			DEFW	SET_IOB			; C=08H
@@ -3593,9 +3600,19 @@ BDOSVEC		DEFW	C_TERMCPM		; C=00H
 			DEFW	F_SIZE			; C=23H
 			DEFW	F_RANDREC		; C=24H
 			DEFW	DRV_RESET		; C=25H
-			DEFW	UNIMP			; C=26H  (*nothing* in CP/M 2.2)
-			DEFW	UNIMP			; C=27H  (*nothing* in CP/M 2.2)
+			DEFW	BDOSUNSP			; C=26H  (*nothing* in CP/M 2.2)
+			DEFW	BDOSUNSP			; C=27H  (*nothing* in CP/M 2.2)
 			DEFW	F_WRITERAND		; C=28H  (F_WRITEZF)
+
+; Diagnose unknown MAIN BDOS calls; retain old UNIMP bell afterwards.
+BDOSUNSP    LD      DE,BDOSMSG
+            CALL    C_WRITESTR
+            LD      A,(BDOSFN)
+            LD      C,A
+            CALL    PRHEX
+            LD      E,13
+            CALL    C_WRITE
+            JP      UNIMP
 
 ; Unimplemented BDOS call, just ring the bell
 UNIMP		LD		HL,BELL			; We are going to call BELL
@@ -6109,8 +6126,10 @@ AUXSIZEERR  LD      DE,AUXBIGMSG
             RET
 AUXBIGMSG   DEFM    'COM exceeds AUX TPA'
             DEFB    13,'$'
-AUXBADMSG   DEFM    'AUX BDOS unsupported'
-            DEFB    13,'$'
+AUXBADMSG   DEFM    'AUX BDOS unsupported '
+            DEFB    '$'
+BDOSMSG     DEFM    'BDOS unsupported '
+            DEFB    '$'
 
 NFMSG		DEFM	'Not found'
 			DEFB	13,'$'
