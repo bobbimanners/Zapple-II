@@ -1575,6 +1575,8 @@ AXBDOS      CALL    SCHPRE        ; park background blocking input
             JP      Z,ABDSTAT
             CP      12
             JP      Z,ABDVER
+            CP      02DH          ; CP/M 3: SET BDOS ERROR MODE (BBC BASIC)
+            JP      Z,AXERRMODE   ; accept request; ignore mode setting
             CP      10
             JP      Z,AXLINE
             CP      13
@@ -1639,6 +1641,12 @@ AXBDOS      CALL    SCHPRE        ; park background blocking input
             JP      Z,AXIOGET
             CP      8
             JP      Z,AXIOSET
+; CP/M 3 BDOS $2D: Set error mode (E=FE in BBC BASIC).
+; CP/M 2.2-style Zapple-II has no equivalent error-mode switch.
+; The CP/M 3 call returns no value; return zero for compatibility.
+AXERRMODE   XOR     A
+            LD      L,A
+            RET
 ; Unsupported calls must not pass AUX pointers to the MAIN BDOS.
 AXBAD       LD      A,2
             LD      (LCQUIT),A
