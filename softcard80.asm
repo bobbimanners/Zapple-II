@@ -195,8 +195,6 @@ RWREPORT    LD      DE,RWMSG1
             CALL    C_WRITESTR
             LD      A,'H'          ; MouseText left arrow, physical $48
             CALL    MTCHAR
-            LD      E,'/'
-            CALL    C_WRITE
             LD      A,'U'          ; MouseText right arrow, physical $55
             CALL    MTCHAR
             LD      DE,RWMSG5
