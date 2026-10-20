@@ -82,6 +82,7 @@ $(DISK_IMAGE): $(PRODOS65) $(PRODOS80)
 	cd cpm-apps/dBase-II && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/D" .
 	cd cpm-apps/Fortran-80 && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/E" .
 	cd cpm-apps/Zork && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/F" .
+	cd cpm-apps/HiTechC && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/G" .
 
 # The original script launched MAME with its debugger enabled.
 # `make run` launches without -debug; `make debug` (or `make mame`) matches it.

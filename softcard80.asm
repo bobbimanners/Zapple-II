@@ -276,7 +276,9 @@ TSSTEMPTY   XOR     A
 ; Advertise the modifier and arrows as one-keystroke shortcuts.
 RWMSG3      DEFM    ' sessions (0-9,A-F)'
             DEFB    13
-            DEFM    'Switch: Open Apple+0-9/A-F, left/right arrows'
+            DEFM    'OA+0-9/A-F/left/right to switch tabs'
+            DEFB    13
+            DEFM    'TAB HELP for commands'
             DEFB    13,'$'
 
 ; Print the current logical session and drive: [0]A:> ... [F]P:>
@@ -297,8 +299,6 @@ CCPPRNT     LD      E,'['
             LD      E,'>'
             JP      C_WRITE
 
-; Keep TAB's address unchanged. No special ALTZP copy is needed:
-; SoftCard Z80 $0000 maps to Apple II $1000, where WRAUX works.
             ORG     003B0H
 ; Kill only an inactive saved context. No CPU instruction is preempted.
 ; FCB cache has already been flushed by the cooperative park path.
@@ -374,7 +374,8 @@ TBAUTOSW    LD      A,(TABREQ)
             LD      (TABREQ),A
             CALL    TB_SWITCH
             JR      TBAUTOSW
-TB_SWITCH   PUSH    BC
+TB_SWITCH   CALL    CUOFF        ; do not snapshot the cursor glyph
+            PUSH    BC
             LD      A,B
             CALL    TBCLEARH       ; switching always wakes a held tab
             POP     BC
@@ -611,6 +612,60 @@ B_DRV_RESET		EQU		25H			; Selectively reset disk drives
 ; background uses the original 32-call quantum.
 SCHFGQ      EQU     128
 SCHBGQ      EQU     8
+; Software cursor: foreground physical text only, never saved in a
+; RamWorks backing screen. Polling input normally bypasses VGET, so
+; draw the reverse-video cell while a foreground task waits for a key.
+            ORG     005A8H
+CUON        LD      A,(CUACTIVE)
+            OR      A
+            RET     NZ
+            LD      A,(VSOK)
+            OR      A
+            RET     Z
+            PUSH    BC
+            PUSH    DE
+            PUSH    HL
+            LD      HL,(VSPTR)    ; 6502 VCOL,VROW pair
+            LD      A,(HL)
+            LD      C,A
+            INC     HL
+            LD      A,(HL)
+            CP      24
+            JR      NC,CUONDONE
+            ADD     A,A
+            LD      E,A
+            LD      D,0
+            LD      HL,CUROWTAB
+            ADD     HL,DE
+            LD      E,(HL)
+            INC     HL
+            LD      D,(HL)
+            LD      A,C
+            AND     1
+            LD      (CUHALF),A    ; 0 AUX, 1 MAIN
+            SRL     C
+            LD      B,0
+            EX      DE,HL
+            ADD     HL,BC
+            LD      (CUADDR),HL
+            CALL    CUMAP
+            LD      A,(HL)
+            LD      (CUUNDER),A
+            BIT     7,A
+            JR      Z,CUONINV
+            AND     07FH
+            CP      060H
+            JR      NC,CUONINV
+            AND     03FH         ; uppercase: avoid MouseText
+CUONINV     LD      (HL),A
+            CALL    VSPREP       ; leave RAMRD/WRT, PAGE1 normal
+            LD      A,1
+            LD      (CUACTIVE),A
+CUONDONE    POP     HL
+            POP     DE
+            POP     BC
+            RET
+
 SCHIDLEQ    EQU     32
             ORG     00600H
 ; Stage 1 scheduler. RUNTASK is TABMODE; SCHFG owns the physical screen.
@@ -649,11 +704,14 @@ SMLOOP      LD      A,(TABREQ)
             CALL    SCHHAVE
             OR      A
             JR      Z,SMRUN       ; no background jobs: normal VGET cursor
+            CALL    CUON
             CALL    BIOSCONST
             OR      A
             JR      Z,SMLOOP      ; input not ready; don't enter VGET
+            CALL    CUOFF
             CALL    SCHWAKE       ; input can complete: make task runnable
-SMRUN       LD      A,SCHFGQ
+SMRUN       CALL    CUOFF         ; restore cell before foreground runs
+            LD      A,SCHFGQ
             LD      (SCHQLEFT),A  ; foreground receives longer quantum
             CALL    TABRESUM       ; foreground until next yield/exit
             JR      SMLOOP
@@ -675,9 +733,11 @@ SIAGAIN     CALL    SCHHAVE
             LD      A,(AREG)
             OR      A
             JR      NZ,SIDONE     ; physical key waiting, let VGET read
+            CALL    CUON         ; show cursor during cooperative polling
             CALL    SCHONE
             JR      SIAGAIN
-SIDONE      POP     IY
+SIDONE      CALL    CUOFF         ; key or blocking VGET takes ownership
+            POP     IY
             POP     IX
             POP     DE
             POP     BC
@@ -1383,11 +1443,18 @@ TBCMD       LD      A,(FILEBUF)
             JP      Z,TB_STAT
             LD      A,(FILEBUF+2)
             CP      'L'
-            JR      NZ,TC_NUM
+            JR      NZ,TC_CHECKH
             LD      HL,FILEBUF+2
             LD      DE,TCLIST
             CALL    TCMATCH
             JP      Z,TB_LIST
+            JP      CCPBAD
+TC_CHECKH   CP      'H'
+            JR      NZ,TC_NUM
+            LD      HL,FILEBUF+2
+            LD      DE,TCHELP
+            CALL    TCMATCH
+            JP      Z,TB_HELP
             JP      CCPBAD
 TC_NUM      CALL    TABDECODE
             JP      C,CCPBAD
@@ -1415,11 +1482,12 @@ TC_NUM      CALL    TABDECODE
             CALL    TCMATCH
             JP      Z,TB_KILL
             JP      CCPBAD
-TCMATCH     LD      A,(DE)
+TCMATCH     LD      A,(HL)
+            CP      ' '            ; any unambiguous prefix accepted
+            RET     Z
+            LD      A,(DE)
             CP      (HL)
             RET     NZ
-            OR      A
-            RET     Z
             INC     DE
             INC     HL
             JR      TCMATCH
@@ -2144,10 +2212,19 @@ TCEXCL      DEFM    'EXCLUSIVE '
             DEFB    0
 TCKILL      DEFM    'KILL '
             DEFB    0
+TCHELP      DEFM    'HELP '
+            DEFB    0
 TL_CCP      DEFM    'CCP$'
 TL_HOLD     DEFM    ' [SUSPENDED]$'
+TB_HELP     LD      DE,TB_HELPMSG
+            JP      C_WRITESTR
 
-            ORG     07600H
+
+; Small command summary; keep clear of the $7600 command table.
+TB_HELPMSG  DEFM    'TAB n SUSP/RES/EXCL/KILL or TAB LIST/HELP'
+            DEFB    13,'$'
+
+           ORG     07600H
 BITABLE    DEFM    'DIR  '
            DEFB    081H
            DEFW    DIRECT
@@ -2365,6 +2442,13 @@ BISAVE     LD      HL,FCB2NAM
 
 
 ; Permanent scratch: main TPA is unused by auxiliary transients.
+; Cached Apple II text row addresses for the software cursor.
+; Apple 80-column row interleave. Z80 $F400 = Apple text $0400.
+CUROWTAB   DEFW    0F400H,0F480H,0F500H,0F580H,0F600H,0F680H,0F700H,0F780H
+            DEFW    0F428H,0F4A8H,0F528H,0F5A8H,0F628H,0F6A8H,0F728H,0F7A8H
+            DEFW    0F450H,0F4D0H,0F550H,0F5D0H,0F650H,0F6D0H,0F750H,0F7D0H
+
+
             ORG     07800H
 AXDMAP      DEFW    0080H
 AXFCBP      DEFW    0
@@ -2462,6 +2546,42 @@ AXMODE      DEFB    0
 
 ; Two CCP commands live in otherwise unused MAIN $7B00-$7BFF.
 ; CLS invokes the new 6502 $B812 entry, so it works in either mode.
+; Software cursor restore; installed in the free tail of $7A00 region.
+; Hide the physical cursor before key delivery, TAB switching or
+; drawing. The cached address works even after terminal state changes.
+CUOFF       LD      A,(CUACTIVE)
+            OR      A
+            RET     Z
+            PUSH    AF
+            PUSH    HL
+            XOR     A
+            LD      (CUACTIVE),A
+            CALL    CUMAP
+            LD      A,(CUUNDER)
+            LD      (HL),A
+            CALL    VSPREP
+            POP     HL
+            POP     AF
+            RET
+; Select the correct physical Apple II text half (bank 0), not a
+; background session's virtual HGR backing store.
+CUMAP       CALL    VSPREP0
+            XOR     A
+            LD      (VS80ON),A
+            LD      A,(CUHALF)
+            OR      A
+            JR      Z,CUMAUX
+            LD      A,(VSPAGE1)
+            JR      CUSEL
+CUMAUX      LD      A,(VSPAGE2)
+CUSEL       LD      HL,(CUADDR)
+            RET
+CUACTIVE    DEFB    0
+CUHALF      DEFB    0
+CUADDR      DEFW    0F400H
+CUUNDER     DEFB    0A0H
+
+
             ORG     07B00H
 CCPCLS      LD      HL,0B812H
             LD      (ADDR),HL
@@ -5579,7 +5699,7 @@ PHOUT		LD		E,A
 ; - TERM VIDEX/SOROC - Set terminal personality (no .COM needed)
 ; - CACHE        - Show ProDOS handle-cache counters (CACHE RESET to zero)
 ; - CLS          - Reset video state, clear screen and home cursor
-; - TAB [LIST|N [SUSPEND|RESUME|EXCLUSIVE|KILL]]: session manager
+; - TAB          - [LIST|HELP|N [SUSPEND|RESUME|EXCLUSIVE|KILL]]
 ; - FILENAME.COM - Load and run FILENAME.COM at 0100H
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
