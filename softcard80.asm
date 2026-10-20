@@ -188,6 +188,18 @@ RWREPORT    LD      DE,RWMSG1
             LD      A,(TABCOUNT)
             CALL    RWDECIMAL
             LD      DE,RWMSG3
+            CALL    C_WRITESTR
+            LD      A,'A'          ; MouseText Open Apple, physical $41
+            CALL    MTCHAR
+            LD      DE,RWMSG4
+            CALL    C_WRITESTR
+            LD      A,'H'          ; MouseText left arrow, physical $48
+            CALL    MTCHAR
+            LD      E,'/'
+            CALL    C_WRITE
+            LD      A,'U'          ; MouseText right arrow, physical $55
+            CALL    MTCHAR
+            LD      DE,RWMSG5
             JP      C_WRITESTR
 RWMSG1      DEFM    'RamWorks: '
             DEFB    '$'
@@ -276,9 +288,12 @@ TSSTEMPTY   XOR     A
 ; Advertise the modifier and arrows as one-keystroke shortcuts.
 RWMSG3      DEFM    ' sessions (0-9,A-F)'
             DEFB    13
-            DEFM    'OA+0-9/A-F/left/right to switch tabs'
-            DEFB    13
-            DEFM    'TAB HELP for commands'
+            DEFM    'Switch '
+            DEFB    '$'
+RWMSG4      DEFM    ' + 0123456789ABCDEF'
+            DEFB    '$'
+RWMSG5      DEFB    13
+            DEFM    'HELP for commands'
             DEFB    13,'$'
 
 ; Print the current logical session and drive: [0]A:> ... [F]P:>
@@ -419,8 +434,6 @@ TB_STAT     LD      DE,TB_PREFIX
             CALL    C_WRITESTR
             LD      A,(TABMODE)
             CALL    PHNYB
-            LD      DE,TB_SUFFIX
-            CALL    C_WRITESTR
             RET                 ; TAB status only (write probe retired)
 ; One byte per CCP session. Saved display may already contain the
 ; A> prompt, so do not print it again after restoring that screen.
@@ -433,8 +446,7 @@ CCPPRPTR    LD      A,(TABMODE)
 TABMODE     DEFB    0
 TB_PREFIX   DEFM    'TAB '
             DEFB    '$'
-TB_SUFFIX   DEFM    ' (OA+0-9/A-F OA+arrows)'
-            DEFB    13,'$'
+TB_SUFFIX   DEFB    13,'$'
 
 ; Session descriptors are only seven bytes each, stored in MAIN memory.
 ; Offsets: 0 current drive/user, 1 IOBYTE, 2..3 LOGVEC,
@@ -1215,6 +1227,44 @@ ARDONE      LD      (AXRES),A
             OR      A
             JP      NZ,AXFIN
             JP      AXGO
+
+; CCP-only MouseText print. A='A'/$41 (Open Apple), 'H'/$48 (left),
+; 'U'/$55 (right). The stock VPUT path forces normal or inverse ASCII,
+; so print one spacer through the 6502 parser to advance its cursor,
+; then replace that physical text cell with a raw MouseText screen byte.
+; All three sign-on glyphs are deliberately away from row wrap.
+; Reuse the working software-cursor's bank-0 mapping helper; never
+; alter video interpretation for CP/M applications.
+MTCHAR      PUSH    AF
+            CALL    CUOFF
+            LD      E,' '
+            CALL    C_WRITE
+            LD      HL,(VSPTR)   ; 6502 state: VCOL followed by VROW
+            LD      A,(HL)
+            DEC     A           ; one cell back, same line (no wrap)
+            LD      C,A
+            INC     HL
+            LD      A,(HL)
+            ADD     A,A
+            LD      E,A
+            LD      D,0
+            LD      HL,CUROWTAB
+            ADD     HL,DE
+            LD      E,(HL)
+            INC     HL
+            LD      D,(HL)
+            LD      A,C
+            AND     1
+            LD      (CUHALF),A  ; even=aux, odd=main
+            SRL     C
+            LD      B,0
+            EX      DE,HL
+            ADD     HL,BC
+            LD      (CUADDR),HL
+            CALL    CUMAP       ; selects bank 0 physical screen
+            POP     AF
+            LD      (HL),A      ; low screen code $41/$48/$55 = MouseText
+            JP      VSPREP      ; restore normal main/video switches
 
 ; ================================================================
 ; RamWorks Stage 2: 6502 renderer maintains live screen backing.
@@ -2215,13 +2265,13 @@ TCKILL      DEFM    'KILL '
 TCHELP      DEFM    'HELP '
             DEFB    0
 TL_CCP      DEFM    'CCP$'
-TL_HOLD     DEFM    ' [SUSPENDED]$'
+TL_HOLD     DEFM    ' [Suspended]$'
 TB_HELP     LD      DE,TB_HELPMSG
             JP      C_WRITESTR
 
 
 ; Small command summary; keep clear of the $7600 command table.
-TB_HELPMSG  DEFM    'TAB n SUSP/RES/EXCL/KILL or TAB LIST/HELP'
+TB_HELPMSG  DEFM    'TAB n [SUSP/RES/EXCL/KILL], or TAB LIST'
             DEFB    13,'$'
 
            ORG     07600H
@@ -2258,6 +2308,9 @@ BITABLE    DEFM    'DIR  '
            DEFM    'TAB  '
            DEFB    0FEH             ; TAB's variable argument syntax
            DEFW    CCPTAB
+           DEFM    'HELP '
+           DEFB    0
+           DEFW    CCPHELP
 
 ; Native CCP terminal selector.  This code runs with MAIN RAM visible,
 ; unlike the old AUX .COM, so it calls the 6502 VSETMODE vector directly.
@@ -2674,6 +2727,16 @@ TB_EXCL
             JP      NZ,TB_SWITCH
             RET
 
+; Short CCP help plus explicit blocked-input label for TAB LIST.
+CCPHELP     LD      DE,CCPH1
+            CALL    C_WRITESTR
+            LD      DE,CCPH2
+            JP      C_WRITESTR
+CCPH1       DEFM    'DIR ERA REN TYPE SAVE'
+            DEFB    13
+            DEFM    'BYE TERM'
+            DEFB    13,'$'
+
             ORG     07C00H
 
 ; LC entry points are absolute RUNTIME addresses, not source image labels.
@@ -3002,6 +3065,8 @@ AB9DONE     POP     HL
             RET
 
 
+TL_BLOCK    DEFM    ' [Blocked]$'
+
             ORG     07EC0H
 ; Stage 1 scheduler helpers in unused MAIN $7EC0-$7FFF.
 ; Keep clear of the resident BDOS, which now reaches roughly $9760.
@@ -3170,6 +3235,10 @@ STYIELD     LD      A,3
 ; Stage 2: keep 6502 parser/cursor state coherent across scheduler
 ; and manual TAB switches. VSMETAS retains the nine original bytes.
 ; This helper block lives in MAIN $8000-$80FF before BIOS $8100.
+; Remaining built-ins and CCP command syntax.
+CCPH2       DEFM    'CACHE CLS BANKS TAB HELP'
+            DEFB    13,'$'
+
             ORG     08000H
 VSSTSAVE    LD      A,(VSOK)
             OR      A
@@ -3266,9 +3335,18 @@ TL_STATE    LD      A,B
             CALL    TB_HPTR
             LD      A,(HL)
             OR      A
-            JR      Z,TL_EOL
+            JR      Z,TL_WAIT
             LD      DE,TL_HOLD
-            CALL    C_WRITESTR
+            JR      TL_LABEL
+TL_WAIT     LD      E,B
+            LD      D,0
+            LD      HL,SCHWAIT
+            ADD     HL,DE
+            LD      A,(HL)
+            OR      A
+            JR      Z,TL_EOL
+            LD      DE,TL_BLOCK
+TL_LABEL    CALL    C_WRITESTR
 TL_EOL      LD      E,13
             CALL    C_WRITE
             POP     BC
@@ -5700,6 +5778,7 @@ PHOUT		LD		E,A
 ; - CACHE        - Show ProDOS handle-cache counters (CACHE RESET to zero)
 ; - CLS          - Reset video state, clear screen and home cursor
 ; - TAB          - [LIST|HELP|N [SUSPEND|RESUME|EXCLUSIVE|KILL]]
+; - HELP         - List available CCP built-in commands
 ; - FILENAME.COM - Load and run FILENAME.COM at 0100H
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -5960,7 +6039,7 @@ EPPFULL    POP     AF
 ; Single table-driven dispatcher instead of six repeated string
 ; comparisons. A handler is entered with a synthetic return address.
 BUILTIN    LD      HL,BITABLE
-           LD      C,11
+           LD      C,13
 BISCAN     LD      DE,PATHBUF2+1
            LD      B,5
 BICMP      LD      A,(DE)
