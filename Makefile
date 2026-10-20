@@ -61,7 +61,7 @@ disk: $(DISK_IMAGE)
 
 $(DISK_IMAGE): $(PRODOS65) $(PRODOS80)
 	echo 'Creating $@ with Cadius...'
-	$(CADIUS) createvolume "$@" "$(DISK_VOLUME)" 800KB
+	$(CADIUS) createvolume "$@" "$(DISK_VOLUME)" 4096KB
 	$(CADIUS) addfile "$@" "/$(DISK_VOLUME)" prodos.242/PRODOS*
 	$(CADIUS) addfile "$@" "/$(DISK_VOLUME)" prodos.242/BASIC*
 	$(CADIUS) addfile "$@" "/$(DISK_VOLUME)" "$(PRODOS65)"
@@ -81,6 +81,7 @@ $(DISK_IMAGE): $(PRODOS65) $(PRODOS80)
 	cd cpm-apps/Supercalc && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/C" .
 	cd cpm-apps/dBase-II && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/D" .
 	cd cpm-apps/Fortran-80 && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/E" .
+	cd cpm-apps/Zork && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/F" .
 
 # The original script launched MAME with its debugger enabled.
 # `make run` launches without -debug; `make debug` (or `make mame`) matches it.
