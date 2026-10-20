@@ -22,8 +22,8 @@ DISK_VOLUME ?= ZAPPLE2
 # Keep the MAME setup from the original build script.
 MAME_MACHINE     ?= apple2ee
 MAME_SLOTS       ?= -sl4 softcard -sl7 cffa202 -aux rw3
-MAME_HARD1       ?= h1-backup-220908.po
-MAME_HARD2       ?= $(DISK_IMAGE)
+MAME_HARD1       ?= $(DISK_IMAGE)
+MAME_HARD2       ?= 
 MAME_RUN_FLAGS   ?= -w
 MAME_DEBUG_FLAGS ?= -debug -w
 MAME_EXTRA       ?=
@@ -62,6 +62,8 @@ disk: $(DISK_IMAGE)
 $(DISK_IMAGE): $(PRODOS65) $(PRODOS80)
 	echo 'Creating $@ with Cadius...'
 	$(CADIUS) createvolume "$@" "$(DISK_VOLUME)" 800KB
+	$(CADIUS) addfile "$@" "/$(DISK_VOLUME)" prodos.242/PRODOS*
+	$(CADIUS) addfile "$@" "/$(DISK_VOLUME)" prodos.242/BASIC*
 	$(CADIUS) addfile "$@" "/$(DISK_VOLUME)" "$(PRODOS65)"
 	$(CADIUS) addfile "$@" "/$(DISK_VOLUME)" "$(PRODOS80)"
 	$(CADIUS) createfolder "$@" "/$(DISK_VOLUME)/A"
