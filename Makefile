@@ -21,7 +21,7 @@ DISK_VOLUME ?= ZAPPLE2
 
 # Keep the MAME setup from the original build script.
 MAME_MACHINE     ?= apple2ee
-MAME_SLOTS       ?= -sl4 softcard -sl7 cffa202 -aux rw3
+MAME_SLOTS       ?= -sl1 parallel -sl1:parallel:prn ap2000 -sl2 ssc -bitbanger /tmp/zapple-serial.txt -sl4 softcard -sl7 cffa202 -aux rw3
 MAME_HARD1       ?= $(DISK_IMAGE)
 MAME_HARD2       ?= 
 MAME_RUN_FLAGS   ?= -w

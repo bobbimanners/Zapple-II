@@ -16,12 +16,6 @@
 
 ; BDOS TODOs
 ; ----------
-; ProDOS handles: two-slot, pathname-keyed cache (see CACHE_* near $A200).
-; Logical CP/M open state is still S2=$7E, never a leaked ProDOS FRN.
-; TODO: Implement missing BDOS system calls:
-;        - RS232 (A_READ, A_WRITE)
-;        - Printer (LWRITE)
-; TODO: IOBYTE doesn't do anything
 ; TODO: User number doesn't do anything
 ; 
 
@@ -416,7 +410,7 @@ TB_SWITCH   CALL    CUOFF        ; do not snapshot the cursor glyph
             JR      TB_GO
 ; A direct TAB command aimed at the current tab should beep too.
 ; Open Apple+current is already consumed and beeped by TSKSAME.
-TB_RESUM    CALL    UNIMP          ; bell, no spurious CCP output
+TB_RESUM    CALL    RINGBELL       ; bell, no spurious CCP output
             CALL    TSKACTIVE
             OR      A
             CALL    NZ,VSREST
@@ -509,11 +503,12 @@ TABINIT     CALL    RWDETECT
             LD      HL,TABCTXS
             LD      B,16
 TI_NEXT     XOR     A
-            LD      (HL),A
+            LD      (HL),A       ; CURDRV
             INC     HL
-            LD      (HL),A
+            LD      A,095H
+            LD      (HL),A       ; default IOBYTE in every tab
             INC     HL
-            INC     A
+            LD      A,1
             LD      (HL),A         ; LOGVEC = 0001H
             INC     HL
             XOR     A
@@ -1014,8 +1009,8 @@ TSKQUEUE    LD      B,A           ; B is saved by TSKKEY prologue
             POP     BC          ; restore caller's BC
             SCF
             RET
-TSKSAME     PUSH    HL          ; UNIMP changes HL (6502 vector)
-            CALL    UNIMP        ; beep: Open Apple + current tab
+TSKSAME     PUSH    HL          ; RINGBELL changes HL (6502 vector)
+            CALL    RINGBELL    ; beep: Open Apple + current tab
             POP     HL
             LD      A,(0E010H)   ; clear physical key strobe (status path)
             POP     BC          ; discard saved character/flags
@@ -1786,6 +1781,195 @@ BYEASK     DEFM    'Y/N? $'
 ; MAIN-memory TPA.  $7600-$77FF is free of AXBDOS ($7000-$73xx)
 ; and the permanent AUX bridge staging region ($7800 onward).
 
+; ---------------------------------------------------------------------
+; Reclaimed MAIN ($4400 onward): IOBYTE devices + resident workspaces.
+; This is ordinary, unbanked MAIN RAM: never part of an AUX transient.
+; ---------------------------------------------------------------------
+; ================================================================
+; CP/M IOBYTE / physical serial and printer devices.
+; MAIN $4400: former AUX LC snapshot space, now persistent MAIN code.
+; Apple monitor slot firmware entry $Cn00 via Z80->6502 CMD=1.
+; During ROM call set CSW/KSW appropriately so input/output is
+; unambiguous to slot firmware. Restore monitor vectors on return.
+; No per-card UART registers used. ROM input is blocking and 7-bit.
+; ================================================================
+            ORG     04400H
+; Physical LST: from IOBYTE bits 7:6:
+; TTY=serial2, CRT=screen, LPT=printer1, UL1=serial2.
+IOLIST      LD      A,(IOBYTE)
+            AND     0C0H
+            CP      040H
+            JP      Z,IOVOUT
+            CP      080H
+            JP      Z,IOPRN
+            JP      IOSEROUT
+; RDR / PUN have a single physical serial implementation.
+; Their IOBYTE assignments all refer to slot 2, by design.
+IOPUNCH     JP      IOSEROUT
+IOREADER    JP      IOSERIN
+; CON: CRT=VRAWPUT, BAT=RDR input / LST output; TTY/UC1=serial2.
+IOCONOUT    LD      A,(IOBYTE)
+            AND     3
+            CP      2
+            JP      Z,IOLIST
+            JP      IOSEROUT
+IOVOUT      LD      A,E
+            LD      HL,RAWOUT
+            JP      C_SENDA
+; Main/AUX redirected BDOS 1 input. Console echo uses selected device.
+IOCCOOK     CALL    IOSERIN
+            PUSH    AF
+            LD      E,A
+            CALL    IOCONOUT
+            POP     AF
+            LD      L,A
+            RET
+; No portable poll-ready entry in arbitrary slot firmware.
+; Conservative CONST = 00; LISTST = FF (blocking output driver).
+IOZERO      XOR     A
+            LD      L,A
+            RET
+IOSTAT      JP      IOZERO
+; Firmware output. E=CP/M character. Physical slot selected in A.
+IOPRN       LD      A,010H
+            LD      HL,0C100H
+            JP      IOSEND
+IOSEROUT    LD      A,020H
+            LD      HL,0C200H
+IOSEND      PUSH    BC
+            PUSH    DE
+            PUSH    HL
+            LD      (XREG),A     ; Apple slot ROMs conventionally use X=n*16
+            LD      A,E
+            OR      080H         ; Apple monitor character convention
+            LD      (AREG),A
+            LD      (ADDR),HL
+            LD      HL,(0F036H)  ; 6502 monitor CSW
+            PUSH    HL
+            LD      HL,(0F038H)  ; KSW
+            PUSH    HL
+            LD      HL,(ADDR)
+            LD      (0F036H),HL  ; current slot output
+            LD      HL,0FD1BH    ; native keyboard, not this slot
+            LD      (0F038H),HL
+            ; Card ROM invokes Apple Monitor at $Fxxx.  Normally the
+            ; MAIN LC RAM is selected ($C088), so expose ROM briefly.
+            LD      A,(0E08AH)  ; 6502 $C08A: bank 1, read ROM
+            LD      A,1
+            LD      (CMD),A
+            LD      (SOFTCARD),A
+            LD      A,(LCB1RO) ; restore bank 1 LC RAM for ProDOS
+            POP     HL
+            LD      (0F038H),HL
+            POP     HL
+            LD      (0F036H),HL
+            POP     HL
+            POP     DE
+            POP     BC
+            XOR     A
+            LD      L,A
+            RET
+; Input from slot 2. Firmware is blocking; high bit is Apple's
+; character marker, not reliable serial 8-bit data, so strip it.
+IOSERIN     PUSH    BC
+            PUSH    DE
+            PUSH    HL
+            LD      A,020H
+            LD      (XREG),A
+            LD      HL,0C200H
+            LD      (ADDR),HL
+            LD      HL,(0F036H)
+            PUSH    HL
+            LD      HL,(0F038H)
+            PUSH    HL
+            LD      HL,0FDF0H    ; monitor video COUT1 != slot 2
+            LD      (0F036H),HL
+            LD      HL,0C200H
+            LD      (0F038H),HL  ; select slot 2 as input
+            ; Slot firmware can call the Monitor ROM at $Fxxx.
+            LD      A,(0E08AH)  ; 6502 $C08A: bank 1, read ROM
+            LD      A,1
+            LD      (CMD),A
+            LD      (SOFTCARD),A
+            LD      A,(LCB1RO) ; restore bank 1 LC RAM for ProDOS
+            LD      A,(AREG)
+            AND     07FH
+            LD      (IOCHAR),A
+            POP     HL
+            LD      (0F038H),HL
+            POP     HL
+            LD      (0F036H),HL
+            POP     HL
+            POP     DE
+            POP     BC
+            LD      A,(IOCHAR)
+            LD      L,A
+            RET
+IOCHAR      DEFB    0
+
+            ORG     04500H
+; 64 byte buffer for storing a file path as a Pascal style string
+PATHBUF
+PATHLEN		DEFB	0
+PATH		DEFS	64
+
+; 64 byte buffer for storing a second file path as a Pascal style string
+PATHBUF2
+PATHLEN2	DEFB	0
+PATH2		DEFS	64
+
+; Record file reference numbers for each I/O buffer
+; Or 0 if no file is using the buffer
+FRN1		DEFB	0
+FRN2		DEFB	0
+FRN3		DEFB	0
+FRN4		DEFB	0
+
+; 512 byte buffer for reading directories (used by F_SFIRST and F_SNEXT)
+DIRBUF
+DIRBUF1		DEFS	128
+DIRBUF2		DEFS	128
+DIRBUF3		DEFS	128
+DIRBUF4		DEFS	128
+
+            ORG     04800H
+; Drive read-only check/reporter is an independent helper. Move it out
+; of resident $8100-$97FF, which must not overlap IOBUF1 at $9800.
+; Its callers use CALL DCHKRO / JP RODENY; all JR targets stay local.
+DCHKRO	PUSH	BC
+			PUSH	HL
+			XOR		A
+			LD		(ROERROR),A	; Clear stale error from previous call
+			LD		A,(DE)
+			OR		A
+			JR		NZ,DCR_EXPL
+			LD		A,(CURDRV)
+			AND		0FH
+			JR		DCR_IDX
+DCR_EXPL	DEC		A
+DCR_IDX	CP		16
+			JR		NC,DCR_BAD
+			LD		(RODRIVE),A	; Actual effective drive for message
+			LD		B,A
+			LD		HL,(ROVEC)
+			LD		A,B
+			OR		A
+			JR		Z,DCR_BIT
+DCR_SHF	SRL		H
+			RR		L
+			DEC		A
+			JR		NZ,DCR_SHF
+DCR_BIT		LD		A,L
+			AND		01H
+			JR		DCR_DONE
+DCR_BAD		LD		A,1
+			OR		A
+DCR_DONE	POP		HL
+			POP		BC
+			RET
+RODENY	JP		RODISK		; CP/M: BDOS Err on d: R/O
+
+
             ORG     07000H
 
 AXBDOS      CALL    SCHPRE        ; park background blocking input
@@ -1804,6 +1988,18 @@ AXBDOS      CALL    SCHPRE        ; park background blocking input
             JP      Z,AUXBDOS6
             CP      9
             JP      Z,AUXBDOS9
+            CP      3
+            JP      Z,IOREADER
+            CP      4
+            JP      Z,IOPUNCH
+            CP      5
+            JP      Z,IOLIST
+            CP      0F4H          ; AUX LC BIOS LIST
+            JP      Z,IOLIST
+            CP      0F5H          ; AUX LC BIOS PUNCH
+            JP      Z,IOPUNCH
+            CP      0F6H          ; AUX LC BIOS READER
+            JP      Z,IOREADER
             CP      11
             JP      Z,ABDSTAT
             CP      12
@@ -1941,7 +2137,11 @@ AXUSER      CALL    F_USERNUM
             RET
 ; Cooked CONIN via existing BIOS raw read, with echo and ^C exit.
 ; Avoid C_READ's nonreturning main-bank warm boot in AUX mode.
-AXCIN       JP      TSKCIN    ; handler moved under $0800
+AXCIN       LD      A,(IOBYTE)
+            AND     3
+            CP      1
+            JP      NZ,IOCCOOK   ; redirected CON input
+            JP      TSKCIN     ; CRT: scheduler/Open Apple aware
 AXIOGET     JP      GET_IOB
 AXIOSET     JP      SET_IOB
 AXAUXRD     LD      A,1AH       ; no input device: CP/M EOF
@@ -1953,8 +2153,16 @@ AXAUXWR     XOR     A            ; no punch/list device attached
 
 ; Direct BIOS console calls use private C codes $F1..$F3 from the LC
 ; jump-table shims. Caller registers are preserved by those shims.
-AXBICON     JP      TSKSTAT     ; catch Open Apple while BIOS CONST polls
-AXBIREAD    JP      TSKBIRD    ; handler moved under $0800
+AXBICON     LD      A,(IOBYTE)
+            AND     3
+            CP      1
+            JP      NZ,IOSTAT
+            JP      TSKSTAT     ; CRT: catch Open Apple on BIOS CONST
+AXBIREAD    LD      A,(IOBYTE)
+            AND     3
+            CP      1
+            JP      NZ,IOSERIN
+            JP      TSKBIRD    ; CRT: handler moved under $0800
 AXBIOUT     CALL    C_RAWPUT
             XOR     A
             LD      L,A
@@ -2753,7 +2961,7 @@ TB_PAUSE    LD      A,(SCHFG)
 TB_UNPS  LD      A,B
             CALL    TBCLEARH
             RET
-TB_NOBG     JP      UNIMP           ; a foreground tab cannot be paused
+TB_NOBG     JP      RINGBELL       ; a foreground tab cannot be paused
 TB_EXCL
             PUSH    BC             ; LDIR consumes BC; B is target tab
             LD      HL,TBHOLD
@@ -2895,6 +3103,10 @@ AUXLDONE    LD      DE,PATHBUF2
             ; The helper can now fetch AUX RAM safely from AUX LC.
             LD      A,1
             LD      (AXMODE),A
+            LD      HL,IOBYTE      ; CP/M applications also see IOBYTE at 0003
+            LD      DE,IOBYTE
+            LD      BC,1
+            CALL    AXM2A
             LD      HL,0F800H
             LD      DE,02000H
             LD      BC,0800H
@@ -3044,7 +3256,11 @@ AB6KEY      CALL    C_RAWIO
             LD      L,A
             RET
 AB6OUT      JP      C_RAWIO
-ABDSTAT     JP      TSKSTAT     ; catch Open Apple while BDOS 11 polls
+ABDSTAT     LD      A,(IOBYTE)
+            AND     3
+            CP      1
+            JP      NZ,IOZERO
+            JP      TSKSTAT     ; CRT: Open Apple aware
 AUXBDOS9    PUSH    BC
             PUSH    DE
             PUSH    HL
@@ -3166,7 +3382,11 @@ SCHSNAP     RET                 ; live screen always up-to-date
 ; be consumed normally. With no other runnable task use VGET, which
 ; preserves the ordinary visible cursor behaviour.
 ; The existing AXRETRY markers re-enter the original read on resume.
-SCHPRE      LD      A,C
+SCHPRE      LD      A,(IOBYTE)
+            AND     3
+            CP      1
+            JR      NZ,SPNO       ; serial firmware input cannot keyboard-defer
+            LD      A,C
             CP      1             ; BDOS 1 cooked input
             JR      Z,SPREAD
             CP      10            ; BDOS 10 line input (at line start)
@@ -3403,7 +3623,11 @@ BYERESUME	LD		(SOFTCARD),A	; CCPBYE already set CMD=0 and A=0
 ; echo or treat Ctrl-C specially. CONOUT takes its byte in C, and
 ; must not suppress LF at the Z80 layer (C_WRITE deliberately does).
 ; Neither routine touches the alternate Z80 register set.
-BIOSCONST	LD		A,3			; 6502 keyboard peek
+BIOSCONST  LD      A,(IOBYTE)
+            AND     3
+            CP      1             ; CRT uses physical keyboard latch
+            JP      NZ,IOSTAT    ; ROM input has no portable nonblock status
+            LD      A,3			; 6502 keyboard peek
 			LD		(CMD),A
 			LD		(SOFTCARD),A
 			LD		A,(AREG)
@@ -3412,7 +3636,11 @@ BIOSCONST	LD		A,3			; 6502 keyboard peek
 			LD		A,0FFH		; CP/M CONST: FF=ready, 00=not
 			RET
 
-BIOSCONIN	PUSH	HL
+BIOSCONIN LD      A,(IOBYTE)
+            AND     3
+            CP      1
+            JP      NZ,IOSERIN   ; TTY/UC1/BAT input from slot 2
+            PUSH    HL
 			LD		HL,RDKEY		; VGET waits but doesn't echo
 			LD		(ADDR),HL
 			LD		A,1
@@ -3431,13 +3659,15 @@ BIOSCONOUT	PUSH	DE			; C contains character
 			POP		DE
 			RET
 
-; No auxiliary I/O devices yet. READER must return CP/M EOF (^Z).
-BIOSLIST	RET				; no printer attached
-BIOSPUNCH	RET				; no punch attached
-BIOSRDR		LD		A,1AH
-			RET
-BIOSLSTST	XOR		A			; printer not ready
-			RET
+; Physical CP/M BIOS device entry points (also called through AUX LC).
+BIOSLIST    LD      E,C
+            JP      IOLIST
+BIOSPUNCH   LD      E,C
+            JP      IOPUNCH
+BIOSRDR     JP      IOREADER
+; Firmware has no standardized ready query. Blocking writes assumed ready.
+BIOSLSTST   LD      A,0FFH
+            RET
 
 ; Sector BIOS is deliberately unimplemented: don't tell applications
 ; that reads or writes succeeded when no data was transferred.
@@ -3463,6 +3693,10 @@ BIOSSECTRAN	LD		H,B			; identity mapping
 ; Subsequent RST 0 / JP 0000H runs an ordinary warm boot.
 BDOSINIT	DI
 			LD		SP,STCKTOP		; Valid stack for BPMSIGN
+            ; Set CON=CRT before BPMSIGN/RWREPORT print anything.
+            ; Otherwise reset value 00H routes the boot banner to S2.
+            LD      A,095H
+            LD      (IOBYTE),A
 			; Cold start: the backing ProDOS unit has not been resolved yet.
 			; WBOOT deliberately preserves the cached unit.
 			XOR		A
@@ -3494,8 +3728,9 @@ BDOSWARM	DI					; Make sure interrupts are off
 			LD		HL,BDOSENTRY
 			LD		(0006H),HL
 
-			XOR		A				; A=0
-			LD		(IOBYTE),A		; Initialize IOBYTE
+            LD      A,095H        ; CRT, PTR(slot2), PTP(slot2), LPT(slot1)
+            LD      (IOBYTE),A    ; CP/M physical-device default
+            XOR     A
 			LD		(CURDRV),A		; Drive A:, User 0
 			LD		(FILEBUF),A		; Zero chars in command tail
 			CALL	CACHEALL		; CLOSE ALL, invalidate cache and all FRN slots
@@ -3562,9 +3797,9 @@ BDOSIMP
 BDOSVEC		DEFW	C_TERMCPM		; C=00H
 			DEFW	C_READ			; C=01H
 			DEFW	C_WRITE			; C=02H
-			DEFW	BDOSUNSP			; C=03H  (A_READ)   AUX
-			DEFW	BDOSUNSP			; C=04H  (A_WRITE)  AUX
-			DEFW	BDOSUNSP			; C=05H  (L_WRITE)  PRN
+            DEFW    IOREADER         ; C=03H  RDR:
+            DEFW    IOPUNCH          ; C=04H  PUN:
+            DEFW    IOLIST           ; C=05H  LST:
 			DEFW	C_RAWIO			; C=06H
 			DEFW	GET_IOB			; C=07H
 			DEFW	SET_IOB			; C=08H
@@ -3601,7 +3836,7 @@ BDOSVEC		DEFW	C_TERMCPM		; C=00H
 			DEFW	BDOSUNSP			; C=27H  (*nothing* in CP/M 2.2)
 			DEFW	F_WRITERAND		; C=28H  (F_WRITEZF)
 
-; Diagnose unknown MAIN BDOS calls; retain old UNIMP bell afterwards.
+; Diagnose unknown MAIN BDOS calls; retain old RINGBELL bell afterwards.
 BDOSUNSP    LD      DE,BDOSMSG
             CALL    C_WRITESTR
             LD      A,(BDOSFN)
@@ -3609,10 +3844,10 @@ BDOSUNSP    LD      DE,BDOSMSG
             CALL    PRHEX
             LD      E,13
             CALL    C_WRITE
-            JP      UNIMP
+            JP      RINGBELL
 
 ; Unimplemented BDOS call, just ring the bell
-UNIMP		LD		HL,BELL			; We are going to call BELL
+RINGBELL	LD		HL,BELL			; We are going to call BELL
 			LD		(ADDR),HL		; ...
 			LD		A,1				; CMD=1 means call 6502 sub
 			LD		(CMD),A			; ...
@@ -3624,7 +3859,11 @@ C_TERMCPM	RST		0				; Quick jump to zero
 
 ; Wait for a character from the console, return it in A and L
 ; Also echoes the char to the console
-C_READ		LD		HL,RDKEY		; We are going to call RDKEY
+C_READ      LD      A,(IOBYTE)
+            AND     3
+            CP      1
+            JP      NZ,IOCCOOK   ; redirected console, serial firmware
+            LD      HL,RDKEY		; We are going to call RDKEY
 			LD		(ADDR),HL		; ...
 			LD		A,1				; CMD=1 means call 6502 sub
 			LD		(CMD),A			; ...
@@ -3646,14 +3885,22 @@ C_READ		LD		HL,RDKEY		; We are going to call RDKEY
 ; BDOS console output.  The 6502 driver handles tabs, CR, backspace,
 ; clear-screen and the other minimal console controls.  Ignore LF because
 ; the direct video driver's CR already moves to the next line.
-C_WRITE		LD		A,E
-			CP		0AH
+C_WRITE     LD      A,(IOBYTE)
+            AND     3
+            CP      1
+            JR      NZ,C_RAWPUT  ; serial/BAT must retain LF
+            LD      A,E
+            CP      0AH
 			RET		Z
 			JR		C_PUT
 
 ; Shared low-level output path for cooked and direct console writes.
 ; E = ASCII character; 6502 console driver accepts bit 7 set or clear.
-C_RAWPUT    LD      A,E          ; raw output also updates virtual display
+C_RAWPUT    LD      A,(IOBYTE)
+            AND     3
+            CP      1
+            JP      NZ,IOCONOUT ; redirected console bypasses screen driver
+            LD      A,E          ; raw output also updates virtual display
 			LD		HL,RAWOUT	; B80F raw 6502 vector
 			JR		C_SENDA
 C_PUT       LD      A,80H       ; cooked output, both background/foreground
@@ -3704,14 +3951,18 @@ CFO_GO      LD      A,(0E010H)    ; consume ^Q and resume this output
 
 ; CP/M BDOS function 6: E=FF nonblocking read, else raw output.
 ; This route uses the raw 6502 entry (CR and LF independent).
-C_RAWIO		LD		A,E
-			CP		0FFH
+C_RAWIO     LD      A,E
+            CP      0FFH
 			JR		Z,RIS1
 			JR		C_RAWPUT
 
 			; If character is waiting, read from console & return in A
 			; Otherwise, return 00H in A
-RIS1		LD		A,3				; CMD=3 means peek at keyboard
+RIS1        LD      A,(IOBYTE)
+            AND     3
+            CP      1
+            JP      NZ,IOZERO   ; no portable slot-2 nonblocking read
+            LD      A,3				; CMD=3 means peek at keyboard
 			LD		(CMD),A			; ...
 			LD		(SOFTCARD),A	; Do it
 			LD		A,(AREG)		; Grab the return value
@@ -3737,9 +3988,15 @@ GET_IOB		LD		A,(IOBYTE)		;
 
 ; Set the IOBYTE
 ; E contains the IOBYTE value to set
-SET_IOB		LD		A,E				;
-			LD		(IOBYTE),A		;
-			RET
+SET_IOB     LD      A,E
+            LD      (IOBYTE),A
+            LD      A,(AXMODE)    ; CP/M $0003 is in AUX for AUX apps
+            OR      A
+            RET     Z
+            LD      HL,IOBYTE
+            LD      DE,IOBYTE
+            LD      BC,1
+            JP      AXM2A
 
 ; Write ASCII string to console. '$' is the terminator
 ; DE contains the address of the string
@@ -3826,7 +4083,11 @@ CRSS3		LD		A,0				; Set character count to zero to ...
 			RET						; Done
 
 ; Returns 0 in A and L if no chars waiting, non zero otherwise
-C_STAT		LD		A,3				; CMD=3 means peek at keyboard
+C_STAT      LD      A,(IOBYTE)
+            AND     3
+            CP      1
+            JP      NZ,IOZERO
+            LD      A,3				; CMD=3 means peek at keyboard
 			LD		(CMD),A			; ...
 			LD		(SOFTCARD),A	; Do it
 			LD		A,(AREG)		; Grab the return value
@@ -6657,29 +6918,8 @@ VRUNIT		DEFB	0			; Discovered once; reused for all CP/M drives
 			DEFW	0800H			; physical 6502 address (NOT VOLBUF+OFFSET)
 VRBLK		DEFW	0				; Requested ProDOS 512-byte block
 
-; 64 byte buffer for storing a file path as a Pascal style string
-PATHBUF
-PATHLEN		DEFB	0
-PATH		DEFS	64
-
-; 64 byte buffer for storing a second file path as a Pascal style string
-PATHBUF2
-PATHLEN2	DEFB	0
-PATH2		DEFS	64
-
-; Record file reference numbers for each I/O buffer
-; Or 0 if no file is using the buffer
-FRN1		DEFB	0
-FRN2		DEFB	0
-FRN3		DEFB	0
-FRN4		DEFB	0
-
-; 512 byte buffer for reading directories (used by F_SFIRST and F_SNEXT)
-DIRBUF
-DIRBUF1		DEFS	128
-DIRBUF2		DEFS	128
-DIRBUF3		DEFS	128
-DIRBUF4		DEFS	128
+ ; ProDOS path buffers and directory workspace have been relocated to MAIN
+ ; $4500.., in the reclaimed (former AUX LC snapshot) space.
 
 ; Two 1024 byte ProDOS I/O buffers, 1K spare, then the 1K Z80 stack
 ; The two I/O buffers start on page boundaries
@@ -6802,8 +7042,8 @@ LCIMG
             JP      LCBCST
             JP      LCBCIN
             JP      LCBCOUT
-            JP      LCNOP
-            JP      LCNOP
+            JP      LCBLST
+            JP      LCBPUN
             JP      LCBRDR
             JP      LCNOP
             JP      LCBNULL
@@ -6870,7 +7110,35 @@ LIBCOUT     PUSH    BC
             POP     DE
             POP     BC
             RET
-LIBRDR      LD      A,1AH
+; AUX LC must preserve caller registers while switching via LCGATE.
+LIBLST      PUSH    BC
+            PUSH    DE
+            PUSH    HL
+            LD      E,C
+            LD      C,0F4H
+            CALL    LCGATE
+            POP     HL
+            POP     DE
+            POP     BC
+            RET
+LIBPUN      PUSH    BC
+            PUSH    DE
+            PUSH    HL
+            LD      E,C
+            LD      C,0F5H
+            CALL    LCGATE
+            POP     HL
+            POP     DE
+            POP     BC
+            RET
+LIBRDR      PUSH    BC
+            PUSH    DE
+            PUSH    HL
+            LD      C,0F6H
+            CALL    LCGATE
+            POP     HL
+            POP     DE
+            POP     BC
             RET
 LIBNULL     LD      HL,0
             RET
@@ -6894,6 +7162,8 @@ LCNOP       EQU     LCBASE+(LINOP-LCIMG)
 LCBCST      EQU     LCBASE+(LIBCST-LCIMG)
 LCBCIN      EQU     LCBASE+(LIBCIN-LCIMG)
 LCBCOUT     EQU     LCBASE+(LIBCOUT-LCIMG)
+LCBLST      EQU     LCBASE+(LIBLST-LCIMG)
+LCBPUN      EQU     LCBASE+(LIBPUN-LCIMG)
 LCBRDR      EQU     LCBASE+(LIBRDR-LCIMG)
 LCBNULL     EQU     LCBASE+(LIBNULL-LCIMG)
 LCBERR      EQU     LCBASE+(LIBERR-LCIMG)
@@ -6905,41 +7175,7 @@ LCLEN       EQU     LIEND-LCIMG
 ; MAIN staging buffer for 128-byte ProDOS record reads.
 AUXSTAGE    DEFS    128
 
-; Drive read-only check/reporter is an independent helper. Move it out
-; of resident $8100-$97FF, which must not overlap IOBUF1 at $9800.
-; Its callers use CALL DCHKRO / JP RODENY; all JR targets stay local.
-DCHKRO	PUSH	BC
-			PUSH	HL
-			XOR		A
-			LD		(ROERROR),A	; Clear stale error from previous call
-			LD		A,(DE)
-			OR		A
-			JR		NZ,DCR_EXPL
-			LD		A,(CURDRV)
-			AND		0FH
-			JR		DCR_IDX
-DCR_EXPL	DEC		A
-DCR_IDX	CP		16
-			JR		NC,DCR_BAD
-			LD		(RODRIVE),A	; Actual effective drive for message
-			LD		B,A
-			LD		HL,(ROVEC)
-			LD		A,B
-			OR		A
-			JR		Z,DCR_BIT
-DCR_SHF	SRL		H
-			RR		L
-			DEC		A
-			JR		NZ,DCR_SHF
-DCR_BIT		LD		A,L
-			AND		01H
-			JR		DCR_DONE
-DCR_BAD		LD		A,1
-			OR		A
-DCR_DONE	POP		HL
-			POP		BC
-			RET
-RODENY	JP		RODISK		; CP/M: BDOS Err on d: R/O
+ ; DCHKRO/RODENY relocated to MAIN $4800 with the I/O driver.
 
 
 
@@ -7643,4 +7879,5 @@ B69END
 Z80STACK    DEFS    STCKTOP-B69END
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
 
