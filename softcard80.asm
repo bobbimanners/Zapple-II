@@ -1607,29 +1607,21 @@ AXBDOS      CALL    SCHPRE        ; park background blocking input
             JP      Z,AXSFIRST
             CP      18
             JP      Z,AXSNEXT
+; Compact AUX BDOS FCB dispatch: contiguous function ranges.
+; CP/JR/JP leave A untouched; AXFSEL expects original BDOS A value.
             CP      15
-            JP      Z,AXFSEL
-            CP      16
-            JP      Z,AXFSEL
-            CP      19
-            JP      Z,AXFSEL
-            CP      20
-            JP      Z,AXFSEL
-            CP      21
-            JP      Z,AXFSEL
-            CP      22
-            JP      Z,AXFSEL
-            CP      23
-            JP      Z,AXFSEL
-            CP      33
-            JP      Z,AXFSEL
-            CP      34
-            JP      Z,AXFSEL
-            CP      35
-            JP      Z,AXFSEL
-            CP      36
-            JP      Z,AXFSEL
-            CP      40
+            JR      C,AXF17
+            CP      17
+            JP      C,AXFSEL      ; 15,16
+AXF17       CP      19
+            JR      C,AXF24
+            CP      24
+            JP      C,AXFSEL      ; 19..23
+AXF24       CP      33
+            JR      C,AXF37
+            CP      37
+            JP      C,AXFSEL      ; 33..36
+AXF37       CP      40
             JP      Z,AXFSEL
             CP      14
             JP      Z,AXDSET
@@ -1778,19 +1770,30 @@ AXAVEC      LD      A,(LCB1RO)
             RET
 
 ; CP/M BDOS 10: buffered line input into an AUX caller's buffer.
-; A conservative range check reserves room for the maximum 255-byte line.
-; 260-byte MAIN staging area avoids banked reads during terminal I/O.
+; Check the ACTUAL buffer capacity, not a blanket 260-byte region.
+; The AUX TPA ends at DEFFH; the LC BDOS gateway starts at DF00H.
+; For capacity N we may write N data bytes plus one CR at DE+2+N.
+; 260-byte MAIN staging handles all legal one-byte capacities (0..255).
 AXLINE      LD      (AXLIP),DE
             LD      A,D
-            CP      0DDH
-            JP      NC,AXBAD      ; conservative 260-byte bound
+            CP      0DFH
+            JP      NC,AXBAD      ; buffer header must be below DF00H
 AXLVALID    EX      DE,HL
             LD      DE,AXLBUF
             LD      BC,1
-            CALL    LCA2M
+            CALL    LCA2M         ; read caller's capacity byte from AUX
             LD      A,(AXLBUF)
-            LD      B,A             ; buffer capacity
-            LD      C,0             ; bytes entered
+            LD      C,A
+            LD      B,0
+            LD      HL,(AXLIP)
+            INC     HL
+            INC     HL
+            ADD     HL,BC         ; address of final possible CR byte
+            LD      A,H
+            CP      0DFH
+            JP      NC,AXBAD      ; disallow touching DF00H+ gateway
+            LD      B,C           ; capacity for line editor
+            LD      C,0           ; bytes entered
             LD      HL,AXLBUF+2
 AXLNEXT     PUSH    BC
             PUSH    HL
