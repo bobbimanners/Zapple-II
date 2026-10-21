@@ -1,0 +1,1321 @@
+*DBASE 
+       HELP TEXT FILE DBASEMSG.TXT VERSION 1.12 FOR dBASE II v2.4
+                Copyright 1983 Ashton-Tate and RSP, Inc.
+
+        written by Wayne Ratliff, Jim Taylor, and Howard Dickler
+
+                         INTRODUCTION
+     
+     This entry is intended to give you on-line information about your dBASE 
+II  Database  Management  System.   It  explains the  disk  files  you  have 
+received,  and  gives suggestions on tapping the power now available to  you 
+for  data  management.   Using  the on-line HELP in  conjunction  with  your 
+Manual,   you will soon be creating databases and writing command procedures 
+to do your work. 
+
+
+
+
+
+                    >>>>> type any key to continue <<<<<
+
+
+                       HOW TO USE THE 'HELP' FACILITY
+
+     Information about your dBASE  II  system can be obtained by typing 
+HELP and any of the following key words: (e.g. HELP NEW )
+
+          UTILITIES      FULL-SCREEN    LIMITS    BACKUP  
+          INSTALL        NEW            ERRORS    CP/M
+          EXAMPLES       FUNCTIONS      DBASE     HELP       RUNTIME
+               (or any dBASE II command)
+
+     dBASE will then look up the entry for the key word and display it.   If 
+there is no information on the subject then dBASE will say "NO HELP MESSAGES 
+FOUND".   When there is more text to display beyond what's shown,  then  you 
+will see the word 
+
+WAITING  (like this)
+                   >>>>>  type any key to continue. <<<<<
+
+
+       The essential dBASE II files on this disk are these:
+
+               DBASE.COM      --main system program file
+               DBASEOVR.COM   --all overlays and system messages
+               DBASEMSG.TXT   --this HELP file (not necessary if you never 
+                                use HELP)
+               INSTALL.COM    --terminal installation program (not necessary 
+                                after terminal is installed).
+
+     Other  files  on the disk (or on other disks included with the  system) 
+are not essential but are useful as described below:
+
+*UTILITIES       
+UTILITY FILES TO WORK WITH YOUR dBASE II SYSTEM:
+
+     STARTUP.CMD    --this command file is intended to help you determine if 
+                    your terminal is properly installed.  Type DO STARTUP 
+                    after bringing up dBASE.
+     SETS.CMD       --this command file will restore dBASE to all the 
+                    default values of the SET parameters.  You may modify 
+                    this file to restore your own list of parameters.
+     DATESYS.CMD    --this command file will call an assembly language 
+                    routine to check a date for validity, and then set the 
+                    dBASE system date.
+     LABELS.CMD     --this command file prints mailing labels.      
+     NAMES.DBF      --database used by LABELS.
+     CREATE.CMD     --this command file creates a command file with the 
+                    usual and suggested command file documentation.
+     DATER.CMD      --this command file demonstrates converting back and 
+                    forth between calendar date and julian date.
+     DATETEST.HEX    --fast assembly-language date checking routine which is 
+                    called by several of the example programs.
+     
+
+
+
+     ZIP.COM        --a program run from CP/M which will greatly speed up 
+                    the development of screens for data input and display.
+     ZIPIN.COM      --the terminal installation program for ZIP; run this 
+                    program if the terminal does not appear correct while in 
+                    ZIP.
+     ZSCRN.OVL      --part of ZIP.
+     DGEN.OVL       --part of ZIP that generates dBASE files. 
+
+*EXAMPLES
+Some  files that are present with dBASE II are EXAMPLE files  (occassionally 
+on a separate disk).  These files are intended to be useful as they are, and 
+are internally documented well enough for you to customize them to suit your 
+own purposes.  Each suite of programs listed is progressively more involved, 
+so  you  can start at a level comfortable to you and work  up.   The  master 
+program of each group is marked with a '>'.
+
+               TICKLE FILE MANAGEMENT FILES (CARDFILE)
+        > CMAIN.CMD                TEXT.DBF
+          CPRINT.CMD               KEYWORD.NDX
+          APPECARD.CMD             TICKLE.NDX
+          TICKLE.FRM               EDITCARD.FMT
+
+
+               CHECKBOOK MANAGEMENT FILES
+        > CHXMENU.CMD              CHXINPUT.FMT
+          CHXDEPOS.FMT             CHXBOOK.MEM
+          CHECKS.DBF               DEPOSITS.DBF
+
+
+
+               INVENTORY MANAGEMENT FILES
+        > IMAIN.CMD                INVENT.DBF
+          ISETUP.CMD               I'BYNMBR.NDX
+          INVMAINT.CMD             I'BYDESC.NDX
+          INVQUAN.CMD              INV'CONS.FRM
+          INVREAD.CMD              INV'PRTR.FRM
+          INVRPRT.CMD
+
+               PERSONNEL MANAGEMENT FILES
+        > EMAIN.CMD                EMPLOYEE.DBF
+          ESETUP.CMD               EMPSCRN.FMT              
+          EMP-ENTR.CMD             EMP-UPD.FMT
+          EMP-UPD.CMD              EMP-PRT.FRM
+          EMP-TERM.CMD             EMP-CONS.FRM
+          EMP-RPRT.CMD             E'BYNMBR.NDX
+          EMPLOYEE.MEM             E'BYNAME.NDX
+
+*EXIT
+*FULL SCREEN
+               FULL-SCREEN CURSOR MOVEMENT CODES --ALL COMMANDS
+
+     ctrl-X moves cursor DOWN to the next field (also ctrl-F)
+     ctrl-E moves cursor UP to the previous field (also ctrl-A)
+     ctrl-D moves cursor AHEAD one character
+     ctrl-S moves cursor BACK one character
+     
+     ctrl-G deletes the character under the cursor
+     <Rubout> or <DEL> deletes the character to the left of cursor
+
+     ctrl-Y blanks out current field to the right of the cursor
+     ctrl-V toggles between overwrite and INSERT modes
+     ctrl-W saves any changes made and returns to dBASE (Superbrain ctrl-O)
+
+                    IN EDIT MODE
+     ctrl-U toggles the record DELETE mark on and off
+     ctrl-C writes current record to disk and ADVANCES to next record
+     ctrl-R writes current record to disk and BACKS to previous record
+     ctrl-Q ignores changes to current record asnd returns to dBASE
+     ctrl-W writes all changes to disk and returns
+
+                    IN BROWSE MODE
+     ctrl-B pans the window RIGHT one field
+     ctrl-Z pans the window LEFT one field
+
+                    IN MODIFY MODE
+     ctrl-T DELETES current line, moves all lower lines up
+     ctrl-N INSERTS new line at cursor position
+     ctrl-C scrolls down a half page
+     ctrl-W writes all changes to disk and returns to dBASE
+     ctrl-Q ignores all changes and returns
+
+                    IN APPEND MODE
+     <enter> when cursor is in first position of first field will terminate 
+             APPEND command 
+     ctrl-W writes record to disk and moves to next record
+     ctrl-Q ignores current record and returns to dBASE
+
+
+
+
+           CONTROL KEY STROKES WHEN NOT IN FULL SCREEN
+     ctrl-P toggles your printer ON and OFF
+     ctrl-R repeats the last executed dBASE command
+     ctrl-X clears the command line without executing command
+     ctrl-H backspace
+     ctrl-M acts exactly like a carriage return
+*INSTALL
+In order to use dBASE II's Full-Screen editing facility,  your terminal must 
+be  properly installed.  Many dBASE formats are pre-installed.  If yours  is 
+not,  your  screen will appear jumbled when you attempt to perform such full 
+screen  operations as APPEND or EDIT.   To correct this,  you  must  install 
+dBASE II by running the dBASE II installation, INSTALL.COM, called from your 
+system  as  INSTALL.   Since you may diagnose your terminal's status at  any 
+time by running STARTUP.CMD (called from the dBASE II "." prompt by entering 
+the  command DO STARTUP),  you would be wise to use it before attempting  to 
+INSTALL  dBASE  II.   It will tell you if you need to run  the  installation 
+program, and can be used later to check the results if you do. 
+
+
+
+*EXIT
+*BACKUP
+*CP/M
+                
+                    CP/M OPERATING SYSTEM
+     This information is applicable to CP/M version 2.2.  For most computers 
+using this operating system, you  will  need to do the following:
+
+I. Operating System
+     
+   A. Copying the system disk --
+
+      1. Place  CP/M  system  disk on drive A and a blank disk on          
+         drive B.
+
+      2. Format  the   blank disk with the format utility provided  on  your 
+         CP/M system disk if necessary.  Copy the system tracks to the blank 
+         disk  by  running  the  SYSGEN.COM  program  (or  similar  program) 
+         provided on your CP/M system disk.
+
+      3. Use  PIP to bring the PIP.COM over to  the  blank  disk.  
+         The syntax is as follows:
+
+               A>PIP B:=A:PIP.COM[OV]
+
+      4. Put the new disk containing PIP and SYSGEN.COM on drive A and dBASE 
+         system disk on drive B, then type the following:
+
+               A>DIR B:
+
+      5. Check to see that the following files are displayed:
+
+               DBASE.COM                DBASEOVR.COM
+               DBASEMSG.TXT             INSTALL.COM
+               STARTUP.CMD
+
+
+      6. Type the following:
+
+               A> <ctrl-C>
+               A>PIP A:=B:*.*[OV]
+
+   B. CP/M limitations that affect dBASE
+
+      1. Disk limitations --
+         a) With CP/M system disk on drive A, type the following:
+               A>STAT B:
+            The disk capacity remaining indicates how much storage 
+         in kilobytes is available for dBASE.
+
+         b) The following equation will allow you to calculate the 
+         number of dBASE records which can be stored on the disk:
+
+               Kilobytes of storage dBASE records will use on disk 
+          = ((recordsize * number of records) + 521) / 1024
+
+   C. CP/M error messages that may occur --
+      The expression "x:" represents the disk drive name.   
+
+
+     
+
+ 
+      1. "BDOS ERROR ON x: BAD SECTOR"
+         An  error  in  reading or  writing  the  disk.   Possible 
+         problem may be: 
+     
+           a) disk format is different from the one the  disk 
+              drive is designed to read.
+           b) disk was not inserted  properly  in  the  disk 
+              drive.
+           c) disk drive malfunctioned when reading the disk.
+           d) disk is bad due to excessive wear  or  foreign 
+              particles on the surface of the disk.
+
+      2. "BDOS ERROR ON x: SELECT"
+         This  error  occurs  when  selecting a  disk  drive  not 
+         available to the computer.
+
+
+
+
+      3. "BDOS ERROR ON x: READ ONLY"
+         This error occurs when there is an attempt to write on a 
+         disk that has been given a read-only status.   A disk  is 
+         assigned  a read-only status when the disk drive door has 
+         been  opened or when a write-protect tab has been  placed 
+         on  it.  If  the  disk  does  not  have  a  write-protect          
+         tab  on  it,   you  can  use  the  warm  start  procedure          
+         (control-C) to reset the disk when in CP/M,  or the RESET          
+         command when in dBASE.
+*EXIT
+*NEW
+> New commands and changes to dBASE II version 2.4  
+
+       New commands:
+
+       HELP -- user aid command.
+       REINDEX -- realigns and updates existing index file.
+       TEXT -- displays multiple lines of text, terminated by ENDTEXT.
+       RANK( ) -- function; returns ASCII value of first character.
+
+       Supplemented Commands:
+
+       APPEND,INSERT,EDIT,CREATE -- can use a format file for screen control.
+       BROWSE           -- can be given a list of fields to work with.
+       DISPLAY STATUS   -- shows databases/indexes in use and SET settings.
+       READ & REPLACE   -- can be directed not to perform disk accesses 
+                when non-key data is changed.
+       RELEASE          -- can release subsets of memory variables.
+       RESTORE          -- can restore additively to existing memory variables.
+       SAVE             -- can save subsets of memory variables.
+       SET RAW ON       -- eliminates extra spaces in DISPLAY and ? commands.
+       UPDATE           -- replace clause can have WITH phrases.
+*EXIT
+*?
+*??
+> ?    -- Evaluates  and displays the value of an  expression.   In  command 
+       file  (and elsewhere) can be used without expression to space down  a 
+       line at output.
+      
+          . ? 6/3
+            2
+          . ? 'CITY'
+            CITY
+          . ? CITY (field of file in use)
+            Managua
+ 
+> ??   -- Same as ?, but displays result on same line as entry.
+*EXIT
+*@
+> @    -- Displays user formatted data on the screen or printer at specified 
+          x,y coordinates (x = line, y = column ).
+
+          Syntax: @ <coords> [SAY <exp> [USING '<picture>']]
+                             [GET <variable> [PICTURE '<picture>']]
+
+          @  3,23 SAY AMOUNT * 1.06 USING '$$$,$$$.99'
+          @ 14,23 SAY "ENTER PHONE" GET PHONE PICTURE '(###)###-####'
+          @ LINE+2,45 SAY TOTAL USING '99999.99'
+*EXIT
+*ACCEPT
+>  ACCEPT  -- Prompts  user  to enter character string  information  into  a 
+       designated memory variable. 
+
+           Syntax: ACCEPT ['<prompt cstring>'] TO <memvar>
+
+           . ACCEPT "What is the worst sin?" to SIN
+           What is the worst sin?: [user's response stored to SIN]
+           . ? SIN
+           [user's response displayed]  
+*EXIT
+*APPEND
+> APPEND FROM <file> [FOR <exp>] or 
+> APPEND FROM <file> [SDF] [DELIMITED] [FOR <exp>]
+       -- appends data FROM a database or file in System Data Format 
+       file to the database in use. Records marked for deletion in 
+       FROM <file> will not be appended.
+
+                 e.g., APPEND FROM MAILLIST FOR NAME = 'N' 
+                       APPEND FROM TEST.TXT DELIMITED 
+ 
+> APPEND BLANK -- appends a blank, i.e. empty, record to file in use.
+
+> APPEND -- allows user to add new records to database in use.  (If index is 
+       also in use, the index file is automatically updated).    
+*EXIT
+*BROWSE
+> BROWSE [FIELDS <field list>] -- Brings up Full-screen viewing and editing 
+       of the database in use. 
+*EXIT
+*CANCEL
+> CANCEL -- In a command file, stops command file execution and 
+       returns user to dBASE "." prompt.  
+
+           Command file fragment:
+               ACCEPT "What should this humble machine do next?" to NEXT
+                      IF NEXT = 'Q'
+                           CANCEL 
+                      ENDIF                
+*EXIT
+*CHANGE
+> CHANGE -- Permits Non-Full-Screen editing of database in use by field. Hit 
+       ESCape key to terminate CHANGE mode.
+
+            Syntax: CHANGE [<scope>] FIELD <list> [FOR <exp>]
+
+            . CHANGE ALL FIELD ZIP FOR ZIP = '90045'
+            RECORD: 00123
+            ZIP: 90045
+            CHANGE? 
+               (Enter the characters to be changed and hit return.
+            Add new data at the TO prompt, or hit return to go to 
+            the next appropriate record.)      
+*EXIT
+*CLEAR
+> CLEAR  -- Closes all database in use, releases all memory variables, 
+           and Selects Primary work area. 
+> CLEAR GETS -- makes dBASE forget about all GET statements still 
+         active, but without erasing the screen. 
+*EXIT
+*COPY
+> COPY -- Copies the database in use or only its structure TO another 
+         file. COPY will create the TO <file> if it does not yet exist, 
+         but will destroy an already existing file of that name.  Will not 
+         copy records marked for deletion. 
+
+      Syntax: COPY TO <file> [<scope>] [FIELD <list>] [FOR <exp>]
+              COPY TO <file> [SDF] [DELIMITED [WITH <delimiter>]] [FOR <exp>]
+              COPY TO <file> STRUCTURE [FIELD <list>]
+*EXIT
+*COUNT
+> COUNT -- Counts the number of records in database file in use.  
+
+          Syntax: COUNT [<scope>] [FOR <exp>] [TO <memvar>]
+                  e.g., COUNT NEXT 25 FOR GRADE > 'B-' TO DEANLST 
+*EXIT
+*CREATE
+> CREATE [<filename>] -- Creates a new database file.  User will be prompted 
+       for file structure.
+*EXIT
+*DELETE
+> DELETE FILE <filename> -- deletes named file.
+       
+> DELETE [<scope>] [FOR <exp>] -- marks record(s) for deletion.  
+       Records marked for deletion (with *) will not be erased 
+       until the PACK command is given.  Records may also be 
+       marked for deletion by record number.
+
+                   e.g., DELETE ALL FOR COMPANY = 'ZMB'
+                         DELETE RECORD 15
+*EXIT
+*DISPLAY
+> DISPLAY FILES [ON <disk drive>] [LIKE <skeleton>] -- lists 
+       files on drive. 
+                   e.g., DISPLAY FILES ON B LIKE *.CMD
+                     
+> DISPLAY [<scope>] [FOR <exp>] [<exp list>] [FIELDS <field list>] [OFF]   
+       -- displays variables, or records of file in use.  
+               e.g., DISPLAY NEXT 10 FOR PHONE = '415'
+
+> DISPLAY STRUCTURE -- displays field names, types, lengths, and decimals 
+       (structure) of file in use.
+
+> DISPLAY MEMORY -- displays names, types, and values of all currently 
+       defined memory variables.
+
+> DISPLAY STATUS -- lists which databases are open, the system date, indexes 
+       in use, and current parameters SET.
+*EXIT
+*DO
+*ENDCASE
+*ENDDO
+*LOOP
+> DO <file> -- opens and executes specified command file.
+
+> DO WHILE <exp>   --  used in command files to open a structured loop.   
+    <commands>         Commands in between are executed so long as the 
+  [LOOP]               DO WHILE <exp> is found to be True.  
+    <commands>           
+  ENDDO       
+                 e.g.  USE MAILLIST
+                       DO WHILE .NOT. EOF
+                           ? NAME
+                           ? PHONE
+                           SKIP
+                       ENDDO                   
+
+
+
+
+
+
+       LOOP causes command file to jump processing back to the DO WHILE 
+       command. 
+                e.g.  USE MAILLIST
+                      DO WHILE .NOT. EOF
+                         IF ZIP = '90005'
+                             SKIP
+                             LOOP
+                         ENDIF 
+                         ? NAME
+                         ? PHONE
+                         SKIP
+                       ENDDO  
+*CASE
+
+
+
+> DO CASE  -- used in command file to choose one and only one of several 
+       possible execution paths.  OTHERWISE clause optional, and executes 
+       when no CASE is true. ENDCASE is needed to close command.
+    
+ e.g.     USE MAILLIST
+          ACCEPT "WHICH MENU OPTION DO YOU PREFER?" to CHOICE
+          DO CASE                           
+                CASE Choice = '1'
+                     DO Labels 
+                CASE Choice = '2'
+                     DO Addnames   
+                CASE Choice = '3'
+                     DO Edit            
+                OTHERWISE
+                     QUIT 
+          ENDCASE
+*EXIT
+*EDIT
+> EDIT [<record number>] -- enables selective editing of database in use by 
+       record number. Requests record number if not supplied. When edit of 
+       particular record has been completed, Ctr-W brings back EDIT's record 
+       number  prompt (ENTER RECORD #:).   To terminate  EDIT  mode,  answer 
+       record number query with a return.
+*EXIT
+*EJECT
+> EJECT -- causes printer to do a form feed (page eject) if PRINT is SET ON 
+       or FORMAT is SET TO PRINT.  When using @ SAY commands for direct page 
+       formatting, EJECT will zero out line and column counters. 
+*EXIT
+*ERASE
+> ERASE -- clears the screen.  In interactive mode, "." prompt will appear 
+       at top left corner of screen.
+*EXIT
+*FIND
+> FIND <cstring> -- when using indexed files, positions to first record 
+       indexed by <cstring>.
+*EXIT
+*GO
+*GOTO
+> GO or GOTO -- positions to a specific record or place in the database in 
+       use.  Also positions to record number contained in memory variable.
+
+   Syntax: GO or GOTO [RECORD <n>], <n>, [TOP], [BOTTOM], or <memvar>
+*EXIT
+*HELP
+               dBASE II ON-LINE HELP FACILITY
+
+Below you will find a list of all dBASE commands.  This HELP file contains a 
+brief  synopsis  of  each command,  as well as a picture of  that  command's 
+correct syntax.   Please remember,  however,  that HELP file information  is 
+limited,  and is only meant to cut down on the number of trips you will have 
+to make to the dBASE II Manual.  
+
+To  access  the entry for the dBASE command (or other Help File  entry)  you 
+wish  to  review,  merely respond to the dBASE "." prompt by  entering  HELP 
+<name  of  command>  and a return (e.g.  HELP  CREATE  <cr>).   The  desired 
+information  will appear and then return you to the  "." prompt,  so you can 
+go right back to work.  In some cases the entry will take up more space than 
+is  provided by a single screen.   (This is one of them.)  To bring  up  the 
+next screen of information,  just enter any character at the "WAITING".  You 
+may end the help message by typing ESC twice.
+
+     >>>>>>>>Type 'HELP dBASE ' for other important information.
+
+
+> ?     -- displays an expression, variable, or field. 
+> ??    -- displays an expression list without a preceeding line feed. 
+> @     -- displays user formatted data on screen or printer.
+> ACCEPT -- allows input of character strings into memory variables.
+> APPEND -- append information from another dBASE II database or  files  in 
+          Delimited or System Data format. 
+> BROWSE -- full screen window viewing and editing of database.
+> CANCEL -- cancels command file execution.
+> CHANGE -- Non-Full-Screen edit of fields of database. 
+> CLEAR -- close databases in use and releases all current memory variables.
+> CONTINUE -- continue the searching action of a LOCATE command.
+> COPY -- creates a copy of an existing database. 
+> COUNT -- counts the number of records in database which meet some criteria.
+> CREATE -- creates new structured database.
+> DELETE -- deletes a file or marks records for deletion.
+> DISPLAY -- displays files, database records or structure, memory 
+       variables, or status. 
+> DO -- executes command files or structured loops in command files.
+> EDIT -- allows edit of records in database.
+> EJECT -- ejects a page on the printer.
+> ELSE -- alternate path of command execution within IF.
+> ENDCASE -- terminates a CASE command.
+> ENDDO -- terminates a DO WHILE command.
+> ENDIF -- terminates an IF command.
+> ENDTEXT -- terminates a TEXT command.
+> ERASE -- clears the screen.
+> FIND -- positions to record corresponding to a key on indexed files.
+> GO or GOTO -- positions to a specific record in database.
+> HELP -- accesses help file list or entry. 
+> IF -- allows conditional execution of commands.
+> INDEX -- creates an index file.
+> INPUT -- allows input of expressions into memory variables.
+> INSERT - insert new record within a database.
+> JOIN -- joins output of two databases.
+> LIST -- lists files, database records or structure, memory variables, and 
+          status.
+> LOCATE -- find a record that fits a condition.
+> LOOP -- skips to beginning of DO WHILE command.
+>  MODIFY  -- used  for creating and editing  command  files  and 
+          modifying structure of existing database.
+> NOTE or * -- allows insertion of comments in command file. 
+> PACK -- erases records marked for deletion.
+> QUIT -- exits dBASE and returns to CP/M.
+> READ -- displays data and prompting information in full-screen mode.
+> RECALL -- erases mark for deletion.
+> REINDEX -- updates an existing index file.
+> RELEASE -- eliminates unwanted memory variables and releases memory space.
+> REMARK -- permits display of any characters.
+> RENAME -- rename a file.
+> REPLACE -- change information in a record field by field.
+> REPORT -- format and display a report of information.
+> RESET -- let operating system know that disk has been swapped.
+> RESTORE -- retrieves memory variables stored in files.
+> RETURN -- ends a command file.
+> SAVE -- copies current memory variables to disk file. 
+> SELECT -- switches between USE files in PRIMARY and SECONDARY areas.
+> SET -- sets dBASE control parameters.
+> SKIP -- position forwards or backwards in database.
+> SORT -- write copy of database sorted on one of the data fields.
+> STORE --creates  memory variables.
+> SUM -- compute and display the sum of field.
+> TEXT -- allows output of block of text from a command file.
+> TOTAL -- creates summarized copy of database combining information from 
+       specified fields meeting some criteria.
+> UPDATE -- allows batch updates of a database.
+> USE -- specifies database to USE until next USE command is issued.
+> WAIT -- suspends command file processing until user input received.
+
+
+     Other key words:    (e.g. type 'HELP EXAMPLES' )
+
+          UTILITIES      FULL-SCREEN    LIMITS    BACKUP
+          INSTALL        NEW            ERRORS    CP/M
+          EXAMPLES       FUNCTIONS      DBASE     HELP       RUNTIME
+          
+*EXIT
+*IF
+*ELSE
+*ENDIF
+> IF <exp>             -- in command file, permits conditional execution of 
+     <any statements>     commands.  ELSE clause is optional.
+  [ELSE                        
+     <any statements>]           e.g., IF STATE = 'CA' 
+  ENDIF                                    DO INSTATE (command file)
+                                       ELSE
+                                           DO OUTSTATE (command file)    
+                                       ENDIF
+*EXIT
+*INDEX
+> INDEX ON <cstring> TO <index filename> -- creates an index file for 
+       database in use based upon designated index 'key', i.e., the 
+       <cstring>. Usually index will be 'keyed' on a field name.    
+*EXIT
+*INPUT
+> INPUT ["<cstring>"] TO <memvar> -- prompts user to enter numeric or 
+       logical information into an already created memory variable.  
+        
+               e.g., . INPUT 'Prompt user for input' to X
+                     Prompt user for input: 12 <cr>                     
+                       [user input has been stored to X]
+                     ? X
+                     12
+*EXIT
+*INSERT
+>  INSERT  [[BEFORE] [BLANK]] -- inserts a record into the database in 
+       use immediately after or -- with BEFORE -- before the current record.  
+       Presents  user  with data entry format for file in use  unless  BLANK 
+       record is requested.  
+*EXIT
+*JOIN
+> JOIN -- creates a new database by combining the records of files in 
+       use in Primary and Secondary areas.  Records are added where FOR 
+       <exp> evaluates as True.  Command must be executed from primary area. 
+       Default on FIELD <list> to all.
+
+          Syntax: JOIN TO <file> FOR <expression> [FIELDS <field list>]
+
+                    e.g., . USE NAMES
+                          . SELECT SECONDARY
+                          . USE MAILLIST
+                          . SELECT PRIMARY
+                          . JOIN TO NAMEML FOR LAST <> S.LAST  
+*EXIT
+*LIST
+> LIST FILES [ON <disk drive>] [LIKE <skeleton>] -- lists all files on 
+       designated disk.  Default to logged disk.
+                 e.g., . LIST FILES ON C LIKE *.CMD
+
+> LIST [<scope>] [FOR <exp>] [<exp list>] [FIELDS <list>] [OFF] -- displays 
+       records of file in use.  Default value is all records.
+                 e.g., . LIST NEXT 25 NAME, PHONE FOR CONTRIB > 100 
+       (i.e., NAME and PHONE of next 25 who contributed more than $100.)
+
+> LIST STRUCTURE -- displays structure of file in use.
+
+> LIST MEMORY -- lists names and values of all currently defined memory 
+       variables.  
+
+> LIST STATUS -- indicates which database files are open, indexes in use, and 
+       current parameters SET.
+*EXIT
+*LOCATE
+*CONTINUE
+> LOCATE [<scope>] FOR <exp> -- finds first record of database for which FOR 
+       <exp> is True.  Use CONTINUE to find next such record. (User may 
+       manipulate record before resuming search with CONTINUE.) 
+
+                 e.g., . LOCATE ALL FOR ZIP >= '95000' .AND. ZIP < '96000'
+                       RECORD: 00123
+                       . DISPLAY
+                       . CONTINUE
+                       RECORD: 00232    
+*EXIT
+*MODIFY
+> MODIFY STRUCTURE -- allows user to alter the structure of database in use.  
+       This command will destroy all data in the file in use.  (To alter 
+       structure without loss of data, use COPY STRUCTURE and APPEND.)
+
+           e.g., . USE NAMES
+                 . COPY STRUCTURE TO TEMP
+                 . USE TEMP
+                 . MODIFY STRUCTURE   -- no data lost since file is empty
+                 . APPEND FROM NAMES  -- brings in data
+                 . COPY TO NAMES      -- destroy file with old structure
+                 . USE NAMES          -- opens new file
+                 . DELETE FILE TEMP   
+
+> MODIFY COMMAND <command file> -- provides full screen facility for 
+       creating and editing command (.CMD), text (.TXT), and format (.FMT) 
+       files.
+*EXIT
+*NOTE
+> NOTE or * -- permits the insertion of comments into a command file. 
+       Comments following NOTE or * in file will not be read or executed.
+*EXIT
+*PACK
+> PACK -- erases records marked for deletion in database in use. If indexes 
+       are in use, they will be brought up to date.
+*EXIT
+*QUIT
+> QUIT [TO <com file list>] -- exits dBASE and returns user to operating 
+       system; will start up system level programs as option. 
+*EXIT
+*READ
+> READ -- used in command files to enter full-screen mode for entry or 
+       editing of variables. The Full-screen prompts and window are created 
+       by @ SAY commands with GET phrases.
+            
+ Format file fragment:  STORE '                    ' TO name
+                        STORE '             ' TO phone
+                        @ 4,4 SAY 'Name' GET name
+                        @ 6,4 SAY 'Phone' GET phone PICTURE '(###)###-####' 
+                        READ
+*EXIT
+*RECALL
+> RECALL [<scope>] [FOR <exp>] -- reinstates record(s) marked for deletion 
+       within database in use. Default value is current record.  
+*EXIT
+*REINDEX
+> REINDEX -- allows update of index files not automatically 'reindexed' 
+       after alteration of database file. 
+
+                     e.g., . USE MAILLIST INDEX ZIP
+                           . APPEND
+                             [append operations performed] 
+                           . SET INDEX TO name 
+                           . REINDEX
+*EXIT
+*RELEASE
+> RELEASE -- eliminates unwanted memory variables and opens memory space for 
+       further use. (<skeleton> uses ? to mask any single character, * to 
+       mask all remaining characters.  
+
+             Syntax: RELEASE [<memvar list>], or [ALL]
+                     RELEASE ALL LIKE <skeleton>
+                     RELEASE ALL EXCEPT <skeleton>
+                  
+              e.g., where N, N1, N2, N10, V7 are variables in use.
+                     RELEASE ALL LIKE N?  [ N10, V7,  will remain] 
+                     RELEASE ALL LIKE N?? [ V7  will remain]
+                     RELEASE ALL EXCEPT ?1* [ N1, N10 will remain] 
+*EXIT
+*REMARK
+> REMARK -- permits the display of any characters.  In command file 
+       character entry is output.
+
+                        . REMARK abracadabara!!!
+                        abracadabara!!!        
+*EXIT
+*RENAME
+> RENAME <file name> TO <new file name> -- permits renaming of file in CP/M          
+       directory. Unless otherwise indicated, dBASE assumes that file type           
+       is DBF.  
+                   . RENAME REVIEW.CMD TO REVIEW.BAK
+*EXIT
+*REPLACE
+> REPLACE -- allows user to replace contents of specified fields of database 
+       in use. If index file is keyed on field targeted for update, index in 
+       use  will  be  automatically updated.   Default  <scope>  is  current 
+       record.             
+
+     Syntax: REPLACE [<scope>] <field> WITH <exp> [,<field2> WITH <exp2>]
+                     [FOR <exp>]
+
+        e.g., . USE MXPROJ
+              . REPLACE ALL COST WITH COST*1.1 FOR ITEM = 'ELECTRIC' 
+*EXIT
+*REPORT
+> REPORT -- used for creating a Report Form file (FRM) for displaying 
+       specified  information  from  a database in  a  user-defined  format.  
+       Outputs results to screen or printed page. 
+
+    Syntax: REPORT [FORM <form file>] [<scope>] [TO PRINT] [FOR <exp>] [PLAIN]
+*EXIT
+*RESET
+> RESET [<drive>] -- use this command after changing discs on any drive 
+       other than that containing dBASE, resets the CP/M bit map, allowing 
+       uninterrupted operation of dBASE program.  Close all files before 
+       issuing a RESET. 
+*EXIT
+*RESTORE
+> RESTORE FROM <file> [ADDITIVE] -- retrieves and activates the set of 
+       memory variables previously SAVEd to a memory file.   ADDITIVE allows 
+       you to keep currently defined variables intact, otherwise they are 
+       lost. 
+*EXIT
+*RETURN
+> RETURN -- may be used in a command file to return control to the command 
+       file which called it or to dBASE "." prompt if user called it.
+*EXIT
+*SAVE
+> SAVE TO <file> [ALL LIKE <skeleton>] [ALL EXCEPT <skeleton>]  
+       -- copies all memory variables currently in use, or only those 
+       specified by <skeleton>, to designated memory (MEM) file. <skeleton> 
+       uses ? to mask any single characters and * to mask all remaining 
+       characters.
+        
+          e.g., where N1, N2, N10, V1, V2, V10 are current variables. 
+               . SAVE TO NUMBER ALL LIKE N*  [saves N1, N2, N10]
+               . SAVE TO NUMBER ALL LIKE N?  [saves N1, N2]
+               . SAVE TO NUMBER ALL EXCEPT ?1* [saves N2, V2, ]
+*EXIT
+*SELECT
+*PRIMARY
+*SECONDARY
+> SELECT [PRIMARY / secondary] -- allows user to move between the two work 
+       areas dBASE provides, thus permitting user to work with two databases 
+       simultaneously and maintain record pointers in both. Primary area is 
+       active upon bringing up dBASE. 
+*EXIT
+*SET
+
+> SET -- sets dBASE control parameters.
+
+         Syntax: SET <parameter> [ON or OFF]
+                 SET <parameter> TO <option>
+
+       All SET commands are listed below in alphabetic order: 
+       NOTE that some SETs are of the (ON/OFF) type, and others require  some 
+       user option to be given.  Default value of ON/OFF SET commands is 
+       indicated by uppercase of ON or OFF in each listing.  
+          e.g.,    SET BELL [ON/off] -- default value is ON.
+
+> SET ALTERNATE [OFF/on] -- ON sends all screen output (except full-screen) 
+       to a disk file. (Must be preceeded by SET ALTERNATE TO <file> 
+       command).  OFF shuts off output to file.
+
+> SET BELL [ON/off] -- ON rings when invalid data is entered or data field 
+       boundary is passed.  OFF suspends ringing.
+
+
+
+> SET CARRY [OFF/on] -- ON  repeats data in current record from previous 
+       record when using APPEND in Full-screen mode.  OFF leaves field 
+       blank.
+
+> SET COLON [ON/off] -- ON displays colons to bound input variables on Full-
+       screen display.  OFF suspends display of colons.
+
+
+> SET CONFIRM [OFF/on] -- ON disables automatic skipping to next field when 
+       current field is filled while in Full-screen mode.  OFF requires a 
+       wait for <cr> before going to next field.
+
+> SET CONSOLE [ON/off] -- ON sends all output to screen.  OFF suspends all 
+       output to screen.  System will appear dead.
+
+> SET DELETED [OFF/on] -- ON disables dBASE from FINDing or processing 
+       records marked for deletion with any command allowing a <scope>, e.g.  
+       LIST, DISPLAY, COUNT.  OFF enables dBASE to see all records.
+
+
+> SET DEBUG [OFF/on] -- ON sends output created by ECHO and STEP options to 
+       printer.  OFF sends this output to the screen.
+
+> SET ECHO [OFF/on] -- ON enables monitoring of command file execution by 
+       echoing all commands to screen.  OFF sends no report on execution.
+
+> SET EJECT [ON/off] -- ON causes REPORT command to perform a form-feed 
+       (page eject) before sending report output to printer.  OFF disables 
+       the page eject.
+
+> SET ESCAPE [ON/off] -- ON allows user to abort execution of command file by 
+      hitting ESCape key.  OFF disables ESC key interrupt.
+
+> SET EXACT [OFF/on] -- ON requires exact matches in any comparison of 
+       character strings (in  FOR <exp>, FIND commands, etc.).  OFF allows 
+       matches between character strings of different lengths, 
+                e.g., 'ABC' = 'ABCDEFG'. 
+
+
+
+> SET INTENSITY [ON/off] -- ON enables inverse video or dual intensity in 
+       Full-screen operations (if allowed by hardware).  OFF disables these 
+       features. 
+
+> SET LINKAGE [OFF/on] -- ON enables movement of record pointers in both 
+       PRIMARY and SECONDARY areas, by commands which allow a <scope>, i.e. 
+       downward movement only.  OFF suspends pointer linkage.
+
+> SET PRINT [OFF/on] -- ON sends output to printer.  OFF stops printer 
+       output.
+
+> SET  RAW  [OFF/on]  -- ON DISPLAYs and LISTs data from  fields  without  a 
+       space   inserted between.   OFF shows columns of data with spacing 
+       between.
+
+> SET SCREEN [ON/off] -- ON enables Full-screen operation for APPEND, EDIT, 
+       INSERT, READ, and CREATE commands.  
+
+> SET STEP [OFF/on] -- ON aids debugging of command file by halting 
+       execution at each command in file.  OFF does not halt execution.
+
+> SET TALK [ON/off] -- ON displays results of command execution on screen.  
+       OFF suspends some output to screen.
+
+> SET ALTERNATE TO [<file>] -- creates a disk file with .TXT extension for 
+       saving screen output.  SET ALTERNATE TO closes the .TXT file.
+
+> SET DATE TO <xx/xx/xx> -- stores a string to system date, but does not 
+       perform date validation. 
+
+> SET DEFAULT TO <drive> -- makes specified drive the drive where dBASE will 
+       look for files when instructed.
+
+> SET FORMAT TO <SCREEN / print> -- SCREEN sends output from @ SAY commands 
+       to screen.  PRINT sends formatted output to printer. 
+
+> SET FORMAT TO [<format file>] -- opens .FMT file which dBASE will use to 
+       format screen for READ, APPEND, EDIT, INSERT, CREATE, @ SAY commands.  
+       SET FORMAT TO closes any open .FMT file.
+
+
+> SET HEADING TO <cstring> -- saves <cstring> internally and prints it as 
+       the Report header line.
+
+> SET INDEX TO <index file list> -- sets up index files to be used with 
+       database in use.  Other index files will be closed.  SET INDEX TO 
+       closes all index files.
+
+> SET MARGIN TO <n> -- sets the left hand margin of printer to <n> columns.
+
+
+*EXIT
+*SKIP
+> SKIP [-] [<n>] -- moves record pointer up or down <n> records within the 
+       database in use. Default value is +1.
+*EXIT
+*SORT
+> SORT ON <field> TO <file> [ASCENDING / descending] -- writes a new copy of 
+       the database in use with all records arranged in order.  Uses ASCII 
+       value to determine the order (generally Spaces, Numbers, Uppercase, 
+       Lowercase, then Symbols).  SORT will not copy records marked for 
+       deletion.  Default order is ASCENDING.
+
+                   e.g., . USE MAILLIST
+                         . SORT ON ZIP TO MAILZIP DESCENDING    
+*EXIT
+*STORE
+> STORE <exp> TO <memvar> -- takes the value of an expression and stores 
+        it to a memory variable.
+
+                   e.g., . STORE 3 to NUMBER
+                           3
+                         . STORE NUMBER + 9 TO NUMBER2
+                           12
+                         . STORE 'HOWARD' TO NAME
+                           HOWARD
+                         . ? NUMBER+NUMBER2, ' ', NAME
+                              15   HOWARD      
+*EXIT
+*SUM
+> SUM -- computes and displays the sums of numeric field(s) of database in 
+       use. The <scope> option permits selection of the range of records to 
+       sum: FOR <exp> allows summation on particular criteria. TO <memvar> 
+       stores sums to the designated memory variables. Default value of 
+       <scope> is ALL non-deleted records. 
+
+  Syntax: SUM <field> [,<field2>] [<scope>] [TO <memvar list>] [FOR <exp>]
+
+   e.g., . USE SHOPLIST [fields are ITEM, NUMBER purchased, COST of item]
+         . SUM COST * NUMBER FOR ITEM = 'food'
+         . SUM NUMBER FOR ITEM = 'hardware' TO HARD
+         . SUM NUMBER, NUMBER * COST FOR ITEM = 'hardware' .AND. COST > 9.00
+*EXIT
+*TEXT
+*ENDTEXT
+> TEXT -- in command files, allows the output of text information           
+       without use of the @ SAY or ? commands.  dBASE will read everything 
+       as text until it encounters an ENDTEXT command.
+*EXIT
+*TOTAL
+> TOTAL -- creates a summary version of an indexed or pre-sorted database by 
+       copying only records with a unique <key>.  Specified <key> must be 
+       key to the index or the key upon which database is already sorted.)  
+       Records with duplicate keys are removed.  All records with the same 
+       <key> can have their numeric fields totalled in the TO database by 
+       using the FIELDS option.
+
+       Syntax: TOTAL TO <file> ON <key > [FIELDS <field list>]
+*EXIT
+*UPDATE
+> UPDATE -- allows batch update of pre-sorted or indexed database by drawing 
+       information FROM designated database (pre-sorted on same <key>).  
+       Keys of records in USE and FROM databases are compared for match.  
+       dBASE can then ADD the numeric fields of the FROM database to 
+       corresponding fields in the USE database.  It can also REPLACE 
+       character or numeric fields of USE database with the contents of 
+       corresponding fields of the FROM file. 
+
+      Syntax: UPDATE FROM <file> ON <key > [ADD <field list>]
+                     [REPLACE <field list> or <field> WITH <field list>]
+*EXIT
+*USE
+> USE <file> [INDEX <index file list>] -- specifies the database to be used 
+       for all succeeding operations.  USE automatically closes previous 
+       file in USE.  INDEX option overlays the database with an index to 
+       give it an apparent order.  Other indexes named will be kept current.
+*EXIT
+*WAIT
+> WAIT [TO <memvar>] -- used in command files to suspend dBASE operation 
+       until keyboard input of a single character.  WAIT TO <memvar> will 
+       automatically store keyboard input into a memory variable, and may 
+       thus be used to direct the action of a command file process. 
+*EXIT
+
+
+*FUNCTIONS
+> @ --  @(<cstring1>,<cstring2>) - AT function yields an integer whose value 
+       is  the  character  number  in <cstring2> which  begins  a  substring 
+       identical to <cstring1>.
+
+> * -- deleted record function evaluates as a logical True if current record 
+       has been marked for deletion.
+
+> # -- record number function gives value of integer corresponding to 
+       current record number. 
+
+> ! -- !(<cstring>)  - upper  case function yields <cstring> in  upper  case 
+       characters.
+
+> $ -- $(<cstring>,<start>,<length>) - substring function forms a character
+       string from the specified part of another string.
+
+> CHR -- CHR(<numeric expression>) - yields the ASCII character equivalent 
+       of the <numeric expression>.  e.g. ? CHR(7)  rings bell
+
+> DATE()  -- returns the character string that contains the System  Date  in 
+       format xx/xx/xx. 
+
+> EOF -- end-of-file function evaluates as True if an attempt has been made 
+       to go past the last record in a database.  
+
+> FILE -- FILE(<file>) - existence function evaluates as a logical True if 
+       <file> exists on the default drive, and as a logical False if it does 
+       not.
+
+> INT -- INT(<numeric expression>) -- integer function rounds down to the 
+       nearest whole number 
+
+> LEN -- LEN(<cstring>) -- length function returns the number of characters 
+       in <cstring>.   ? LEN('HELLO')
+
+> RANK -- RANK(<cstring>) -- returns the (ASCII numeric) value of the 
+       leftmost character of <cstring>.
+
+> STR -- STR(<numeric  expression>,<width>[,<decimals>])  - string  function 
+       converts a numeric expression into a character string.
+
+> VAL -- VAL(<char string>) - value function converts a character string 
+       made of numerals into a numeric expression.   ? VAL('12345')
+
+> TRIM -- TRIM(<cstring>) - trim function removes trailing blanks from 
+       <cstring>.   ? TRIM('HELLO       ')+' THERE'
+
+> TYPE -- TYPE(<exp>) - function yields a one-character string that contains 
+       a  'C','N','L',  or 'U' if the <exp> is of type  Character,  Numeric, 
+       Logical, or Undefined. 
+> TEST -- 0  =  TEST(<exp>) - function to determine if  <exp>  is 
+       valid and parsable.   <exp> could be a numeric expression, 
+       another  function,  a field name,  or any combination (but 
+       not a dBASE command word).  A valid <exp> returns a 1.
+*EXIT
+*LIMITS     
+                LIMITATIONS AND CONSTRAINTS
+number of fields per record                        32 max
+number of characters per record                  1000 max
+number of records per database                  65535 max
+number of characters per character string         254 max
+accuracy of numeric fields                         10 digits
+largest number                           1.8 x 10**63 approx
+smallest number                         1.0 x 10**-63 approx
+number of memory variables                         64 max
+number of characters per command line             254 max
+number of expressions in SUM command                5 max
+number of characters in REPORT header             254 max
+number of fields in REPORT                         24 max
+number of characters in index key                  99 max
+number of pending GETS                             64 max
+number of files open at one time                   16 max
+length of command file to execute                 unlimited
+*EXIT
+*ERROR
+BAD DECIMAL WIDTH FIELD -- Reenter decimal part of field definition.
+    
+BAD FILE NAME -- Syntax error in filename.
+
+BAD NAME FIELD -- Redefine field name while in CREATE.
+
+BAD TYPE FIELD -- Must be C (character), N (numeric), or L (logical).
+
+BAD WIDTH FIELD -- Redefine size of data field between 1 and 255.
+
+ *** BEYOND STRING -- Rewrite substring ($) with correct parameter.
+
+CANNOT INSERT  - THERE  ARE NO RECORDS IN DATABASE FILE  -- Use  the  APPEND 
+        command instead.
+
+CANNOT OPEN FILE -- Check the existence or integrity of MEM or HEX file.
+
+COMMAND FILE CANNOT BE FOUND -- Check spelling and default drive.
+
+
+DATA ITEM NOT FOUND -- Rewrite REPLACE command, or check file structure 
+        for correct field name.
+
+DATABASE IN USE IS NOT INDEXED -- FIND is permitted only on indexed databases.
+
+DIRECTORY IS FULL -- The operating system's directory cannot hold anymore 
+        files.
+
+DISK IS FULL -- No space left on disk.  Use DELETE FILE to erase some 
+        unneeded files.
+
+END OF FILE FOUND UNEXPECTEDLY -- The database in USE is not in the 
+        correct format.  dBASE isn't sure that file is a DBF file. 
+
+"FIELD" PHRASE NOT FOUND -- Rewrite CHANGE command line.
+
+FILE ALREADY EXISTS -- Delete the unwanted file before RENAME.
+
+FILE DOES NOT EXIST -- Use DISPLAY FILE LIKE *.* to be sure the file 
+        exists. 
+
+FILE IS CURRENTLY OPEN -- Type a USE or CLEAR command to close the file.
+
+FORMAT FILE CANNOT BE OPENED -- Check the integrity of .FMT file.
+
+FORMAT FILE HAS NOT BEEN SET -- Set the appropriate .FMT file.
+
+ILLEGAL DATA TYPE -- SORT cannot sort on a logical field.
+
+ILLEGAL GOTO VALUE -- Record addressed must be > 0 and < 65535.
+
+ILLEGAL VARIABLE NAME -- Only alphanumerics and colons are allowed in 
+        variable and field names.  Redefine variable or field name.
+
+INDEX DOES NOT MATCH DATABASE -- dBASE cannot match the index key with the 
+        database.  Try another index file.
+
+INDEX FILE CANNOT BE OPENED --  Check spelling or index the database.
+
+
+JOIN ATTEMPTED TO GENERATE MORE THAN 65,534 RECORDS -- The FOR clause allows 
+        too many joined output records; make it more stringent.
+
+KEYS ARE NOT THE SAME LENGTH -- UPDATE command requires identical keys.
+
+MACRO IS NOT A CHARACTER STRING -- The variable to be expanded by a macro 
+        (&) must be a character string.
+
+MORE THAN 5 FIELDS TO SUM -- SUM is limited to 5 fields at a time.
+
+MORE THAN 7 INDEX FILES SELECTED -- Maximum number of index files open is 
+        seven.  Fewer will give faster performance.
+
+NESTING LIMIT VIOLATION EXCEEDED -- Cannot have more than 16 command 
+        files open at once.
+
+
+NO EXPRESSION TO SUM -- SUM command needs a numeric expression to sum.
+
+NO "FOR" PHRASE -- Rewrite JOIN command with correct syntax.
+
+NO "FROM" PHRASE -- Rewrite UPDATE command with correct syntax.
+
+NO FIND -- More a diagnostic than an error message.  dBASE couldn't find the 
+       key.  Record # has been set to 0.
+
+NON-NUMERIC EXPRESSION -- SUM command needs a numeric expression to sum.
+
+NOT A dBASE II DATABASE -- DBF file opened was not created by dBASE.
+
+"ON" PHRASE NOT FOUND -- Rewrite UPDATE or INDEX command with correct syntax.
+
+OUT OF MEMORY FOR MEMORY VARIABLES -- Reduce the number or size of memory 
+       variables.
+
+RECORD LENGTH EXCEEDS MAXIMUM SIZE (OF 1000) -- Reduce size of some fields or 
+       create a second database on a common key.
+
+RECORD NOT IN INDEX -- Index file was not updated after a record was 
+        added. Reindex the file.
+
+RECORD OUT OF RANGE -- Record number was called that is greater than 
+        number of records in database.  The index file is not current; 
+        reindex the file.
+
+SORTER INTERNAL ERROR, NOTIFY SCDP -- Internal error, contact ASHTON-TATE 
+        for support.
+
+SOURCE AND DESTINATION DATA TYPES ARE DIFFERENT -- Check that data types 
+        are both numeric, both character, or both logical.
+
+ *** SYNTAX ERROR *** -- dBASE doesn't understand the command.
+
+SYNTAX ERROR IN FORMAT SPECIFICATION -- @ SAY GET PICTURE command is 
+        improperly set up.
+
+
+SYNTAX ERROR, RE-ENTER -- INPUT, ACCEPT, REPORT require syntactically 
+        correct entry.  May expect a different data type.
+
+"TO" PHRASE NOT FOUND -- Rewrite command with correct syntax.
+
+TOO MANY CHARACTERS -- Non-Full-Screen only.  Data entered exceeds 
+        allotted length of field.
+
+TOO MANY FILES ARE OPEN -- Only 16 files of all types (Command, .FMT, .NDX) 
+        may be open at one time.
+
+TOO MANY MEMORY VARIABLES -- There is a maximum of 64 memory variables.
+
+TOO MANY RETURNS ENCOUNTERED -- Probably an error in the structure of a 
+        command file.  Check the number and location of RETURNs.
+
+"WITH" PHRASE NOT FOUND -- Rewrite REPLACE command with correct syntax.
+
+UNASSIGNED FILE NUMBER -- Internal error, contact ASHTON-TATE for support.  
+        If HELP is used, DBASEMSG.TXT file may be missing from drive.
+
+ *** UNKNOWN COMMAND -- Check spelling.  dBASE doesn't understand command.
+
+VARIABLE CANNOT  BE  FOUND  -- Need to create the  variable,  or  check  the 
+        spelling of the field name in database structure.
+
+ ***ZERO DIVIDE  -- There  was an attempt to divide a numeric  expression  by 
+        zero.
+*EXIT
+*RUNTIME
+
+                    
+
+      dBASE  II RunTime is a product from Ashton-Tate designed to assist the 
+application developer to market a software package written in dBASE II.
+
+      dBASE II RunTime features the ability to encrypt dBASE II programs and 
+to  run  only the application as designed  by  the  developer.   Ashton-Tate 
+publishes  a  catalog  of existing applications written  in  dBASE  II,  and 
+provides the software developer with other aids to the marketing effort.
+
+      If  you develop an application using dBASE II that you wish to market, 
+contact Ashton-Tate's RunTime Coordinator for all the information on how  to 
+proceed.   For  information  on applications that will run on your dBASE  II 
+system right now, ask for the Application Marketing Referral Service. 
+
+*EXIT     
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

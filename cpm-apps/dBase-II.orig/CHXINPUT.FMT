@@ -1,0 +1,37 @@
+* CHXINPUT.FMT CALLED BT CHXMENU.CMD
+@  7,20 SAY "     CHECKBOOK INPUT SCREEN  "
+@  9,10 SAY "LAST CHECK "
+@  9,20 SAY #-FIRSTREC+LASTCHK
+@ 11, 0 SAY "+-------------------------------------------------"
+@ 11,50 SAY "-----------------------------+"
+@ 12, 0 SAY "!"
+@ 12,79 SAY "!"
+@ 13, 0 SAY "!     CHECK NO"
+@ 13,14 GET CHKNO
+@ 13,23 SAY "or <cr> to finish                 DATE"
+@ 13,62 GET DATE PICT "##/##/##"
+@ 13,79 SAY "!"
+@ 14, 0 SAY "!"
+@ 14,79 SAY "!"
+@ 15, 0 SAY "!"
+@ 15,79 SAY "!"
+@ 16, 0 SAY "!     PAY TO"
+@ 16,13 GET PAYTO
+@ 16,57 SAY "AMOUNT $"
+@ 16,65 GET AMT PICTURE "#######.##"
+@ 16,79 SAY "!"
+@ 17, 0 SAY "!"
+@ 17,79 SAY "!"
+@ 18, 0 SAY "!"
+@ 18,79 SAY "!"
+@ 19, 0 SAY "!"
+@ 19,79 SAY "!"
+@ 20, 0 SAY "!     MEMO"
+@ 20,11 GET MEMO
+@ 20,57 SAY "enter    <cr>"
+@ 20,62 GET can
+@ 20,79 SAY "!"
+@ 21, 0 SAY "!"
+@ 21,79 SAY "!"
+@ 22, 0 SAY "+-------------------------------------------------"
+@ 22,50 SAY "-----------------------------+"

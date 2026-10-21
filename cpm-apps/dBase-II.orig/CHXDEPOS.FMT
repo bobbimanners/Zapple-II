@@ -1,0 +1,26 @@
+* CHXDEPOS.FMT  CALLED BY CHXMENU.CMD
+@  8, 5 SAY "CHECKBOOK DEPOSIT SLIP for DEPOSITS.DBF"
+@  9, 0 SAY "+-------------------------------------------------"
+@  9,50 SAY "--+"
+@ 10, 0 SAY "!"
+@ 10,52 SAY "!"
+@ 11, 0 SAY "!    DATE"
+@ 11,10 GET DATE PICTURE "##/##/##"
+@ 11,21 SAY "or <cr> to finish              !"
+@ 12, 0 SAY "!"
+@ 12,52 SAY "!"
+@ 13, 0 SAY "!    AMOUNT OF DEPOSIT $"
+@ 13,25 GET AMT PICTURE "#######.##"
+@ 13,52 SAY "!"
+@ 14, 0 SAY "!"
+@ 14,52 SAY "!"
+@ 15, 0 SAY "!    REC'D FROM"
+@ 15,15 GET PAIDFROM
+@ 15,52 SAY "!"
+@ 16, 0 SAY "!"
+@ 16,52 SAY "!"
+@ 17, 0 SAY "+-------------------------------------------------"
+@ 17,50 SAY "--+"
+@ 19,0 SAY "  ENTER NEGATIVE DEPOSITS TO INDICATE BANK FEES"
+
+
