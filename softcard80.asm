@@ -1909,6 +1909,7 @@ AXSRDONE    LD      (AXSTAT),A
             CALL    AXM2A
 AXRETURN    LD      A,(AXSTAT)
             LD      L,A
+            LD      H,0            ; CP/M byte result: clear high byte
             RET
 
 ; Copy one 36-byte auxiliary FCB into MAIN staging; preserve the caller's
@@ -2037,6 +2038,7 @@ AXPOSTR     CALL    AXCKDMA
             CALL    AXM2A
 AXFRET      LD      A,(AXSTAT)
             LD      L,A
+            LD      H,0            ; CP/M byte result: clear high byte
             RET
 
 ; MAIN to AUX copy. With RAMRD=MAIN the code remains executable while
