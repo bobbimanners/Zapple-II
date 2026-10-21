@@ -3670,12 +3670,48 @@ C_RAWPUT    LD      A,E          ; raw output also updates virtual display
 C_PUT       LD      A,80H       ; cooked output, both background/foreground
 			OR		E
 			LD		HL,COUT		; B803 cooked 6502 vector
-C_SENDA		LD		(AREG),A
-			LD		(ADDR),HL
-			LD		A,1
-			LD		(CMD),A
-			LD		(SOFTCARD),A
-			RET
+; Step 3: CP/M terminal ^S/^Q output flow control.  All BDOS and
+; BIOS console output passes through C_SENDA (cooked and raw).
+; Only foreground output polls the keyboard.  Preserve a pending
+; ordinary key; consume ^S/^Q, which applications must not see.
+C_SENDA     PUSH    AF            ; A is the character being sent
+            PUSH    HL            ; HL is the 6502 output vector
+            CALL    CFO_CHECK
+            POP     HL
+            POP     AF
+            LD      (AREG),A
+            LD      (ADDR),HL
+            LD      A,1
+            LD      (CMD),A
+            LD      (SOFTCARD),A
+            RET
+
+; Read Apple II $C000 keyboard latch from SoftCard Z80 $E000.
+; Reading $C010 ($E010 to Z80) clears the keyboard strobe.
+; Do not consume any other waiting key while output is running.
+CFO_CHECK   CALL    SCHISFG       ; background tasks must not take input
+            RET     NZ
+CFO_POLL    LD      A,(0E000H)    ; physical $C000 (key + strobe)
+            OR      A
+            RET     P             ; bit 7 clear: no key pending
+            AND     07FH
+            CP      013H          ; ^S: stop output
+            JR      Z,CFO_STOP
+            CP      011H          ; ^Q without ^S: discard quietly
+            RET     NZ            ; other keys belong to the application
+            LD      A,(0E010H)    ; consume ^Q
+            RET
+CFO_STOP    LD      A,(0E010H)    ; consume ^S
+CFO_WAIT    LD      A,(0E000H)
+            OR      A
+            JP      P,CFO_WAIT    ; no key: remain paused
+            AND     07FH
+            CP      011H
+            JR      Z,CFO_GO
+            LD      A,(0E010H)    ; discard other keys while paused
+            JR      CFO_WAIT
+CFO_GO      LD      A,(0E010H)    ; consume ^Q and resume this output
+            RET
 
 ; CP/M BDOS function 6: E=FF nonblocking read, else raw output.
 ; This route uses the raw 6502 entry (CR and LF independent).
