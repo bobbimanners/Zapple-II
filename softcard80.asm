@@ -26,7 +26,7 @@
 ; 
 
 BDOSADDR	EQU		08100H			; 
-STCKTOP		EQU		0A800H			; Dedicated 1K stack $A400-$A7FF
+STCKTOP		EQU		0A800H			; Stack still ends at $A800; base-69 uses its low region
 
 SOFTCARD	EQU		0E400H			; Softcard in slot 4 ($C400)
 
@@ -5172,7 +5172,7 @@ PRODOS		LD		BC,OFFSET		; Add offset to convert Z80->6502 address
 
 ; Populate the PATH buffer (and PATHLEN) by copying from FCB
 ; If the FCB contains A:TEST____.TXT then the PATH buffer will be A/TEST.TXT
-; Any '$' character in extension is converted to '8' so ProDOS can handle it
+; Unrepresentable 8.3 names are escaped as Z.<13 base36 digits>
 ; DE contains a pointer to the FCB
 ; IX contains pointer to the path buffer into which to write
 FCB2PATH	PUSH	IX				; Copy IX->IY
@@ -5197,8 +5197,13 @@ F2PS1		ADD		A,'A'-1			; Convert to drive letter
 
 			LD		A,(HL)			; First character of filename
 			AND		07FH
-			CP		' '				; Is it space? ie: no file specified
-			JP		Z,F2PS7			; Don't handle filename or extension
+			CP		' '				; Blank DFCB opens drive directory
+			JP		Z,F2PS7
+
+            ; Returns A=0 for a normal name, FF if already escaped.
+            CALL    B69PTH
+            OR      A
+            RET     NZ
 
 F2PL1		; Handle the filename - up to 8 characters
 			LD		A,C				; Already copied 8 filename characters?
@@ -5214,7 +5219,15 @@ F2PL1		; Handle the filename - up to 8 characters
 			INC		IX				; Next byte of PATH buffer
 			JR		F2PL1
 
-F2PS3		; Eat any space characters at end of filename
+F2PS3      ; An empty extension has no dot (and never reads beyond FCB).
+            PUSH    HL
+            LD      HL,9
+            ADD     HL,DE       ; FCB first extension character
+            LD      A,(HL)
+            AND     07FH
+            POP     HL
+            CP      ' '
+            JP      Z,F2PS7
 F2PL2		LD		A,(HL)			; Read next character from FCB
 			AND		07FH
 			CP		' '				; Is it space?
@@ -5236,10 +5249,7 @@ F2PL3		LD		A,B				; Number of extension chars copied
 			AND		07FH
 			CP		' '				; End of extension?
 			JR		Z,F2PS7
-			CP		'$'				; ProDOS filename translation
-			JR		NZ,F2PS5
-			LD		A,'8'			; Replace '$' with '8'
-F2PS5		LD		(IX+0),A		; Copy to PATH buffer
+			LD		(IX+0),A			; Copy to PATH buffer (no lossy $/8 swap)
 			INC		C				; Overall character count
 			INC		B				; Extension character count
 			INC		HL				; Next byte of filename in FCB
@@ -5271,14 +5281,16 @@ CFL2		LD		(HL),A
 ; This operation is almost the inverse of FCB2PATH.  It takes a pointer to the
 ; beginning of the ProDOS dirent and converts it to FCB format (8.3 with
 ; spaces for any unused characters.)
-; Any '8' character in extension is converted back to '$' (see FCB2PATH)
+; Z.<13 base36> ProDOS escapes are decoded into exact CP/M 8.3 fields.
 ; Handles '*' wildcard character
 ; HL points to the file entry in the ProDOS directory
 ; B contains the drive number (1 for A:, 2 for B: etc)
 ; C controls whether file size is populated in FCB (C=0 disables file size)
 ; The FCB is written to the buffer pointed to by DMAADDR
 ; Trashes pretty much all registers (except IX, IY)
-NAME2FCB	PUSH	BC				; We will need C later
+NAME2FCB   XOR     A
+            LD      (B69BAD),A   ; only directory search cares about BAD
+            PUSH    BC               ; We will need C later
 			PUSH	HL				; Remember source ProDOS dir entry for EOF
 			EX		DE,HL			; Stash HL in DE for call to CLRFCB
 			CALL	CLRFCB			; Clear FCB at DMAADDR
@@ -5291,6 +5303,22 @@ NAME2FCB	PUSH	BC				; We will need C later
 			LD		A,B				; Move drive number to A
 			LD		(DE),A			; Write drive number
 			LD		B,0				; Use B to count chars written
+
+            ; Only 15-character names may use the Z.<13> escape.
+            LD      A,C
+            CP      15
+            JR      NZ,N2FL1
+            PUSH    BC
+            PUSH    HL
+            PUSH    DE
+            CALL    B69TRY
+            POP     DE
+            POP     HL
+            POP     BC
+            OR      A
+            JP      Z,N2FS6      ; decoded a valid CP/M FCB
+            CP      1
+            JP      NZ,N2FS6     ; malformed alias (B69BAD set)
 N2FL1		INC		HL				; Advance source pointer
 			INC		DE				; Advance destination pointer
 			LD		A,C				; Get count of chars remaining
@@ -5306,17 +5334,8 @@ N2FL1		INC		HL				; Advance source pointer
 			JR		Z,N2FS2			; Prepare to copy the extension
 			CP		'*'				; See if it is an asterix
 			JR		Z,N2FS3			; Handle asterix wildcard
-			LD		(DE),A			; Write character
-			
-			CP		'8'				; See if character in name is '8'
-			JR		NZ,N2FS0		; If not, then no substitution
-			LD		A,B				; See how many chars have been written
-			CP		8				; >=8? If so we are in the extension
-			JR		C,N2FS0			; If not, then no substitution
-			LD		A,'$'			; Otherwise substitute '8'->'$'
-			LD		(DE),A			; Re-write the substituted character
-
-N2FS0		INC		B				; Increment count of chars written
+			LD		(DE),A			; Write character verbatim
+			INC		B				; Increment count of chars written
 N2FS1		DEC		C				; Decrement count of chars remaining
 			JP		N2FL1			; Loop
 
@@ -5472,33 +5491,8 @@ N2FSTORE	LD		HL,(DMAADDR)
 ; sufficient for STAT's per-file size column, NOT a filesystem allocator.
 ; Overwrites ALL 16 map bytes, so no separate clearing pass is needed.
 ; Trashes AF, BC, DE, HL; preserves IX and IY.
-N2FMAP		ADD		A,15			; Round record count up to 16
-			RRCA
-			RRCA
-			RRCA
-			RRCA
-			AND		0FH			; (records+15)/16 (0..8)
-			LD		C,A
-			LD		HL,(DMAADDR)
-			LD		DE,16
-			ADD		HL,DE			; Offset 16: start of allocation map
-			LD		B,8				; Eight 16-bit block entries
-			LD		D,1				; Fake block number, nonzero
-N2FMLP		LD		A,C
-			OR		A
-			JR		Z,N2FMZERO
-			LD		A,D				; Populated allocation entry
-			DEC		C
-			JR		N2FMSTORE
-N2FMZERO	XOR		A				; Unused block entry
-N2FMSTORE	LD		(HL),A			; Little endian, low byte
-			INC		HL
-			XOR		A
-			LD		(HL),A			; High byte of block number
-			INC		HL
-			INC		D
-			DJNZ	N2FMLP
-			RET
+; N2FMAP relocated to spare MAIN space after SEARCH_EOF.
+
 
 ; Read 512 byte block of directory
 ; Used by F_SFIRST and F_SNEXT
@@ -5590,6 +5584,9 @@ CHKDIRENT	LD		B,0				; Hardcode drive A: MATCHFCB ignores it
 			CALL	NAME2FCB		; Create FCB in DMA buffer
 			POP		DE				; Recover DE
 			POP		HL				; Recover HL
+            LD      A,(B69BAD) ; malformed escaped entry cannot match
+            OR      A
+            JR      NZ,CDES1
 			PUSH	HL				; Preserve HL
 			PUSH	DE				; Preserve DE
 			CALL	MATCHFCB		; Compare search FCB w/ FCB in DMA buffer
@@ -6705,6 +6702,7 @@ DIRBUF4		DEFS	128
 
 
 			;ORG		9000H	; Try this - WORKS
+
 			ORG		9800H	; Try this - WORKS
 IOBUF1		DEFS	1024
 IOBUF2		DEFS	1024
@@ -6772,6 +6770,36 @@ SEARCH_EOF	LD		DE,DFCB
 ; Full aux FCB/DMA pointer translation is NOT implemented.
 ; Code and scratch storage reside in the spare $A000-$A3FF main bank.
 ; =====================================================================
+
+; Size-to-allocation-map synthesis, relocated from resident BDOS.
+; All internal JR/DJNZ targets remain within this block.
+N2FMAP		ADD		A,15			; Round record count up to 16
+			RRCA
+			RRCA
+			RRCA
+			RRCA
+			AND		0FH			; (records+15)/16 (0..8)
+			LD		C,A
+			LD		HL,(DMAADDR)
+			LD		DE,16
+			ADD		HL,DE			; Offset 16: start of allocation map
+			LD		B,8				; Eight 16-bit block entries
+			LD		D,1				; Fake block number, nonzero
+N2FMLP		LD		A,C
+			OR		A
+			JR		Z,N2FMZERO
+			LD		A,D				; Populated allocation entry
+			DEC		C
+			JR		N2FMSTORE
+N2FMZERO	XOR		A				; Unused block entry
+N2FMSTORE	LD		(HL),A			; Little endian, low byte
+			INC		HL
+			XOR		A
+			LD		(HL),A			; High byte of block number
+			INC		HL
+			INC		D
+			DJNZ	N2FMLP
+			RET
 
             ORG     0A080H
 ; Auxiliary page zero: WBOOT -> LC DF06, BDOS -> LC DF00.
@@ -6933,7 +6961,7 @@ RODENY	JP		RODISK		; CP/M: BDOS Err on d: R/O
 ; Two-slot ProDOS handle cache. The existing $9800/$9C00 1K buffers
 ; remain the only OPEN buffers. The directory search and CCP loader
 ; use uncached, pinned FRNs: cache eviction only considers CSTAT1/2=1.
-; All lookup keys are pathname length plus <=14 ProDOS pathname bytes.
+; All lookup keys are pathname length plus <=17 bytes (drive/name).
 ; CMRU=1/2 is last used slot; eviction prefers the other one.
 ; This code occupies the otherwise unused MAIN $A200-$A3FF region.
 ; =====================================================================
@@ -6990,7 +7018,7 @@ CACHEPUT    LD      (CSLOT),A
             CP      1
             JR      Z,CP_COPY
             LD      DE,CNAME2
-CP_COPY     LD      BC,15
+CP_COPY     LD      BC,18
             LDIR
             LD      A,(CSLOT)
             LD      (CMRU),A
@@ -7081,8 +7109,8 @@ CSTAT1      DEFB    0
 CSTAT2      DEFB    0
 CMRU        DEFB    0
 CSLOT       DEFB    0
-CNAME1      DEFS    15
-CNAME2      DEFS    15
+CNAME1      DEFS    18
+CNAME2      DEFS    18
 
 ; A CP/M FCB is logically open as S2=$7E (or legacy $FE).
 ; During BDOS I/O we temporarily substitute the cached physical FRN;
@@ -7203,11 +7231,429 @@ TM_NEXT     ADD     HL,DE
             JR      NZ,TM_NEXT
             RET
 
-            ORG		0A400H
-; Dedicated stack: the live directory buffer ends at ~$97F2.
-; Z80 SP=$A800, grows down into $A400-$A7FF, not DIRBUF.
-; This intentionally limits simultaneously open ProDOS files to two.
-Z80STACK	DEFS	1024
+            ORG     0A400H
+; Experimental base-69 codec lives at the bottom of the resident stack
+; reservation. Z80 SP still starts at $A800. Check available stack!
+; Zapple-II base-69/base-36 arithmetic prototype for Udo Munk Z80asm.
+; ------------------------------------------------------------------
+; This module is NOT installed into the resident BDOS. It is a standalone
+; callable implementation to be placed in available Z80 RAM.
+;
+; B69ENC: HL = 11 FCB name/extension bytes (no drive byte).
+;         DE = 15-byte output buffer.
+;         Output is always 15 ASCII bytes: Z.<13 base36 chars>.
+;         A = 0 success, FF invalid character.
+;         Ignores the FCB attribute bits (high bit).
+;
+; B69DEC: HL = 15 ASCII bytes (already verified ProDOS name length = 15).
+;         DE = 11-byte output FCB name/extension field.
+;         A = 0 success, FF invalid prefix/base36 or number >=69^11.
+;         Caller MUST also validate CP/M name format and reserve Z.<13>.
+;
+; Both entries clobber AF BC DE HL IX; preserve IY; use shared scratch.
+; They are NOT reentrant. Name conversion is serialized inside BDOS.
+;
+; To include in source, place the routines/data in RAM without crossing an
+; ORG boundary or the two ProDOS 1K buffers. Label names are <= 8 chars.
+;
+; Use without inserting a separate ORG here. Start with B69ENC label.
+
+B69ENC  LD      (B69INT),HL
+        LD      (B69OUT),DE
+        CALL    B69CLR
+        LD      HL,(B69INT)
+        LD      B,11
+E69LOOP LD      A,(HL)
+        AND     07FH           ; ignore CP/M attribute flag
+        CP      020H
+        JP      C,B69ERR
+        CP      07FH
+        JP      NC,B69ERR
+        CP      061H           ; skip lowercase ASCII a-z
+        JR      C,E69MAP
+        CP      07BH
+        JP      C,B69ERR
+        SUB     26
+E69MAP  SUB     020H           ; 0..68 base69 digit
+        PUSH    BC
+        PUSH    HL
+        CALL    B69M69
+        POP     HL
+        POP     BC
+        INC     HL
+        DJNZ    E69LOOP
+        LD      HL,(B69OUT)
+        LD      (HL),'Z'
+        INC     HL
+        LD      (HL),'.'
+        INC     HL
+        LD      (B69OUT),HL   ; 13-byte payload beginning
+        LD      DE,12
+        ADD     HL,DE         ; write digits from right to left
+        LD      B,13
+E69OUT  PUSH    BC
+        PUSH    HL
+        LD      A,36
+        CALL    B69DIV        ; A=number modulo 36; big /= 36
+        POP     HL
+        POP     BC
+        CP      10
+        JR      C,E69NUM
+        ADD     A,'A'-10
+        JR      E69PUT
+E69NUM  ADD     A,'0'
+E69PUT  LD      (HL),A
+        DEC     HL
+        DJNZ    E69OUT
+        XOR     A
+        RET
+
+B69DEC  LD      (B69INT),HL
+        LD      (B69OUT),DE
+        LD      A,(HL)
+        CP      'Z'
+        JP      NZ,B69ERR
+        INC     HL
+        LD      A,(HL)
+        CP      '.'
+        JP      NZ,B69ERR
+        INC     HL
+        LD      (B69INT),HL   ; first payload character
+        CALL    B69CLR
+        LD      HL,(B69INT)
+        LD      B,13
+D69LOOP LD      A,(HL)
+        CP      '0'
+        JP      C,B69ERR
+        CP      03AH
+        JR      C,D69NUM
+        CP      'A'
+        JP      C,B69ERR
+        CP      05BH
+        JP      NC,B69ERR
+        SUB     'A'-10
+        JR      D69ADD
+D69NUM SUB     '0'
+D69ADD  PUSH    BC
+        PUSH    HL
+        CALL    B69M36
+        POP     HL
+        POP     BC
+        INC     HL
+        DJNZ    D69LOOP
+        LD      HL,(B69OUT)
+        LD      DE,10
+        ADD     HL,DE
+        LD      B,11
+D69OUT  PUSH    BC
+        PUSH    HL
+        LD      A,69
+        CALL    B69DIV        ; A=number modulo 69; big /=69
+        POP     HL
+        POP     BC
+        CP      65             ; first 65 chars map to ASCII 32..96
+        JR      C,D69LOW
+        ADD     A,26           ; last 4 chars map to {|}~
+D69LOW  ADD     A,020H
+        LD      (HL),A
+        DEC     HL
+        DJNZ    D69OUT
+        ; Reject input >= 69^11 by ensuring quotient becomes zero.
+        LD      HL,B69BIG
+        LD      B,9
+D69CHK  LD      A,(HL)
+        OR      A
+        JP      NZ,B69ERR
+        INC     HL
+        DJNZ    D69CHK
+        XOR     A
+        RET
+
+B69ERR  LD      A,0FFH
+        RET
+
+; Clear 9-byte big-endian intermediate integer.
+B69CLR  LD      HL,B69BIG
+        LD      B,9
+        XOR     A
+C69LOOP LD      (HL),A
+        INC     HL
+        DJNZ    C69LOOP
+        RET
+
+; BIGNUM = BIGNUM*69 + A (0..68).
+; Carry flows from least-significant (highest-address) byte upwards.
+B69M69  LD      C,A
+        LD      HL,B69BIG+8
+        LD      B,9
+M69LOOP PUSH    HL
+        LD      L,(HL)
+        LD      H,0
+        LD      D,H
+        LD      E,L            ; DE=old byte
+        ADD     HL,HL          ; 2x
+        ADD     HL,HL          ; 4x
+        ADD     HL,HL          ; 8x
+        ADD     HL,HL          ; 16x
+        ADD     HL,HL          ; 32x
+        ADD     HL,HL          ; 64x
+        ADD     HL,DE          ; 65x
+        SLA     E
+        RL      D
+        SLA     E
+        RL      D             ; DE=4x
+        ADD     HL,DE          ; 69x
+        LD      E,C
+        LD      D,0
+        ADD     HL,DE          ; plus incoming carry
+        LD      C,H            ; outgoing carry
+        LD      A,L            ; new byte
+        POP     HL
+        LD      (HL),A
+        DEC     HL
+        DJNZ    M69LOOP
+        RET
+
+; BIGNUM = BIGNUM*36 + A (0..35).
+B69M36  LD      C,A
+        LD      HL,B69BIG+8
+        LD      B,9
+M36LOOP PUSH    HL
+        LD      L,(HL)
+        LD      H,0
+        ADD     HL,HL
+        ADD     HL,HL          ; 4x
+        LD      D,H
+        LD      E,L            ; DE=4x
+        ADD     HL,HL
+        ADD     HL,HL
+        ADD     HL,HL          ; 32x
+        ADD     HL,DE          ; 36x
+        LD      E,C
+        LD      D,0
+        ADD     HL,DE
+        LD      C,H
+        LD      A,L
+        POP     HL
+        LD      (HL),A
+        DEC     HL
+        DJNZ    M36LOOP
+        RET
+
+; BIGNUM /= A (base 36 or 69); return remainder in A.
+; Eight quotient bits per byte, MSB first, using shift-and-subtract.
+B69DIV  LD      (B69BASE),A
+        PUSH    IX
+        LD      IX,B69BASE
+        LD      HL,B69BIG
+        LD      B,9
+        LD      C,0            ; remainder so far
+V69BYTE PUSH    BC              ; save byte count
+        LD      E,(HL)         ; original dividend byte
+        LD      D,0            ; new quotient byte
+        LD      B,8
+V69BIT  SLA     E               ; incoming dividend bit -> carry
+        LD      A,C
+        ADC     A,A            ; rem*2 + incoming bit, 0..137
+        CP      (IX+0)         ; compare to divisor
+        JR      C,V69ZERO
+        SUB     (IX+0)
+        LD      C,A            ; updated remainder
+        SCF                     ; quotient bit 1
+        JR      V69Q
+V69ZERO LD      C,A
+        OR      A               ; quotient bit 0 (clear carry)
+V69Q    RL      D               ; append quotient bit
+        DJNZ    V69BIT
+        LD      (HL),D
+        INC     HL
+        LD      A,C             ; preserve remainder while popping counter
+        POP     BC
+        LD      C,A
+        DJNZ    V69BYTE
+        POP     IX
+        LD      A,C
+        RET
+
+B69INT  DEFW    0
+B69OUT  DEFW    0
+B69BASE DEFB    0
+B69BIG  DEFS    9
+
+; Check whether an FCB name can be represented *unchanged* on ProDOS.
+; HL-> eleven FCB name bytes. A=0 normal; FF requires base69 escape.
+; B,C,DE,HL clobbered.  Name and extension must be canonical
+; (spaces only at the end of each field), no lower-case or punctuation.
+B69NEED LD      A,(HL)
+        AND     07FH
+        CP      'A'
+        JR      C,B69REQ
+        CP      'Z'+1
+        JR      NC,B69REQ
+        LD      B,8
+        CALL    B69DIR
+        RET     NZ
+        LD      B,3
+        CALL    B69DIR
+        RET
+B69DIR  LD      E,0            ; seen-padding marker
+B69DL   LD      A,(HL)
+        AND     07FH
+        CP      ' '
+        JR      Z,B69PAD
+        LD      D,A
+        LD      A,E
+        OR      A
+        JR      NZ,B69REQ
+        LD      A,D
+        CP      '0'
+        JR      C,B69REQ
+        CP      '9'+1
+        JR      C,B69DG
+        CP      'A'
+        JR      C,B69REQ
+        CP      'Z'+1
+        JR      NC,B69REQ
+        JR      B69DG
+B69PAD  LD      E,1
+B69DG   INC     HL
+        DJNZ    B69DL
+        XOR     A
+        RET
+B69REQ  LD      A,0FFH
+        RET
+
+; Validate a decoded name: printable uppercase canonical FCB, no CP/M
+; directory metacharacters, must actually require escaping.
+; HL -> 11 decoded bytes; A=0 valid, FF invalid; trashes BC/DE/HL.
+B69ILGL DEFB    03CH,03EH,02CH,02EH,03BH,03AH,03DH,03FH,02AH,05BH,05DH
+B69BAD  DEFB    0
+; Bridge from FCB2PATH; keep IX/IY and source DE unchanged.
+; Returns A=0 for ordinary name, FF if encoded; DE preserved.
+B69PTH  PUSH    BC
+        PUSH    DE
+        PUSH    HL
+        CALL    B69NEED
+        POP     HL
+        POP     DE
+        POP     BC
+        OR      A
+        RET     Z
+        ; Only canonical CP/M 8.3 names can round-trip through DIR.
+        PUSH    BC
+        PUSH    DE
+        PUSH    HL
+        CALL    B69CAN
+        POP     HL
+        POP     DE
+        POP     BC
+        OR      A
+        JR      NZ,B69PFAL
+        PUSH    DE
+        PUSH    IX
+        POP     DE
+        CALL    B69ENC
+        POP     DE
+        OR      A
+        JR      NZ,B69PFAL
+        LD      A,17
+        LD      (IY+0),A
+        LD      A,0FFH
+        RET
+B69PFAL XOR     A            ; invalid input: safe empty pathname
+        LD      (IY+0),A
+        DEC     A
+        RET
+
+; Decode a 15-character Z.<13> alias, or decline if not our prefix.
+; HL=dirent, DE=DMA FCB drive byte; clobbers BC/DE/HL and IX.
+; Return A=0 valid, A=1 not an alias, A=FF invalid alias (skip entry).
+B69TRY  INC     HL
+        LD      A,(HL)
+        CP      'Z'
+        JR      NZ,B69TNOT
+        INC     HL
+        LD      A,(HL)
+        CP      '.'
+        JR      NZ,B69TNOT
+        DEC     HL
+        INC     DE
+        CALL    B69DEC
+        OR      A
+        JR      NZ,B69TBAD
+        LD      HL,(DMAADDR)
+        INC     HL
+        CALL    B69CAN
+        OR      A
+        RET     Z
+B69TBAD LD      A,0FFH
+        LD      (B69BAD),A
+        RET
+B69TNOT LD      A,1
+        RET
+B69CAN  PUSH    HL
+        LD      A,(HL)
+        CP      ' '
+        JR      Z,B69CERR
+        LD      B,8
+        CALL    B69PART
+        OR      A
+        JR      NZ,B69CERR
+        LD      B,3
+        CALL    B69PART
+        OR      A
+        JR      NZ,B69CERR
+        POP     HL
+        CALL    B69NEED
+        OR      A
+        JP      Z,B69REQ       ; only non-native CP/M names are escaped
+        XOR     A
+        RET
+B69CERR POP     HL
+        JP      B69REQ
+B69PART LD      C,0            ; seen spaces
+B69PLP  LD      A,(HL)
+        CP      ' '
+        JR      Z,B69PSP
+        CP      021H
+        JP      C,B69REQ
+        CP      07FH
+        JP      NC,B69REQ
+        LD      D,A
+        LD      A,C
+        OR      A
+        JP      NZ,B69REQ
+        LD      A,D
+        CP      061H
+        JR      C,B69PCK
+        CP      07BH
+        JP      C,B69REQ
+B69PCK  PUSH    HL
+        PUSH    BC
+        LD      HL,B69ILGL
+        LD      B,11
+B69PCL  CP      (HL)
+        JR      Z,B69PERR
+        INC     HL
+        DJNZ    B69PCL
+        POP     BC
+        POP     HL
+        JR      B69POK
+B69PERR POP     BC
+        POP     HL
+        JP      B69REQ
+B69PSP  LD      C,1
+B69POK  INC     HL
+        DJNZ    B69PLP
+        XOR     A
+        RET
+
+
+B69END
+
+; Stack grows from $A800 down to B69END (roughly 0.5KB remaining).
+; Compile guard: negative DEFS if the codec doesn't fit.
+Z80STACK    DEFS    STCKTOP-B69END
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
