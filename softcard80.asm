@@ -1759,17 +1759,21 @@ UCS1       DJNZ    UCL1
 ; Shared confirmation reader. A=0 for Y; A=1 for N.
 ; Invalid input is ignored; C_READ echoes typed characters.
 CCPYESNO   CALL    C_WRITESTR
-CYKEY      CALL    C_READ
+CYKEY      CALL    XSCCPKEY      ; check active XSUB stream first
            AND     0DFH
            CP      'Y'
            JR      Z,CYYES
            CP      'N'
            JR      NZ,CYKEY
+           XOR     A
+           LD      (XSLEFT),A   ; discard pending synthetic CR of Y/N record
            LD      E,13
            CALL    C_WRITE
            LD      A,1
            RET
-CYYES      LD      E,13
+CYYES      XOR     A
+           LD      (XSLEFT),A
+           LD      E,13
            CALL    C_WRITE
            XOR     A
            RET
@@ -1986,7 +1990,19 @@ RODENY	JP		RODISK		; CP/M: BDOS Err on d: R/O
 ; or A=0 when there is no pending command. Consume record ON DISK first.
 ; All filesystem buffers/ProDOS handles are MAIN-owned; only the CCP
 ; invokes this routine. The fixed FCB explicitly selects drive A.
-CCPSUB      LD      A,(SBHALT)
+; Native XSUB: this same record reader is called from the CCP and
+; the AUX BDOS 0Ah handler.  A=1 means SUBREC has a valid next line;
+; A=0 means absent/invalid submission (fall back to keyboard).
+CCPSUB      XOR     A
+            LD      (XSLEFT),A    ; discard a previous program's partial line
+            CALL    XSNEXT       ; preserves the MAIN DMA pointer
+            LD      (SBFROM),A    ; current CCP line came from $$$.SUB
+            OR      A
+            JR      NZ,SBCCOPY
+            LD      (XSFLAG),A    ; stream ended, future scripts start disabled
+            RET
+SBCCOPY     JP      SBCOPY
+SBNEXT      LD      A,(SBHALT)
             OR      A
             JR      Z,SBSTART
             XOR     A
@@ -2064,7 +2080,7 @@ SBEMPTY     LD      DE,SUBFCB
             CALL    F_DELETE    ; last command: ERA $$$.SUB
             OR      A
             JP      NZ,SBERROR
-            JP      SBCOPY
+            JP      SBDONE
 SBTRUNC     ; Truncate an open ProDOS file to R0..R2 * 128 bytes.
             ; IO_BEGIN resolves logical S2=$7E to a physical ProDOS FRN.
             LD      IX,SUBFCB
@@ -2094,6 +2110,8 @@ SBSHIFT     ADD     HL,HL
             LD      A,B
             OR      A
             JP      NZ,SBERROR
+SBDONE      LD      A,1             ; record consumed; SUBREC remains valid
+            RET
 SBCOPY      LD      A,(SUBREC)
             ; Length was checked while the on-disk record still existed.
             LD      (FILEBUF+1),A
@@ -2201,6 +2219,216 @@ IOCONIN     LD      A,(IOBYTE)
             JP      Z,IOREADER
             JP      IOSERIN
 
+            ORG     05000H
+; Native XSUB: opt-in only by an XSUB directive *inside* .SUB.
+; No resident AUX code; submit input stays in MAIN and is owned by one tab.
+CCPXSUB     LD      A,(SBFROM)
+            OR      A
+            RET     Z            ; manual XSUB does not enable batch mode
+            LD      A,(TABMODE)
+            LD      (XSOWNER),A
+            LD      A,1
+            LD      (XSFLAG),A
+            XOR     A
+            LD      (XSLEFT),A
+            RET
+
+; SBNEXT uses the shared MAIN DMA pointer. Don't perturb its caller.
+XSNEXT      PUSH    BC
+            PUSH    DE
+            PUSH    IX
+            PUSH    IY
+            LD      HL,(DMAADDR)
+            PUSH    HL
+            CALL    SBNEXT
+            POP     HL
+            LD      (DMAADDR),HL
+            POP     IY
+            POP     IX
+            POP     DE
+            POP     BC
+            RET
+
+; A=1 if native XSUB is enabled for the current tab; A=0 otherwise.
+XSENABL     PUSH    BC
+            LD      A,(XSFLAG)
+            OR      A
+            JR      Z,XSEOFF
+            LD      A,(TABMODE)
+            LD      B,A
+            LD      A,(XSOWNER)
+            CP      B
+            JR      NZ,XSEOFF
+            LD      A,1
+            POP     BC
+            RET
+XSEOFF      XOR     A
+            POP     BC
+            RET
+
+; Avoid parking a tab on physical keyboard input when a scripted
+; character is actually ready. For other BDOS calls keep normal SCHPRE.
+XSPRE       LD      A,C
+            CP      1            ; cooked BDOS CONIN
+            JR      Z,XSPCHECK
+            CP      10           ; buffered BDOS CONIN
+            JR      Z,XSPCHECK
+            CP      0F2H         ; BIOS CONIN
+            JP      NZ,SCHPRE
+XSPCHECK    CALL    XSREADY
+            OR      A            ; clear carry on a ready virtual byte
+            RET     NZ
+            JP      SCHPRE
+
+; Lazy reverse-record fetch: pending line, then CR. Polls may prefetch,
+; but the same record is subsequently consumed by *any* input API.
+; Return A=1 when a character is ready; zero when none.
+XSREADY     CALL    XSENABL
+            OR      A
+            RET     Z
+            LD      A,(XSLEFT)
+            OR      A
+            JR      NZ,XSYES
+            CALL    XSNEXT
+            OR      A
+            JR      Z,XSEOF
+            LD      A,(SUBREC)
+            INC     A
+            LD      (XSLEFT),A
+            LD      HL,SUBREC+1
+            LD      (XSPTR),HL
+XSYES       LD      A,1
+            RET
+XSEOF       XOR     A
+            LD      (XSFLAG),A  ; future submissions require XSUB again
+            RET
+
+; Carry set and A=byte when scripted, carry clear when keyboard needed.
+XSCHAR      PUSH    BC
+            PUSH    DE
+            PUSH    HL
+            CALL    XSREADY
+            OR      A
+            JR      Z,XSCNONE
+            LD      A,(XSLEFT)
+            DEC     A
+            LD      (XSLEFT),A
+            JR      Z,XSCR
+            LD      HL,(XSPTR)
+            LD      A,(HL)
+            INC     HL
+            LD      (XSPTR),HL
+            JR      XSCGOT
+XSCR        LD      A,13
+XSCGOT      SCF
+            JR      XSCEXIT
+XSCNONE     XOR     A             ; no virtual byte: carry clear
+XSCEXIT     POP     HL
+            POP     DE
+            POP     BC
+            RET
+
+; MAIN CCP ERA/BYE Y/N uses C_READ directly, not BDOS 0Ah/01h.
+; Echo synthetic input just like C_READ does, otherwise original read.
+XSCCPKEY    CALL    XSCHAR
+            JP      NC,C_READ
+            PUSH    AF
+            LD      E,A
+            CALL    C_WRITE
+            POP     AF
+            RET
+
+; AUX BDOS 01: cooked, echoing input; normal scheduler when no script.
+XSCIN       CALL    XSCHAR
+            JP      NC,AXCIN
+            LD      L,A
+            PUSH    HL
+            LD      E,A
+            CALL    C_WRITE
+            POP     HL
+            LD      A,L
+            RET
+
+; AUX BIOS CONIN: raw input, no echo.
+XSBIIN      CALL    XSCHAR
+            JP      NC,AXBIREAD
+            LD      L,A
+            RET
+
+; AUX BDOS 06: substitute only when E=FF (input mode).
+XSRAW       LD      A,E
+            CP      0FFH
+            JP      NZ,AUXBDOS6
+            CALL    XSCHAR
+            JP      NC,AUXBDOS6
+            LD      L,A
+            RET
+
+; AUX BDOS 11 and BIOS CONST: status polls see pending SUBMIT input.
+XSSTAT      CALL    XSREADY
+            OR      A
+            JP      Z,ABDSTAT
+            LD      A,0FFH
+            LD      L,A
+            RET
+XSBSTAT     CALL    XSREADY
+            OR      A
+            JP      Z,AXBICON
+            LD      A,0FFH
+            LD      L,A
+            RET
+
+; AUX BDOS 0Ah: consume the *same* pending character stream as 01/06.
+; This matters if an app polls before asking for buffered input, or
+; consumes the first few characters via BDOS 01h before using 0Ah.
+; AXLINE has validated caller buffer and fetched its capacity into AXLBUF.
+AXLSUB      LD      B,0           ; number of chars copied
+            LD      HL,AXLBUF+2
+XSLNEXT     PUSH    BC
+            PUSH    HL
+            CALL    XSCHAR
+            POP     HL
+            POP     BC
+            JR      NC,XSLDONE
+            CP      13
+            JR      Z,XSLDONE
+            LD      C,A           ; preserve character
+            LD      A,(AXLBUF)
+            CP      B
+            JR      Z,XSLNEXT     ; discard beyond caller's capacity
+            LD      (HL),C
+            INC     HL
+            INC     B
+            PUSH    HL
+            PUSH    BC
+            LD      E,C
+            CALL    C_WRITE
+            POP     BC
+            POP     HL
+            JR      XSLNEXT
+XSLDONE     LD      (HL),13
+            LD      A,B
+            LD      (AXLBUF+1),A
+            LD      C,A
+            LD      B,0
+            INC     BC           ; first buffer byte (maximum)
+            INC     BC           ; count byte
+            INC     BC           ; trailing CR
+            LD      HL,AXLBUF
+            LD      DE,(AXLIP)
+            CALL    AXM2A
+            LD      E,13
+            CALL    C_WRITE
+            XOR     A
+            LD      L,A
+            RET
+
+XSFLAG      DEFB    0
+XSOWNER     DEFB    0
+SBFROM      DEFB    0
+XSLEFT      DEFB    0
+XSPTR       DEFW    0
+
             ORG     05F00H
 ; CP/M 2.2 permits programs to read/write IOBYTE at 0003h directly.
 ; Each AUX transient has a private 0003h; resident BIOS uses MAIN 0003h.
@@ -2229,7 +2457,7 @@ AXIOSFX     LD      SP,(AXMSP)
 
             ORG     07000H
 
-AXBDOS      CALL    SCHPRE        ; park background blocking input
+AXBDOS      CALL    XSPRE         ; skip physical keyboard wait if XSUB
             RET     C
             LD      A,C
             LD      (AXBADFN),A    ; diagnostic: remember original BDOS C
@@ -2238,11 +2466,11 @@ AXBDOS      CALL    SCHPRE        ; park background blocking input
             OR      A
             JP      Z,AUXBDOS0
             CP      1
-            JP      Z,AXCIN
+            JP      Z,XSCIN
             CP      2
             JP      Z,AUXBDOS2
             CP      6
-            JP      Z,AUXBDOS6
+            JP      Z,XSRAW
             CP      9
             JP      Z,AUXBDOS9
             CP      3
@@ -2258,7 +2486,7 @@ AXBDOS      CALL    SCHPRE        ; park background blocking input
             CP      0F6H          ; AUX LC BIOS READER
             JP      Z,IOREADER
             CP      11
-            JP      Z,ABDSTAT
+            JP      Z,XSSTAT
             CP      12
             JP      Z,ABDVER
             CP      02DH          ; CP/M 3: SET BDOS ERROR MODE (BBC BASIC)
@@ -2282,9 +2510,9 @@ AXBDOS      CALL    SCHPRE        ; park background blocking input
             CP      30
             JP      Z,AXFSEL      ; BDOS SET FILE ATTRIBUTES needs AUX FCB
             CP      0F1H
-            JP      Z,AXBICON
+            JP      Z,XSBSTAT
             CP      0F2H
-            JP      Z,AXBIREAD
+            JP      Z,XSBIIN
             CP      0F3H
             JP      Z,AXBIOUT
             CP      26
@@ -2490,6 +2718,13 @@ AXLVALID    EX      DE,HL
             LD      A,H
             CP      0DFH
             JP      NC,AXBAD      ; disallow touching DF00H+ gateway
+            ; Only consume submitted input after XSUB was explicitly
+            ; enabled from a script. XSREADY handles prior status polls.
+            CALL    XSREADY
+            OR      A
+            JP      NZ,AXLSUB
+            LD      A,(AXLBUF)
+            LD      C,A           ; restore capacity after disk calls
             LD      B,C           ; capacity for line editor
             LD      C,0           ; bytes entered
             LD      HL,AXLBUF+2
@@ -2817,6 +3052,9 @@ BITABLE    DEFM    'DIR  '
            DEFM    'HELP '
            DEFB    0
            DEFW    CCPHELP
+           DEFM    'XSUB '
+           DEFB    0
+           DEFW    CCPXSUB
 
 ; Native CCP terminal selector.  This code runs with MAIN RAM visible,
 ; unlike the old AUX .COM, so it calls the 6502 VSETMODE vector directly.
@@ -3236,7 +3474,7 @@ CCPHELP     LD      DE,CCPH1
             JP      C_WRITESTR
 CCPH1       DEFM    'DIR ERA REN TYPE SAVE'
             DEFB    13
-            DEFM    'BYE TERM'
+            DEFM    'BYE TERM XSUB'
             DEFB    13,'$'
 
             ORG     07C00H
@@ -3963,6 +4201,9 @@ BDOSINIT	DI
             LD      (HL),A
             LDIR                     ; clear per-tab pending WBOOT flags
             LD      (TABMODE),A       ; cold boot starts in session 0
+            LD      (XSFLAG),A      ; cold boot clears native XSUB
+            LD      (XSLEFT),A
+            LD      (SBFROM),A
             CALL    TABINIT         ; reset both CCP session descriptors
             CALL    TSKINIT         ; discard suspended programs on cold boot
 			CALL	CACHERST		; zero cache counters on cold start only
@@ -6347,6 +6588,7 @@ PHOUT		LD		E,A
 ; - CLS          - Reset video state, clear screen and home cursor
 ; - TAB          - [LIST|HELP|N [SUSPEND|RESUME|EXCLUSIVE|KILL]]
 ; - HELP         - List available CCP built-in commands
+; - XSUB         - Enables app input redirection inside SUBMIT only
 ; - FILENAME.COM - Load and run FILENAME.COM at 0100H
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -6613,7 +6855,7 @@ EPPFULL    POP     AF
 ; Single table-driven dispatcher instead of six repeated string
 ; comparisons. A handler is entered with a synthetic return address.
 BUILTIN    LD      HL,BITABLE
-           LD      C,13
+           LD      C,14
 BISCAN     LD      DE,PATHBUF2+1
            LD      B,5
 BICMP      LD      A,(DE)
