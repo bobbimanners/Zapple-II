@@ -2159,6 +2159,32 @@ SBWCLR      CALL    SBW_PTR
             RET
 SBWARM      DEFS    16
 
+            ORG     05F00H
+; CP/M 2.2 permits programs to read/write IOBYTE at 0003h directly.
+; Each AUX transient has a private 0003h; resident BIOS uses MAIN 0003h.
+; Synchronize AUX -> MAIN at every syscall and at ordinary .COM exit.
+; Do not modify caller register arguments, return registers or flags.
+AXIOSBD     CALL    AXIOSYN
+            JP      AUXBDOS      ; tail-call: return to AXGATE
+AXIOSYN     PUSH    AF
+            PUSH    HL
+            LD      HL,IOBYTE
+            CALL    LCPEEK       ; reads one byte from active AUX bank
+            LD      (IOBYTE),A
+            POP     HL
+            POP     AF
+            RET
+; AXFIN may be entered directly from AUX LC with the application's SP.
+; Restore the MAIN stack BEFORE calling the synchronizer.
+AXIOSFX     LD      SP,(AXMSP)
+            CALL    AXIOSYN
+            XOR     A
+            LD      (ZPMAIN),A
+            LD      A,(LCB1RO)
+            XOR     A
+            LD      (AXMODE),A
+            RET
+
             ORG     07000H
 
 AXBDOS      CALL    SCHPRE        ; park background blocking input
@@ -2979,7 +3005,7 @@ AXGATE      LD      (AXASP),SP    ; user's stack may itself be in AUX LC
             XOR     A
             LD      (ZPMAIN),A    ; restore ProDOS's ZP and LC
             LD      A,(LCB1RO)
-            CALL    AUXBDOS
+            CALL    AXIOSBD       ; sync AUX 0003h before dispatch
             LD      (AXRES),A
             LD      (AXRHL),HL
             CALL    SCHTICK        ; never schedules INSIDE a syscall
@@ -2997,13 +3023,7 @@ AXGO        LD      A,(LCB2RW)
             LD      HL,(AXRHL)
             LD      A,(AXRES)
             JP      LCRES         ; LC shim restores RAMRD/RAMWRT AUX
-AXFIN       XOR     A
-            LD      (ZPMAIN),A
-            LD      A,(LCB1RO)
-            LD      SP,(AXMSP)
-            XOR     A
-            LD      (AXMODE),A
-            RET
+AXFIN       JP      AXIOSFX      ; plain RET/JP 0000h must sync too
 ; AXMODE is only 1 during AUX transient. SAVE executes outside it,
 ; with its temporary LC shim installed into MAIN LC instead of AUX LC.
 LCPEEK      LD      A,(LCB2RW)
@@ -3929,8 +3949,7 @@ BDOSWARM	DI					; Make sure interrupts are off
 			LD		HL,BDOSENTRY
 			LD		(0006H),HL
 
-            LD      A,095H        ; CRT, PTR(slot2), PTP(slot2), LPT(slot1)
-            LD      (IOBYTE),A    ; CP/M physical-device default
+            ; WBOOT preserves IOBYTE; only BDOSINIT sets 95h.
             XOR     A
 			LD		(CURDRV),A		; Drive A:, User 0
 			LD		(FILEBUF),A		; Zero chars in command tail
