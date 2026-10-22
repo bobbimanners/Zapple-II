@@ -16,6 +16,12 @@
 
 ; BDOS TODOs
 ; ----------
+; ProDOS handles: two-slot, pathname-keyed cache (see CACHE_* near $A200).
+; Logical CP/M open state is still S2=$7E, never a leaked ProDOS FRN.
+; TODO: Implement missing BDOS system calls:
+;        - RS232 (A_READ, A_WRITE)
+;        - Printer (LWRITE)
+; IOBYTE routes console, reader, punch and list to Apple firmware.
 ; TODO: User number doesn't do anything
 ; 
 
@@ -410,7 +416,7 @@ TB_SWITCH   CALL    CUOFF        ; do not snapshot the cursor glyph
             JR      TB_GO
 ; A direct TAB command aimed at the current tab should beep too.
 ; Open Apple+current is already consumed and beeped by TSKSAME.
-TB_RESUM    CALL    RINGBELL       ; bell, no spurious CCP output
+TB_RESUM    CALL    UNIMP          ; bell, no spurious CCP output
             CALL    TSKACTIVE
             OR      A
             CALL    NZ,VSREST
@@ -1009,8 +1015,8 @@ TSKQUEUE    LD      B,A           ; B is saved by TSKKEY prologue
             POP     BC          ; restore caller's BC
             SCF
             RET
-TSKSAME     PUSH    HL          ; RINGBELL changes HL (6502 vector)
-            CALL    RINGBELL    ; beep: Open Apple + current tab
+TSKSAME     PUSH    HL          ; UNIMP changes HL (6502 vector)
+            CALL    UNIMP        ; beep: Open Apple + current tab
             POP     HL
             LD      A,(0E010H)   ; clear physical key strobe (status path)
             POP     BC          ; discard saved character/flags
@@ -1160,6 +1166,7 @@ TSKRFIN     XOR     A
             LD      (DMAADDR),HL
             LD      HL,0080H
             LD      (AXDMAP),HL
+            CALL    SBWSET         ; defer WBOOT until this tab has CCP
             RET
 
 TSKMSG      DEFM    'Suspended (Open Apple+0-9/A-F/arrows)'
@@ -1969,6 +1976,188 @@ DCR_DONE	POP		HL
 			RET
 RODENY	JP		RODISK		; CP/M: BDOS Err on d: R/O
 
+
+
+            ORG     04900H
+; SUBMIT: diagnostics removed; preserve zero-length-file safeguard.
+; CP/M 2.2 SUBMIT: A:$$$.SUB contains reversed 128-byte records.
+; Record byte 0 is the command length, followed by command characters.
+; On entry from CCPREAD, return A=1 with FILEBUF+1 count and +2 text,
+; or A=0 when there is no pending command. Consume record ON DISK first.
+; All filesystem buffers/ProDOS handles are MAIN-owned; only the CCP
+; invokes this routine. The fixed FCB explicitly selects drive A.
+CCPSUB      LD      A,(SBHALT)
+            OR      A
+            JR      Z,SBSTART
+            XOR     A
+            RET
+SBSTART     LD      HL,SUBFCB+12
+            LD      B,24
+            XOR     A
+SBCLEAR     LD      (HL),A
+            INC     HL
+            DJNZ    SBCLEAR
+            LD      DE,SUBFCB
+            CALL    F_OPEN
+            OR      A
+            JR      Z,SBOPEN
+            XOR     A           ; no $$$.SUB: normal keyboard input
+            RET
+SBOPEN      LD      DE,SUBFCB
+            CALL    F_SIZE      ; fills FCB random records 21H..23H
+            OR      A
+            JP      NZ,SBERROR
+            LD      HL,(SUBFCB+21H)
+            LD      A,H
+            OR      L
+            JR      NZ,SBHAVE
+            LD      A,(SUBFCB+23H)
+            OR      A
+            JP      Z,SBZERO    ; retain anomalous zero-sized file
+SBHAVE      ; Move random record index to the LAST existing record.
+            LD      HL,(SUBFCB+21H)
+            LD      A,H
+            OR      L
+            JR      NZ,SBDEC
+            LD      HL,SUBFCB+23H
+            DEC     (HL)        ; borrow from high record counter
+SBDEC       LD      HL,(SUBFCB+21H)
+            DEC     HL
+            LD      (SUBFCB+21H),HL
+            LD      HL,SUBREC
+            LD      (DMAADDR),HL
+            LD      DE,SUBFCB
+            CALL    F_READRAND
+            LD      HL,FILEBUF
+            LD      (DMAADDR),HL
+            OR      A
+            JP      NZ,SBERROR
+            LD      A,(SUBREC)
+            OR      A
+            JP      Z,SBERROR  ; never silently eat an empty/bad record
+            CP      121
+            JP      NC,SBERROR  ; cannot fit CCP's 120-char buffer
+            ; R0..R2 now contain the number of records to retain.
+            LD      HL,(SUBFCB+21H)
+            LD      A,H
+            OR      L
+            JR      NZ,SBTRUNC
+            LD      A,(SUBFCB+23H)
+            OR      A
+            JR      NZ,SBTRUNC
+            JP      SBEMPTY
+SBZERO      ; Preserve unexpectedly empty $$$.SUB for inspection.
+            ; Mark halted to prevent a new attempt at every CCP prompt.
+            LD      DE,SUBFCB
+            CALL    F_CLOSE
+            LD      A,1
+            LD      (SBHALT),A
+            LD      DE,SBZEROMSG
+            CALL    C_WRITESTR
+            XOR     A
+            RET
+SBEMPTY     LD      DE,SUBFCB
+            CALL    F_CLOSE
+            OR      A
+            JP      NZ,SBERROR
+            LD      DE,SUBFCB
+            CALL    F_DELETE    ; last command: ERA $$$.SUB
+            OR      A
+            JP      NZ,SBERROR
+            JP      SBCOPY
+SBTRUNC     ; Truncate an open ProDOS file to R0..R2 * 128 bytes.
+            ; IO_BEGIN resolves logical S2=$7E to a physical ProDOS FRN.
+            LD      IX,SUBFCB
+            CALL    IO_BEGIN
+            OR      A
+            JP      NZ,SBERROR
+            LD      A,(IX+0EH)
+            LD      (SEMLIN),A
+            LD      HL,(SUBFCB+21H)
+            LD      A,(SUBFCB+23H)
+            LD      B,7
+SBSHIFT     ADD     HL,HL
+            RLA
+            DJNZ    SBSHIFT
+            LD      (SEMLIE1),HL
+            LD      (SEMLIE3),A
+            LD      HL,SEMLI
+            CALL    PRODOS
+            CALL    IO_END      ; put back virtual S2 marker
+            PUSH    AF
+            LD      DE,SUBFCB
+            CALL    F_CLOSE
+            LD      B,A
+            POP     AF
+            OR      A
+            JP      NZ,SBERROR
+            LD      A,B
+            OR      A
+            JP      NZ,SBERROR
+SBCOPY      LD      A,(SUBREC)
+            ; Length was checked while the on-disk record still existed.
+            LD      (FILEBUF+1),A
+            LD      C,A
+            LD      A,120
+            LD      (FILEBUF),A
+            LD      B,0
+            LD      HL,SUBREC+1
+            LD      DE,FILEBUF+2
+            LDIR
+            ; Echo the submitted command just as if typed at the prompt.
+            LD      HL,SUBREC+1
+            LD      A,(SUBREC)
+            LD      B,A
+SBECHO      LD      E,(HL)
+            PUSH    HL
+            PUSH    BC
+            CALL    C_WRITE
+            POP     BC
+            POP     HL
+            INC     HL
+            DJNZ    SBECHO
+            LD      E,13
+            CALL    C_WRITE
+            LD      A,1
+            RET
+SBERROR     LD      DE,SUBFCB
+            CALL    F_CLOSE    ; best effort, preserve file for diagnosis
+            LD      A,1
+            LD      (SBHALT),A  ; do not retry corrupt file every prompt
+            LD      DE,SBERRMSG
+            CALL    C_WRITESTR
+            XOR     A
+            RET
+SBERRMSG    DEFM    'SUBMIT invalid record or I/O error (file retained)'
+            DEFB    13,'$'
+SBZEROMSG   DEFM    'SUBMIT zero records - $$$.SUB retained for inspection'
+            DEFB    13,'$'
+SBHALT      DEFB    0
+SUBFCB      DEFB    1
+            DEFM    '$$$     SUB'
+            DEFS    24
+SUBREC      DEFS    128
+; A WBOOT from a background AUX tab must never reset the foreground
+; CCP stack. Defer it until that tab becomes the visible CCP.
+SBW_PTR     LD      A,(TABMODE)
+            LD      E,A
+            LD      D,0
+            LD      HL,SBWARM
+            ADD     HL,DE
+            RET
+SBWSET      LD      A,(AXQUIT)
+            CP      1
+            RET     NZ
+            CALL    SBW_PTR
+            LD      (HL),1
+            RET
+SBWGET      CALL    SBW_PTR
+            LD      A,(HL)
+            RET
+SBWCLR      CALL    SBW_PTR
+            LD      (HL),0
+            RET
+SBWARM      DEFS    16
 
             ORG     07000H
 
@@ -2961,7 +3150,7 @@ TB_PAUSE    LD      A,(SCHFG)
 TB_UNPS  LD      A,B
             CALL    TBCLEARH
             RET
-TB_NOBG     JP      RINGBELL       ; a foreground tab cannot be paused
+TB_NOBG     JP      UNIMP           ; a foreground tab cannot be paused
 TB_EXCL
             PUSH    BC             ; LDIR consumes BC; B is target tab
             LD      HL,TBHOLD
@@ -3178,6 +3367,9 @@ AUXLDONE    LD      DE,PATHBUF2
             CALL    PRHEX         ; original call in [XX] format
 AUXEXOK     LD      E,13
             CALL    C_WRITE
+            LD      A,(AUXEXCD)
+            CP      1              ; AUX BDOS 0 -> true CP/M warm boot
+            JP      Z,BDOSWARM
             RET
 ; Returning to the CCP after Ctrl-] must not restore the old AUX LC:
 ; the parked transient, including its LC gateway, lives in that bank.
@@ -3702,6 +3894,12 @@ BDOSINIT	DI
 			XOR		A
 			LD		(VUCVALID),A
             CALL    SVCLEAR        ; reset all 16 tab-specific SAVE flags
+            LD      HL,SBWARM
+            LD      DE,SBWARM+1
+            LD      BC,15
+            XOR     A
+            LD      (HL),A
+            LDIR                     ; clear per-tab pending WBOOT flags
             LD      (TABMODE),A       ; cold boot starts in session 0
             CALL    TABINIT         ; reset both CCP session descriptors
             CALL    TSKINIT         ; discard suspended programs on cold boot
@@ -3715,6 +3913,9 @@ BDOSINIT	DI
 ; Keep the existing BDOS reset semantics, but do not print BPMSIGN.
 BDOSWARM	DI					; Make sure interrupts are off
 			LD		SP,STCKTOP		; Discard transient's stack
+            XOR     A
+            LD      (SBHALT),A       ; recheck $$$.SUB on a new warm boot
+            CALL    SBWCLR          ; consume current tab's WBOOT request
 
 			; Applications such as Apple CP/M MBASIC 5.2 replace the
 			; warm-start address at $0001 with an address in the TPA.
@@ -3836,7 +4037,7 @@ BDOSVEC		DEFW	C_TERMCPM		; C=00H
 			DEFW	BDOSUNSP			; C=27H  (*nothing* in CP/M 2.2)
 			DEFW	F_WRITERAND		; C=28H  (F_WRITEZF)
 
-; Diagnose unknown MAIN BDOS calls; retain old RINGBELL bell afterwards.
+; Diagnose unknown MAIN BDOS calls; retain old UNIMP bell afterwards.
 BDOSUNSP    LD      DE,BDOSMSG
             CALL    C_WRITESTR
             LD      A,(BDOSFN)
@@ -3844,10 +4045,10 @@ BDOSUNSP    LD      DE,BDOSMSG
             CALL    PRHEX
             LD      E,13
             CALL    C_WRITE
-            JP      RINGBELL
+            JP      UNIMP
 
 ; Unimplemented BDOS call, just ring the bell
-RINGBELL	LD		HL,BELL			; We are going to call BELL
+UNIMP		LD		HL,BELL			; We are going to call BELL
 			LD		(ADDR),HL		; ...
 			LD		A,1				; CMD=1 means call 6502 sub
 			LD		(CMD),A			; ...
@@ -6102,6 +6303,9 @@ CCPL1       CALL    SCHMAIN       ; run foreground program + background slices
             CALL    TSKACTIVE
             OR      A
             JR      NZ,CCPL1     ; no CCP prompt over WordStar's cursor
+            CALL    SBWGET       ; background-resumed program requested WBOOT?
+            OR      A
+            JP      NZ,BDOSWARM  ; MAIN CCP owns stack, so reset is now safe
             CALL    CCPPRPTR
             LD      A,(HL)
             OR      A
@@ -6109,11 +6313,14 @@ CCPL1       CALL    SCHMAIN       ; run foreground program + background slices
             LD      (HL),1          ; prompt will now be drawn
             CALL    CCPPRNT        ; [session]drive:> prompt
 CCPREAD
+            CALL    CCPSUB         ; last record of A:$$$.SUB, if present
+            OR      A
+            JR      NZ,CCPGOT      ; already copied into console line buffer
 			LD		DE,FILEBUF		; Use FILEBUF as line buffer
 			LD		A,120			; Max line length
 			LD		(DE),A			; Stored in first char of buffer
 			CALL	C_READSTR		; Get a line from the user
-            LD      A,(TABREQ)
+CCPGOT      LD      A,(TABREQ)
             CP      0FFH
             JP      NZ,CCPL1       ; selector is pending: NO empty command
             CALL    CCPPRPTR
@@ -7038,7 +7245,7 @@ AUXEXCD     DEFB    0
 LCIMG
             JP      LCGATE
             JP      LCNOP
-            JP      LCFIN
+            JP      LCWBOOT
             JP      LCBCST
             JP      LCBCIN
             JP      LCBCOUT
@@ -7149,12 +7356,21 @@ LIBZERO     XOR     A
 LIBTRAN     LD      H,B
             LD      L,C
             RET
+; Explicit AUX RST 0 / JP 0000H is WBOOT, not ordinary .COM RET.
+; Select MAIN RAM before updating the MAIN-owned AXQUIT flag.
+LIWBOOT    XOR     A
+           LD      (WRMAIN),A
+           LD      (RDMAIN),A
+           INC     A
+           LD      (AXQUIT),A
+           JP      AXFIN
 LIEND
 
 ; LC runtime addresses; only eight-character distinct symbol prefixes.
 LCREN       EQU     LCBASE+(LIENT-LCIMG)
 LCGATE      EQU     LCBASE+(LIGATE-LCIMG)
 LCFIN       EQU     LCBASE+(LIFIN-LCIMG)
+LCWBOOT     EQU     LCBASE+(LIWBOOT-LCIMG)
 LCRES       EQU     LCBASE+(LIRES-LCIMG)
 LCPEE0      EQU     LCBASE+(LIPEEK-LCIMG)
 LCA2MR      EQU     LCBASE+(LIA2M-LCIMG)
