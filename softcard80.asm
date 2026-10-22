@@ -331,6 +331,10 @@ TB_KILL     LD      A,B
             LD      A,B
             CALL    TB_METAP
             LD      (HL),0
+            ; KILL makes the slot unvisited again until explicitly selected.
+            LD      A,B
+            CALL    TB_VPTR
+            LD      (HL),0
             RET
 TB_FPTR   LD      E,A
             LD      D,0
@@ -422,17 +426,13 @@ TB_RESUM    CALL    UNIMP          ; bell, no spurious CCP output
             CALL    NZ,VSREST
 TB_GO       LD      A,(TABMODE)
             LD      (SCHFG),A
+            CALL    TB_VMARK       ; visited (regardless of CCP/COM status)
             CALL    VSSELECT       ; update 6502 foreground ownership
             CALL    SCHWAKE       ; this tab may be waiting for CONIN
             LD      A,SCHFGQ
             LD      (SCHQLEFT),A  ; a newly selected tab is foreground
             CALL    TABRESUM
             RET
-TB_STAT     LD      DE,TB_PREFIX
-            CALL    C_WRITESTR
-            LD      A,(TABMODE)
-            CALL    PHNYB
-            RET                 ; TAB status only (write probe retired)
 ; One byte per CCP session. Saved display may already contain the
 ; A> prompt, so do not print it again after restoring that screen.
 CCPPRPTR    LD      A,(TABMODE)
@@ -442,9 +442,6 @@ CCPPRPTR    LD      A,(TABMODE)
             ADD     HL,DE
             RET
 TABMODE     DEFB    0
-TB_PREFIX   DEFM    'TAB '
-            DEFB    '$'
-TB_SUFFIX   DEFB    13,'$'
 
 ; Session descriptors are only seven bytes each, stored in MAIN memory.
 ; Offsets: 0 current drive/user, 1 IOBYTE, 2..3 LOGVEC,
@@ -530,6 +527,7 @@ TI_NEXT     XOR     A
             DJNZ    TI_NEXT
             CALL    VSINIT
             CALL    VSSAVE          ; seed tab 0 backing with startup text
+            CALL    TB_VINIT       ; tab 0 is visited at cold boot
             LD      HL,CCPPROMS
             LD      DE,CCPPROMS+1
             LD      BC,15
@@ -1490,7 +1488,7 @@ VSOK        DEFB    0
 ; Extended TAB commands.  Parsed CCP tail is " N ACTION " or " LIST ".
 TBCMD       LD      A,(FILEBUF)
             OR      A
-            JP      Z,TB_STAT
+            JP      Z,TB_LIST
             LD      A,(FILEBUF+2)
             CP      'L'
             JR      NZ,TC_CHECKH
@@ -2429,6 +2427,120 @@ SBFROM      DEFB    0
 XSLEFT      DEFB    0
 XSPTR       DEFW    0
 
+            ORG     05200H
+; Visited tab membership is independent of task activity and video validity.
+; Each entry is 0 (never visited / killed) or 1 (visited).
+TB_VPTR     LD      E,A
+            LD      D,0
+            LD      HL,TBVIS
+            ADD     HL,DE
+            RET
+TB_VMARK    CALL    TB_VPTR
+            LD      (HL),1
+            RET
+TB_VINIT    LD      HL,TBVIS
+            LD      DE,TBVIS+1
+            LD      BC,15
+            XOR     A
+            LD      (HL),A
+            LDIR
+            LD      A,1
+            LD      (TBVIS),A
+            RET
+TBVIS  DEFS    16
+
+            ORG     05300H
+; Listing does not switch banks or enter the paused applications.
+TB_LIST     LD      B,0
+TL_NEXT     LD      A,B
+            CALL    TB_VPTR
+            LD      A,(HL)
+            OR      A
+            JR      Z,TL_SKIP     ; slot has not been visited, or was KILLed
+            PUSH    BC
+            LD      A,(SCHFG)
+            CP      B
+            LD      E,' '
+            JR      NZ,TL_MARK
+            LD      E,'*'
+TL_MARK     CALL    C_WRITE
+            LD      A,B
+            CALL    PHNYB
+            LD      E,' '
+            CALL    C_WRITE
+            CALL    TL_DRIVE       ; selected drive, e.g. A:
+            LD      E,':'
+            CALL    C_WRITE
+            LD      E,' '
+            CALL    C_WRITE
+            LD      A,B
+            CALL    TB_TFL
+            OR      A
+            JR      NZ,TL_PROG
+            LD      DE,TL_CCP
+            JR      TL_NAME
+TL_PROG     LD      A,B
+            CALL    TBNPTR
+            LD      C,8
+TL_CHAR     LD      E,(HL)
+            PUSH    BC
+            PUSH    HL
+            CALL    C_WRITE
+            POP     HL
+            POP     BC
+            INC     HL
+            DEC     C
+            JR      NZ,TL_CHAR
+            JR      TL_STATE
+TL_NAME     CALL    C_WRITESTR
+TL_STATE    LD      A,B
+            CALL    TB_HPTR
+            LD      A,(HL)
+            OR      A
+            JR      Z,TL_WAIT
+            LD      DE,TL_HOLD
+            JR      TL_LABEL
+TL_WAIT     LD      E,B
+            LD      D,0
+            LD      HL,SCHWAIT
+            ADD     HL,DE
+            LD      A,(HL)
+            OR      A
+            JR      Z,TL_EOL
+            LD      DE,TL_BLOCK
+TL_LABEL    CALL    C_WRITESTR
+TL_EOL      LD      E,13
+            CALL    C_WRITE
+            POP     BC
+TL_SKIP     INC     B
+            LD      A,(TABCOUNT)
+            CP      B
+            JR      NZ,TL_NEXT
+            RET
+
+; Drive for tab B. The currently executing tab has live CURDRV;
+; inactive tabs have their last CURDRV (including user bits) at
+; TABCTXS[tab*7 + 0]. Do NOT temporarily change TABMODE/TABPICK.
+TL_DRIVE    LD      A,(TABMODE)
+            CP      B
+            JR      NZ,TL_DSAVE
+            LD      A,(CURDRV)
+            JR      TL_DCHAR
+TL_DSAVE    LD      A,B
+            LD      HL,TABCTXS
+            LD      DE,7
+TL_DLOOP    OR      A
+            JR      Z,TL_DGET
+            ADD     HL,DE
+            DEC     A
+            JR      TL_DLOOP
+TL_DGET     LD      A,(HL)
+TL_DCHAR    AND     00FH         ; user number occupies upper nibble
+            ADD     A,'A'
+            LD      E,A
+            JP      C_WRITE
+
+
             ORG     05F00H
 ; CP/M 2.2 permits programs to read/write IOBYTE at 0003h directly.
 ; Each AUX transient has a private 0003h; resident BIOS uses MAIN 0003h.
@@ -3012,7 +3124,7 @@ TB_HELP     LD      DE,TB_HELPMSG
 
 
 ; Small command summary; keep clear of the $7600 command table.
-TB_HELPMSG  DEFM    'TAB n [SUSP/RES/EXCL/KILL], or TAB LIST'
+TB_HELPMSG  DEFM    'TAB [LIST], TAB n [SUSP/RES/EXCL/KILL]'
             DEFB    13,'$'
 
            ORG     07600H
@@ -4007,66 +4119,6 @@ VSSEBG      LD      (XREG),A       ; physical output enabled when fg
             LD      (CMD),A
             LD      (SOFTCARD),A
             POP     BC
-            RET
-
-
-            ORG     08080H
-; Listing does not switch banks or enter the paused applications.
-TB_LIST     LD      B,0
-TL_NEXT     PUSH    BC
-            LD      A,(SCHFG)
-            CP      B
-            LD      E,' '
-            JR      NZ,TL_MARK
-            LD      E,'*'
-TL_MARK     CALL    C_WRITE
-            LD      A,B
-            CALL    PHNYB
-            LD      E,' '
-            CALL    C_WRITE
-            LD      A,B
-            CALL    TB_TFL
-            OR      A
-            JR      NZ,TL_PROG
-            LD      DE,TL_CCP
-            JR      TL_NAME
-TL_PROG     LD      A,B
-            CALL    TBNPTR
-            LD      C,8
-TL_CHAR     LD      E,(HL)
-            PUSH    BC
-            PUSH    HL
-            CALL    C_WRITE
-            POP     HL
-            POP     BC
-            INC     HL
-            DEC     C
-            JR      NZ,TL_CHAR
-            JR      TL_STATE
-TL_NAME     CALL    C_WRITESTR
-TL_STATE    LD      A,B
-            CALL    TB_HPTR
-            LD      A,(HL)
-            OR      A
-            JR      Z,TL_WAIT
-            LD      DE,TL_HOLD
-            JR      TL_LABEL
-TL_WAIT     LD      E,B
-            LD      D,0
-            LD      HL,SCHWAIT
-            ADD     HL,DE
-            LD      A,(HL)
-            OR      A
-            JR      Z,TL_EOL
-            LD      DE,TL_BLOCK
-TL_LABEL    CALL    C_WRITESTR
-TL_EOL      LD      E,13
-            CALL    C_WRITE
-            POP     BC
-            INC     B
-            LD      A,(TABCOUNT)
-            CP      B
-            JR      NZ,TL_NEXT
             RET
 
 
