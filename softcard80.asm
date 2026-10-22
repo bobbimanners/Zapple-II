@@ -1810,10 +1810,10 @@ IOLIST      LD      A,(IOBYTE)
             CP      080H
             JP      Z,IOPRN
             JP      IOSEROUT
-; RDR / PUN have a single physical serial implementation.
-; Their IOBYTE assignments all refer to slot 2, by design.
-IOPUNCH     JP      IOSEROUT
-IOREADER    JP      IOSERIN
+; RDR and PUN are routed through their own IOBYTE fields.
+; The selectors live at MAIN $4C00 to avoid crowding the slot driver.
+IOPUNCH     JP      IOPUNSEL
+IOREADER    JP      IORDRSEL
 ; CON: CRT=VRAWPUT, BAT=RDR input / LST output; TTY/UC1=serial2.
 IOCONOUT    LD      A,(IOBYTE)
             AND     3
@@ -1824,7 +1824,7 @@ IOVOUT      LD      A,E
             LD      HL,RAWOUT
             JP      C_SENDA
 ; Main/AUX redirected BDOS 1 input. Console echo uses selected device.
-IOCCOOK     CALL    IOSERIN
+IOCCOOK     CALL    IOCONIN
             PUSH    AF
             LD      E,A
             CALL    IOCONOUT
@@ -2159,6 +2159,48 @@ SBWCLR      CALL    SBW_PTR
             RET
 SBWARM      DEFS    16
 
+; ---------------------------------------------------------------------
+; IOBYTE RDR:/PUN: routing.  CP/M physical device names are BIOS-defined.
+; This system has only one serial port, so TTY and PTR/PTP both use slot 2.
+; UP1 = parallel printer (slot 1); UP2 = Zapple screen.
+; UR1 = Apple keyboard (blocking/no echo); UR2 = immediate CP/M EOF (^Z).
+; IOBYTE field bits: RDR 3:2, PUN 5:4.
+; Keep out of the 256-byte slot-firmware bridge at $4400-$44FF.
+; ---------------------------------------------------------------------
+            ORG     04C00H
+IOPUNSEL    LD      A,(IOBYTE)
+            AND     030H
+            CP      020H
+            JP      Z,IOPRN     ; UP1: slot 1 printer
+            CP      030H
+            JP      Z,IOVOUT    ; UP2: built-in video
+            JP      IOSEROUT    ; TTY/PTP: shared slot 2 serial
+IORDRSEL    LD      A,(IOBYTE)
+            AND     00CH
+            CP      008H
+            JP      Z,IORDKEY   ; UR1: built-in keyboard
+            CP      00CH
+            JP      Z,IORDEOF   ; UR2: no reader, return EOF
+            JP      IOSERIN     ; TTY/PTR: shared slot 2 serial
+IORDKEY     LD      HL,RDKEY    ; 6502 VGET, blocking, no echo
+            LD      (ADDR),HL
+            LD      A,1
+            LD      (CMD),A
+            LD      (SOFTCARD),A
+            LD      A,(AREG)
+            AND     07FH
+            LD      L,A
+            RET
+IORDEOF     LD      A,01AH      ; CP/M text EOF
+            LD      L,A
+            RET
+; CON:=BAT: uses RDR: for input; other non-CRT console modes use serial.
+IOCONIN     LD      A,(IOBYTE)
+            AND     3
+            CP      2
+            JP      Z,IOREADER
+            JP      IOSERIN
+
             ORG     05F00H
 ; CP/M 2.2 permits programs to read/write IOBYTE at 0003h directly.
 ; Each AUX transient has a private 0003h; resident BIOS uses MAIN 0003h.
@@ -2376,7 +2418,7 @@ AXBICON     LD      A,(IOBYTE)
 AXBIREAD    LD      A,(IOBYTE)
             AND     3
             CP      1
-            JP      NZ,IOSERIN
+            JP      NZ,IOCONIN
             JP      TSKBIRD    ; CRT: handler moved under $0800
 AXBIOUT     CALL    C_RAWPUT
             XOR     A
@@ -3851,7 +3893,7 @@ BIOSCONST  LD      A,(IOBYTE)
 BIOSCONIN LD      A,(IOBYTE)
             AND     3
             CP      1
-            JP      NZ,IOSERIN   ; TTY/UC1/BAT input from slot 2
+            JP      NZ,IOCONIN   ; BAT uses selected RDR:, TTY/UC1 serial
             PUSH    HL
 			LD		HL,RDKEY		; VGET waits but doesn't echo
 			LD		(ADDR),HL
