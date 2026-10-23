@@ -81,12 +81,12 @@ $(DISK_IMAGE): $(PRODOS65) $(PRODOS80)
 	cd cpm-apps/Utils && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/B" .
 	cd cpm-apps/TP3 && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/B" .
 	cd cpm-apps/WS3 && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/B" .
-	cd cpm-apps/Supercalc && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/C" .
+	cd cpm-apps/Supercalc && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/B" .
+	cd cpm-apps/AztecC && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/C" .
 	cd cpm-apps/dBase-II && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/D" .
-	cd cpm-apps/Fortran-80 && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/E" .
-	cd cpm-apps/Zork && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/F" .
-	cd cpm-apps/HiTechC && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/G" .
-	cd cpm-apps/BBC_BASIC && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/H" .
+	cd cpm-apps/HiTechC && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/E" .
+	cd cpm-apps/Fortran-80 && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/F" .
+	cd cpm-apps/Games && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/G" .
 
 # The original script launched MAME with its debugger enabled.
 # `make run` launches without -debug; `make debug` (or `make mame`) matches it.
