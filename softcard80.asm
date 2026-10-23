@@ -4245,6 +4245,9 @@ BDOSINIT	DI
 			; WBOOT deliberately preserves the cached unit.
 			XOR		A
 			LD		(VUCVALID),A
+            LD      (CURDRV),A     ; cold boot only: drive A:, user 0
+            LD      HL,0001H
+            LD      (LOGVEC),HL    ; cold boot: A: initially logged in
             CALL    SVCLEAR        ; reset all 16 tab-specific SAVE flags
             LD      HL,SBWARM
             LD      DE,SBWARM+1
@@ -4284,15 +4287,13 @@ BDOSWARM	DI					; Make sure interrupts are off
 			LD		HL,BDOSENTRY
 			LD		(0006H),HL
 
-            ; WBOOT preserves IOBYTE; only BDOSINIT sets 95h.
+            ; WBOOT preserves IOBYTE, current drive/user, and LOGVEC.
+            ; Only a cold boot initializes these session-owned values.
             XOR     A
-			LD		(CURDRV),A		; Drive A:, User 0
 			LD		(FILEBUF),A		; Zero chars in command tail
 			CALL	CACHEALL		; CLOSE ALL, invalidate cache and all FRN slots
 			LD		HL,FILEBUF		; Initialize DMAADDR to 0080H
 			LD		(DMAADDR),HL		; ...
-			LD		HL,0001H		; Drive A: logged in initially
-			LD		(LOGVEC),HL		; ...
 			LD		HL,0000H		; No drives write protected
 			LD		(ROVEC),HL		; ...
 			JP		CCP				; Start the CCP
