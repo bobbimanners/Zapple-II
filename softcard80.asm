@@ -23,31 +23,31 @@
 ;        - Printer (LWRITE)
 ; IOBYTE routes console, reader, punch and list to Apple firmware.
 ; TODO: User number doesn't do anything
-; 
+;
 
-BDOSADDR    EQU        08100H            ; 
-STCKTOP        EQU        0A800H            ; Stack still ends at $A800; base-69 uses its low region
+BDOSADDR      EQU       08100H                         ;
+STCKTOP       EQU       0A800H                         ; Stack still ends at $A800; base-69 uses its low region
 
-SOFTCARD    EQU        0E400H            ; Softcard in slot 4 ($C400)
+SOFTCARD      EQU       0E400H                         ; Softcard in slot 4 ($C400)
 
 
-OFFSET        EQU        01000H            ; Offset to add to Z80 addr to get 6502
-                                    ; address. Correct for Z80 addr <= 0AFFFH
+OFFSET        EQU       01000H                         ; Offset to add to Z80 addr to get 6502
+                                                       ; address. Correct for Z80 addr <= 0AFFFH
 
 ; 6502 zero page, in Z80 address space
-CMD            EQU        0F006H            ; 6502 $06
-AREG        EQU        0F007H            ; 6502 $07
-XREG        EQU        0F008H            ; 6502 $08
-YREG        EQU        0F009H            ; 6502 $09
-ADDR        EQU        0F0EBH            ; 6502 $EB (LSB)
-ADDRH        EQU        0F0ECH            ; 6502 $EC (MSB)
+CMD           EQU       0F006H                         ; 6502 $06
+AREG          EQU       0F007H                         ; 6502 $07
+XREG          EQU       0F008H                         ; 6502 $08
+YREG          EQU       0F009H                         ; 6502 $09
+ADDR          EQU       0F0EBH                         ; 6502 $EB (LSB)
+ADDRH         EQU       0F0ECH                         ; 6502 $EC (MSB)
 
 ; Addresses of 6502 routines, in 6502 address space
-COUT        EQU        0B803H            ; Direct video output entry (B803)
-RDKEY        EQU        0B806H            ; Direct keyboard/cursor entry (B806)
-BELL        EQU        0B809H            ; Direct speaker click entry (B809)
-RAWOUT        EQU        0B80FH            ; Raw BIOS console entry (B80F)
-VTASK       EQU     0B821H          ; 6502 select running/foreground display
+COUT          EQU       0B803H                         ; Direct video output entry (B803)
+RDKEY         EQU       0B806H                         ; Direct keyboard/cursor entry (B806)
+BELL          EQU       0B809H                         ; Direct speaker click entry (B809)
+RAWOUT        EQU       0B80FH                         ; Raw BIOS console entry (B80F)
+VTASK         EQU       0B821H                         ; 6502 select running/foreground display
 ; TERM.COM (separate transient utility) calls 6502 B80C to switch terminal.
 ; Only a 6-byte raw-output shim is added to the resident BDOS.
 
@@ -55,301 +55,301 @@ VTASK       EQU     0B821H          ; 6502 select running/foreground display
 ; Entry point when Z80 cold starts is 0000H
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-            ORG        0000H
-            JP        BDOSINIT        ; Initialize BDOS
+              ORG       0000H
+              JP        BDOSINIT                       ; Initialize BDOS
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; See obsolescence.wix.com/obsolescence/cpm-internals for info
 ; on low storage usage ...
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-IOBYTE        DEFB    0                ; Maps virtual to real devices
+IOBYTE        DEFB      0                              ; Maps virtual to real devices
 
-CURDRV        DEFB    0                ; LS 4 bits; Current drive 0=A: etc
-                                    ; MS 4 bits: Current user number
+CURDRV        DEFB      0                              ; LS 4 bits; Current drive 0=A: etc
+                                                       ; MS 4 bits: Current user number
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; BDOS entry point must be at address 0005H for CP/M compatibility
 ; Function to invoke is passed in C
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-BDOS        JP        BDOSENTRY        ; Keep page-zero BDOS vector within $81xx
+BDOS          JP        BDOSENTRY                      ; Keep page-zero BDOS vector within $81xx
 
-RVEC1        DEFW    0000H            ; Restart vector 1
-RVEC2        DEFW    0000H            ; Restart vector 2
-RVEC3        DEFW    0000H            ; Restart vector 3
-RVEC4        DEFW    0000H            ; Restart vector 4
-RVEC5        DEFW    0000H            ; Restart vector 5
-RVEC6        DEFW    0000H            ; Restart vector 6
-RVEC7        DEFW    0000H            ; Restart vector 7
+RVEC1         DEFW      0000H                          ; Restart vector 1
+RVEC2         DEFW      0000H                          ; Restart vector 2
+RVEC3         DEFW      0000H                          ; Restart vector 3
+RVEC4         DEFW      0000H                          ; Restart vector 4
+RVEC5         DEFW      0000H                          ; Restart vector 5
+RVEC6         DEFW      0000H                          ; Restart vector 6
+RVEC7         DEFW      0000H                          ; Restart vector 7
 
 ; Space for private BDOS data (implementation dependent) up to 005BH
-DMAADDR        DEFW    0080H            ; DMA address defaults to FILEBUF (0080H)
-LOGVEC        DEFW    0000H            ; Vector of logged in drives
-ROVEC        DEFW    0000H            ; Vector of read-only drives
-TEMPWORD    DEFW    0000H            ; Used by routines as a scratch space
-TEMPBYTE    DEFB    0                ; Used by routines as a scratch space
+DMAADDR       DEFW      0080H                          ; DMA address defaults to FILEBUF (0080H)
+LOGVEC        DEFW      0000H                          ; Vector of logged in drives
+ROVEC         DEFW      0000H                          ; Vector of read-only drives
+TEMPWORD      DEFW      0000H                          ; Used by routines as a scratch space
+TEMPBYTE      DEFB      0                              ; Used by routines as a scratch space
 ; End of private, implementation dependent space
 
-            ORG        005CH            ; Standard addr of 32 byte FCB1
-FCB1                                ; File control block #1
-FCB1DRV        DEFB    00H                ; FCB Drive (0 current, 1 A:, 2 B: etc)
-FCB1NAM        DEFM    'FILENAMEEXT'    ; FCB filename and extension
-FCB1EX        DEFB    00H                ; FCB extent field
-FCB1S1        DEFB    00H                ; FCB S1 field
-FCB1S2        DEFB    00H                ; FCB S2 field
-FCB1RC        DEFB    00H                ; FCB RC field (# recs used this extent)
-FCB1MAP                                ; Map of blocks in file (overlaps FCB2)
+              ORG       005CH                          ; Standard addr of 32 byte FCB1
+FCB1                        ; File control block #1
+FCB1DRV       DEFB      00H                            ; FCB Drive (0 current, 1 A:, 2 B: etc)
+FCB1NAM       DEFM      'FILENAMEEXT'                  ; FCB filename and extension
+FCB1EX        DEFB      00H                            ; FCB extent field
+FCB1S1        DEFB      00H                            ; FCB S1 field
+FCB1S2        DEFB      00H                            ; FCB S2 field
+FCB1RC        DEFB      00H                            ; FCB RC field (# recs used this extent)
+FCB1MAP                     ; Map of blocks in file (overlaps FCB2)
 
-            ORG        006CH            ; Standard addr of 32 byte FCB2
-FCB2                                ; File control block #2
-FCB2DRV        DEFB    00H                ; FCB Drive (0 current, 1 A:, 2 B: etc)
-FCB2NAM        DEFM    'FILENAMEEXT'    ; FCB filename and extension
-FCB2EX        DEFB    00H                ; FCB extent field
-FCB2S1        DEFB    00H                ; FCB S1 field
-FCB2S2        DEFB    00H                ; FCB S2 field
-FCB2RC        DEFB    00H                ; FCB RC field (# recs used this extent)
-FCB2MAP                                ; Map of blocks in file (overlaps buffer)
+              ORG       006CH                          ; Standard addr of 32 byte FCB2
+FCB2                        ; File control block #2
+FCB2DRV       DEFB      00H                            ; FCB Drive (0 current, 1 A:, 2 B: etc)
+FCB2NAM       DEFM      'FILENAMEEXT'                  ; FCB filename and extension
+FCB2EX        DEFB      00H                            ; FCB extent field
+FCB2S1        DEFB      00H                            ; FCB S1 field
+FCB2S2        DEFB      00H                            ; FCB S2 field
+FCB2RC        DEFB      00H                            ; FCB RC field (# recs used this extent)
+FCB2MAP                     ; Map of blocks in file (overlaps buffer)
 
-            ORG        0080H            ; Standard addr of 128 byte File Buffer
-FILEBUF        DEFS    128                ; Command args go here too (Pascal string)
+              ORG       0080H                          ; Standard addr of 128 byte File Buffer
+FILEBUF       DEFS      128                            ; Command args go here too (Pascal string)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; The application program proper starts at 0100H
 ; in order to be compatible with CP/M .COM programs
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-            ORG        0100H
+              ORG       0100H
 
-PROGSTRT    CALL    CCP                ; Run the CCP
+PROGSTRT      CALL      CCP                            ; Run the CCP
 
 ; Phase 2: small MAIN-only bank-control helper and shell command.
 ; MAIN $0200..$02FF is unused by AUX transients and by SAVE's
 ; temporary $1000..$3FFF staging. No program ever runs here in AUX.
-            ORG     00200H
+              ORG       00200H
 ; A = AUX bank number. 6502 vector $B818 selects it and records it.
-AXBANK      LD      (AREG),A
-            LD      HL,0B818H
-            LD      (ADDR),HL
-            LD      A,1
-            LD      (CMD),A
-            LD      (SOFTCARD),A
-            RET
+AXBANK        LD        (AREG),A
+              LD        HL,0B818H
+              LD        (ADDR),HL
+              LD        A,1
+              LD        (CMD),A
+              LD        (SOFTCARD),A
+              RET
 
 ; Logical sessions 0..F use physical banks 0,1,3,4,6..9,11..14,16..19.
 ; Each group of four shares one otherwise reserved screen-snapshot bank.
-TABPHYS     LD      HL,TABPHY
-            LD      E,A
-            LD      D,0
-            ADD     HL,DE
-            LD      A,(HL)
-            RET
-TABPHY      DEFB    0,1,3,4,6,7,8,9,11,12,13,14,16,17,18,19
+TABPHYS       LD        HL,TABPHY
+              LD        E,A
+              LD        D,0
+              ADD       HL,DE
+              LD        A,(HL)
+              RET
+TABPHY        DEFB      0,1,3,4,6,7,8,9,11,12,13,14,16,17,18,19
 ; Find the first bank that does not physically exist, capped at 16 tabs.
-RWDETECT    LD      HL,0B815H
-            LD      (ADDR),HL
-            LD      A,1
-            LD      (CMD),A
-            LD      (SOFTCARD),A
-            LD      A,(AREG)
-            OR      A
-            JR      NZ,RWD_OK
-            INC     A              ; no card still has ordinary AUX bank 0
-RWD_OK      LD      (RWTOTAL),A
-            CP      3
-            JR      NC,RWD_MULTI
-            LD      A,1           ; no snapshot bank: single console only
-            LD      (TABCOUNT),A
-            RET
-RWD_MULTI   LD      A,(RWTOTAL)
-            LD      C,A
-            LD      HL,TABPHY
-            LD      B,0
-RWD_NEXT    LD      A,(HL)
-            CP      C
-            JR      NC,RWD_DONE
-            INC     B
-            INC     HL
-            LD      A,B
-            CP      16
-            JR      C,RWD_NEXT
-RWD_DONE    LD      A,B
-            LD      (TABCOUNT),A
-            RET
-RWTOTAL     DEFB    1
-TABCOUNT    DEFB    1
-TABREQ      DEFB    0FFH         ; Open Apple + 0..9/A..F/arrows; FF = none
-RWREPORT    LD      DE,RWMSG1
-            CALL    C_WRITESTR
-            LD      A,(RWTOTAL)
-            CALL    RWDECIMAL
-            LD      DE,RWMSG2
-            CALL    C_WRITESTR
-            LD      A,(TABCOUNT)
-            CALL    RWDECIMAL
-            LD      DE,RWMSG3
-            CALL    C_WRITESTR
-            LD      A,'A'          ; MouseText Open Apple, physical $41
-            CALL    MTCHAR
-            LD      DE,RWMSG4
-            CALL    C_WRITESTR
-            LD      A,'H'          ; MouseText left arrow, physical $48
-            CALL    MTCHAR
-            LD      A,'U'          ; MouseText right arrow, physical $55
-            CALL    MTCHAR
-            LD      DE,RWMSG5
-            JP      C_WRITESTR
-RWMSG1      DEFM    'RamWorks: '
-            DEFB    '$'
-RWMSG2      DEFM    ' banks '
-            DEFB    '$'
+RWDETECT      LD        HL,0B815H
+              LD        (ADDR),HL
+              LD        A,1
+              LD        (CMD),A
+              LD        (SOFTCARD),A
+              LD        A,(AREG)
+              OR        A
+              JR        NZ,RWD_OK
+              INC       A                              ; no card still has ordinary AUX bank 0
+RWD_OK        LD        (RWTOTAL),A
+              CP        3
+              JR        NC,RWD_MULTI
+              LD        A,1                            ; no snapshot bank: single console only
+              LD        (TABCOUNT),A
+              RET
+RWD_MULTI     LD        A,(RWTOTAL)
+              LD        C,A
+              LD        HL,TABPHY
+              LD        B,0
+RWD_NEXT      LD        A,(HL)
+              CP        C
+              JR        NC,RWD_DONE
+              INC       B
+              INC       HL
+              LD        A,B
+              CP        16
+              JR        C,RWD_NEXT
+RWD_DONE      LD        A,B
+              LD        (TABCOUNT),A
+              RET
+RWTOTAL       DEFB      1
+TABCOUNT      DEFB      1
+TABREQ        DEFB      0FFH                           ; Open Apple + 0..9/A..F/arrows; FF = none
+RWREPORT      LD        DE,RWMSG1
+              CALL      C_WRITESTR
+              LD        A,(RWTOTAL)
+              CALL      RWDECIMAL
+              LD        DE,RWMSG2
+              CALL      C_WRITESTR
+              LD        A,(TABCOUNT)
+              CALL      RWDECIMAL
+              LD        DE,RWMSG3
+              CALL      C_WRITESTR
+              LD        A,'A'                          ; MouseText Open Apple, physical $41
+              CALL      MTCHAR
+              LD        DE,RWMSG4
+              CALL      C_WRITESTR
+              LD        A,'H'                          ; MouseText left arrow, physical $48
+              CALL      MTCHAR
+              LD        A,'U'                          ; MouseText right arrow, physical $55
+              CALL      MTCHAR
+              LD        DE,RWMSG5
+              JP        C_WRITESTR
+RWMSG1        DEFM      'RamWorks: '
+              DEFB      '$'
+RWMSG2        DEFM      ' banks '
+              DEFB      '$'
 ; Print unsigned 0..255 without leading zeroes.
-RWDECIMAL   LD      B,'0'
-RWD_HUND    CP      100
-            JR      C,RWD_TENS
-            SUB     100
-            INC     B
-            JR      RWD_HUND
-RWD_TENS    LD      C,0          ; hundreds digit was printed?
-            PUSH    AF
-            LD      A,B
-            CP      '0'
-            JR      Z,RWD_T0
-            LD      C,1
-            LD      E,A
-            PUSH    BC
-            CALL    C_WRITE
-            POP     BC
-RWD_T0      POP     AF
-            LD      B,'0'
-RWD_TLOOP   CP      10
-            JR      C,RWD_ONES
-            SUB     10
-            INC     B
-            JR      RWD_TLOOP
-RWD_ONES    PUSH    AF
-            LD      A,B
-            CP      '0'
-            JR      NZ,RWD_TPRINT
-            LD      A,C
-            OR      A
-            JR      Z,RWD_TEND
-            LD      A,'0'        ; display 100, not 10
-RWD_TPRINT  LD      E,A
-            CALL    C_WRITE
-RWD_TEND    POP     AF
-            ADD     A,'0'
-            LD      E,A
-            JP      C_WRITE
+RWDECIMAL     LD        B,'0'
+RWD_HUND      CP        100
+              JR        C,RWD_TENS
+              SUB       100
+              INC       B
+              JR        RWD_HUND
+RWD_TENS      LD        C,0                            ; hundreds digit was printed?
+              PUSH      AF
+              LD        A,B
+              CP        '0'
+              JR        Z,RWD_T0
+              LD        C,1
+              LD        E,A
+              PUSH      BC
+              CALL      C_WRITE
+              POP       BC
+RWD_T0        POP       AF
+              LD        B,'0'
+RWD_TLOOP     CP        10
+              JR        C,RWD_ONES
+              SUB       10
+              INC       B
+              JR        RWD_TLOOP
+RWD_ONES      PUSH      AF
+              LD        A,B
+              CP        '0'
+              JR        NZ,RWD_TPRINT
+              LD        A,C
+              OR        A
+              JR        Z,RWD_TEND
+              LD        A,'0'                          ; display 100, not 10
+RWD_TPRINT    LD        E,A
+              CALL      C_WRITE
+RWD_TEND      POP       AF
+              ADD       A,'0'
+              LD        E,A
+              JP        C_WRITE
 
-            ORG     00300H
+              ORG       00300H
 ; A queued Open Apple hotkey returns immediately, with no key passed
 ; to an application. CCP discards the current unfinished command line.
-CR_SELCMD   XOR     A
-            LD      (IX+1),A
-            RET
+CR_SELCMD     XOR       A
+              LD        (IX+1),A
+              RET
 
 ; Fullscreen applications poll BDOS 11 or BIOS CONST before reading a
 ; character. CMD=3 peeks at $C000 and samples Open Apple ($C061) in XREG.
 ; Valid shortcuts consume the keyboard strobe directly, without drawing
 ; a cursor or waiting for another character. Ordinary keys are untouched.
 ; F3 is the private deferred-status marker on suspension.
-TSKSTAT     CALL    SCHISFG
-            JR      Z,TSSTFG
-            XOR     A
-            LD      L,A
-            RET
-TSSTFG      LD      A,3
-            LD      (CMD),A
-            LD      (SOFTCARD),A
-            LD      A,(AREG)
-            OR      A
-            JR      Z,TSSTEMPTY
-            LD      A,(YREG)
-            AND     07FH
-            CALL    TSKKEY
-            JR      C,TSSTSWITCH
-            OR      A            ; OA-current was consumed, no input
-            JR      Z,TSSTEMPTY
-            JR      TSSTREADY
-TSSTSWITCH  LD      A,(0E010H)     ; Apple II $C010: clear just this key
-            LD      A,0F3H        ; resume the pending status poll
-            LD      L,A
-            RET
-TSSTREADY   LD      A,0FFH
-            LD      L,A
-            RET
-TSSTEMPTY   XOR     A
-            LD      L,A
-            RET
+TSKSTAT       CALL      SCHISFG
+              JR        Z,TSSTFG
+              XOR       A
+              LD        L,A
+              RET
+TSSTFG        LD        A,3
+              LD        (CMD),A
+              LD        (SOFTCARD),A
+              LD        A,(AREG)
+              OR        A
+              JR        Z,TSSTEMPTY
+              LD        A,(YREG)
+              AND       07FH
+              CALL      TSKKEY
+              JR        C,TSSTSWITCH
+              OR        A                              ; OA-current was consumed, no input
+              JR        Z,TSSTEMPTY
+              JR        TSSTREADY
+TSSTSWITCH    LD        A,(0E010H)                     ; Apple II $C010: clear just this key
+              LD        A,0F3H                         ; resume the pending status poll
+              LD        L,A
+              RET
+TSSTREADY     LD        A,0FFH
+              LD        L,A
+              RET
+TSSTEMPTY     XOR       A
+              LD        L,A
+              RET
 
 ; Advertise the modifier and arrows as one-keystroke shortcuts.
-RWMSG3      DEFM    ' sessions (0-9,A-F)'
-            DEFB    13
-            DEFM    'Switch '
-            DEFB    '$'
-RWMSG4      DEFM    ' + 0123456789ABCDEF'
-            DEFB    '$'
-RWMSG5      DEFB    13
-            DEFM    'HELP for commands'
-            DEFB    13,'$'
+RWMSG3        DEFM      ' sessions (0-9,A-F)'
+              DEFB      13
+              DEFM      'Switch '
+              DEFB      '$'
+RWMSG4        DEFM      ' + 0123456789ABCDEF'
+              DEFB      '$'
+RWMSG5        DEFB      13
+              DEFM      'HELP for commands'
+              DEFB      13,'$'
 
 ; Print the current logical session and drive: [0]A:> ... [F]P:>
 ; Kept outside the crowded $81xx-$97xx resident filesystem region.
-CCPPRNT     LD      E,'['
-            CALL    C_WRITE
-            LD      A,(TABMODE)
-            CALL    PHNYB
-            LD      E,']'
-            CALL    C_WRITE
-            LD      A,(CURDRV)
-            AND     0FH
-            ADD     A,'A'
-            LD      E,A
-            CALL    C_WRITE
-            LD      A,(CURDRV)
-            RRCA
-            RRCA
-            RRCA
-            RRCA
-            AND     00FH
-            CALL    NZ,RWDECIMAL  ; users 1..15; user 0 stays A:>
-            LD      E,':'
-            CALL    C_WRITE
-            LD      E,'>'
-            JP      C_WRITE
+CCPPRNT       LD        E,'['
+              CALL      C_WRITE
+              LD        A,(TABMODE)
+              CALL      PHNYB
+              LD        E,']'
+              CALL      C_WRITE
+              LD        A,(CURDRV)
+              AND       0FH
+              ADD       A,'A'
+              LD        E,A
+              CALL      C_WRITE
+              LD        A,(CURDRV)
+              RRCA
+              RRCA
+              RRCA
+              RRCA
+              AND       00FH
+              CALL      NZ,RWDECIMAL                   ; users 1..15; user 0 stays A:>
+              LD        E,':'
+              CALL      C_WRITE
+              LD        E,'>'
+              JP        C_WRITE
 
-            ORG     003B0H
+              ORG       003B0H
 ; Kill only an inactive saved context. No CPU instruction is preempted.
 ; FCB cache has already been flushed by the cooperative park path.
-TB_KILL     LD      A,B
-            CALL    TB_HPTR
-            LD      (HL),0
-            LD      A,B
-            CALL    TB_FPTR
-            LD      (HL),0
-            LD      HL,SCHWAIT
-            ADD     HL,DE
-            LD      (HL),0
-            LD      HL,CCPPROMS
-            ADD     HL,DE
-            LD      (HL),0
-            ; Mark backing screen invalid, so the next selection clears it.
-            LD      A,B
-            CALL    TB_METAP
-            LD      (HL),0
-            ; KILL makes the slot unvisited again until explicitly selected.
-            LD      A,B
-            CALL    TB_VPTR
-            LD      (HL),0
-            RET
-TB_FPTR   LD      E,A
-            LD      D,0
-            LD      HL,TSKFLAGS
-            ADD     HL,DE
-            RET
+TB_KILL       LD        A,B
+              CALL      TB_HPTR
+              LD        (HL),0
+              LD        A,B
+              CALL      TB_FPTR
+              LD        (HL),0
+              LD        HL,SCHWAIT
+              ADD       HL,DE
+              LD        (HL),0
+              LD        HL,CCPPROMS
+              ADD       HL,DE
+              LD        (HL),0
+              ; Mark backing screen invalid, so the next selection clears it.
+              LD        A,B
+              CALL      TB_METAP
+              LD        (HL),0
+              ; KILL makes the slot unvisited again until explicitly selected.
+              LD        A,B
+              CALL      TB_VPTR
+              LD        (HL),0
+              RET
+TB_FPTR       LD        E,A
+              LD        D,0
+              LD        HL,TSKFLAGS
+              ADD       HL,DE
+              RET
 
-            ORG     00400H
+              ORG       00400H
 
 ; Phase 3A: two independent CCP contexts. TAB 0 / TAB 1 switches
 ; shell state (drive/user, IOBYTE, login/R/O vectors, terminal type).
@@ -358,254 +358,254 @@ TB_FPTR   LD      E,A
 ; TAB n resumes a parked transient, rather than reloading it.
 ; Phase 3C: full text-screen/terminal-state snapshots in reserved bank 2.
 ; Still cooperative: no switching from a CPU-bound loop.
-CCPTAB      JP      TBCMD          ; extended TAB command parser
+CCPTAB        JP        TBCMD                          ; extended TAB command parser
 
 ; Convert a hexadecimal ASCII tab selector to A=0..15, carry on error.
 ; Check the detected bank count so an unavailable tab is never touched.
-TABDECODE   CP      '0'
-            JR      C,TBD_BAD
-            CP      '9'+1
-            JR      NC,TBD_HEX
-            SUB     '0'
-            JR      TBD_RANGE
-TBD_HEX     AND     0DFH          ; lowercase a..f accepted
-            CP      'A'
-            JR      C,TBD_BAD
-            CP      'F'+1
-            JR      NC,TBD_BAD
-            SUB     'A'-10
-TBD_RANGE   LD      C,A
-            LD      A,(TABCOUNT)
-            CP      C
-            JR      Z,TBD_BAD
-            JR      C,TBD_BAD
-            LD      A,C
-            OR      A              ; clear carry
-            RET
-TBD_BAD     SCF
-            RET
+TABDECODE     CP        '0'
+              JR        C,TBD_BAD
+              CP        '9'+1
+              JR        NC,TBD_HEX
+              SUB       '0'
+              JR        TBD_RANGE
+TBD_HEX       AND       0DFH                           ; lowercase a..f accepted
+              CP        'A'
+              JR        C,TBD_BAD
+              CP        'F'+1
+              JR        NC,TBD_BAD
+              SUB       'A'-10
+TBD_RANGE     LD        C,A
+              LD        A,(TABCOUNT)
+              CP        C
+              JR        Z,TBD_BAD
+              JR        C,TBD_BAD
+              LD        A,C
+              OR        A                              ; clear carry
+              RET
+TBD_BAD       SCF
+              RET
 
 ; Drain queued switches before returning to the CCP prompt.
 ; TB_SWITCH can resume a suspended program, which can later suspend
 ; and queue ANOTHER switch.  A tail-JR here returned to CCPL1 after
 ; that suspension and printed a CCP prompt into the application's
 ; still-visible fullscreen display.  Loop until no request remains.
-TBAUTOSW    LD      A,(TABREQ)
-            CP      0FFH
-            RET     Z
-            LD      B,A
-            LD      A,0FFH
-            LD      (TABREQ),A
-            CALL    TB_SWITCH
-            JR      TBAUTOSW
-TB_SWITCH   CALL    CUOFF        ; do not snapshot the cursor glyph
-            PUSH    BC
-            LD      A,B
-            CALL    TBCLEARH       ; switching always wakes a held tab
-            POP     BC
-            LD      A,(TABMODE)
-            CP      B
-            JR      Z,TB_RESUM
-            PUSH    BC
-            CALL    VSSTSAVE       ; save active 6502 parser/cursor state
-            ; Diagnostic: force the original reliable Stage 1 physical
-            ; 80-column capture before leaving the foreground tab.
-            ; This MUST happen before TABMODE changes, and is deliberately
-            ; limited to manual foreground switches (not scheduler ticks).
-            CALL    SCHISFG
-            CALL    Z,VSSAVE
-            CALL    TABSAVE
-            CALL    CACHEALL
-            POP     BC
-            LD      A,B
-            LD      (TABMODE),A
-            LD      (SCHFG),A      ; manual TAB changes visible session
-            CALL    TABLOAD
-            CALL    VSSTLOAD
-            CALL    VSSELECT       ; renders new tab to hardware
-            CALL    VSREST         ; copy ALWAYS-LIVE snapshot to video
-            JR      TB_GO
+TBAUTOSW      LD        A,(TABREQ)
+              CP        0FFH
+              RET       Z
+              LD        B,A
+              LD        A,0FFH
+              LD        (TABREQ),A
+              CALL      TB_SWITCH
+              JR        TBAUTOSW
+TB_SWITCH     CALL      CUOFF                          ; do not snapshot the cursor glyph
+              PUSH      BC
+              LD        A,B
+              CALL      TBCLEARH                       ; switching always wakes a held tab
+              POP       BC
+              LD        A,(TABMODE)
+              CP        B
+              JR        Z,TB_RESUM
+              PUSH      BC
+              CALL      VSSTSAVE                       ; save active 6502 parser/cursor state
+              ; Diagnostic: force the original reliable Stage 1 physical
+              ; 80-column capture before leaving the foreground tab.
+              ; This MUST happen before TABMODE changes, and is deliberately
+              ; limited to manual foreground switches (not scheduler ticks).
+              CALL      SCHISFG
+              CALL      Z,VSSAVE
+              CALL      TABSAVE
+              CALL      CACHEALL
+              POP       BC
+              LD        A,B
+              LD        (TABMODE),A
+              LD        (SCHFG),A                      ; manual TAB changes visible session
+              CALL      TABLOAD
+              CALL      VSSTLOAD
+              CALL      VSSELECT                       ; renders new tab to hardware
+              CALL      VSREST                         ; copy ALWAYS-LIVE snapshot to video
+              JR        TB_GO
 ; A direct TAB command aimed at the current tab should beep too.
 ; Open Apple+current is already consumed and beeped by TSKSAME.
-TB_RESUM    CALL    UNIMP          ; bell, no spurious CCP output
-            CALL    TSKACTIVE
-            OR      A
-            CALL    NZ,VSREST
-TB_GO       LD      A,(TABMODE)
-            LD      (SCHFG),A
-            CALL    TB_VMARK       ; visited (regardless of CCP/COM status)
-            CALL    VSSELECT       ; update 6502 foreground ownership
-            CALL    SCHWAKE       ; this tab may be waiting for CONIN
-            LD      A,SCHFGQ
-            LD      (SCHQLEFT),A  ; a newly selected tab is foreground
-            CALL    TABRESUM
-            RET
+TB_RESUM      CALL      UNIMP                          ; bell, no spurious CCP output
+              CALL      TSKACTIVE
+              OR        A
+              CALL      NZ,VSREST
+TB_GO         LD        A,(TABMODE)
+              LD        (SCHFG),A
+              CALL      TB_VMARK                       ; visited (regardless of CCP/COM status)
+              CALL      VSSELECT                       ; update 6502 foreground ownership
+              CALL      SCHWAKE                        ; this tab may be waiting for CONIN
+              LD        A,SCHFGQ
+              LD        (SCHQLEFT),A                   ; a newly selected tab is foreground
+              CALL      TABRESUM
+              RET
 ; One byte per CCP session. Saved display may already contain the
 ; A> prompt, so do not print it again after restoring that screen.
-CCPPRPTR    LD      A,(TABMODE)
-            LD      E,A
-            LD      D,0
-            LD      HL,CCPPROMS
-            ADD     HL,DE
-            RET
-TABMODE     DEFB    0
+CCPPRPTR      LD        A,(TABMODE)
+              LD        E,A
+              LD        D,0
+              LD        HL,CCPPROMS
+              ADD       HL,DE
+              RET
+TABMODE       DEFB      0
 
 ; Session descriptors are only seven bytes each, stored in MAIN memory.
 ; Offsets: 0 current drive/user, 1 IOBYTE, 2..3 LOGVEC,
 ; 4..5 ROVEC, 6 terminal personality (0 Videx / 1 Soroc).
 ; DMA is intentionally reset to $0080 at each switch; no BDOS search
 ; or pending directory enumeration is allowed across a CCP TAB command.
-TABPICK     LD      IX,TABCTXS
-            LD      A,(TABMODE)
-            OR      A
-            RET     Z
-            LD      B,A
-            LD      DE,7
-TP_NEXT     ADD     IX,DE
-            DJNZ    TP_NEXT
-            RET
+TABPICK       LD        IX,TABCTXS
+              LD        A,(TABMODE)
+              OR        A
+              RET       Z
+              LD        B,A
+              LD        DE,7
+TP_NEXT       ADD       IX,DE
+              DJNZ      TP_NEXT
+              RET
 
-TABSAVE     CALL    TABPICK
-            LD      A,(CURDRV)
-            LD      (IX+0),A
-            LD      A,(IOBYTE)
-            LD      (IX+1),A
-            LD      HL,(LOGVEC)
-            LD      (IX+2),L
-            LD      (IX+3),H
-            LD      HL,(ROVEC)
-            LD      (IX+4),L
-            LD      (IX+5),H
-            LD      HL,0B81BH
-            LD      (ADDR),HL
-            LD      A,1
-            LD      (CMD),A
-            LD      (SOFTCARD),A
-            LD      A,(AREG)
-            LD      (IX+6),A
-            RET
+TABSAVE       CALL      TABPICK
+              LD        A,(CURDRV)
+              LD        (IX+0),A
+              LD        A,(IOBYTE)
+              LD        (IX+1),A
+              LD        HL,(LOGVEC)
+              LD        (IX+2),L
+              LD        (IX+3),H
+              LD        HL,(ROVEC)
+              LD        (IX+4),L
+              LD        (IX+5),H
+              LD        HL,0B81BH
+              LD        (ADDR),HL
+              LD        A,1
+              LD        (CMD),A
+              LD        (SOFTCARD),A
+              LD        A,(AREG)
+              LD        (IX+6),A
+              RET
 
-TABLOAD     CALL    TABPICK
-            LD      A,(IX+0)
-            LD      (CURDRV),A
-            LD      A,(IX+1)
-            LD      (IOBYTE),A
-            LD      L,(IX+2)
-            LD      H,(IX+3)
-            LD      (LOGVEC),HL
-            LD      L,(IX+4)
-            LD      H,(IX+5)
-            LD      (ROVEC),HL
-            LD      HL,FILEBUF
-            LD      (DMAADDR),HL
-            LD      HL,0080H
-            LD      (AXDMAP),HL
-            LD      A,(IX+6)
-            LD      (AREG),A
-            LD      HL,0B80CH
-            LD      (ADDR),HL
-            LD      A,1
-            LD      (CMD),A
-            LD      (SOFTCARD),A
-            RET
+TABLOAD       CALL      TABPICK
+              LD        A,(IX+0)
+              LD        (CURDRV),A
+              LD        A,(IX+1)
+              LD        (IOBYTE),A
+              LD        L,(IX+2)
+              LD        H,(IX+3)
+              LD        (LOGVEC),HL
+              LD        L,(IX+4)
+              LD        H,(IX+5)
+              LD        (ROVEC),HL
+              LD        HL,FILEBUF
+              LD        (DMAADDR),HL
+              LD        HL,0080H
+              LD        (AXDMAP),HL
+              LD        A,(IX+6)
+              LD        (AREG),A
+              LD        HL,0B80CH
+              LD        (ADDR),HL
+              LD        A,1
+              LD        (CMD),A
+              LD        (SOFTCARD),A
+              RET
 
-TABINIT     CALL    RWDETECT
-            LD      HL,TABCTXS
-            LD      B,16
-TI_NEXT     XOR     A
-            LD      (HL),A       ; CURDRV
-            INC     HL
-            LD      A,095H
-            LD      (HL),A       ; default IOBYTE in every tab
-            INC     HL
-            LD      A,1
-            LD      (HL),A         ; LOGVEC = 0001H
-            INC     HL
-            XOR     A
-            LD      (HL),A
-            INC     HL
-            LD      (HL),A
-            INC     HL
-            LD      (HL),A
-            INC     HL
-            INC     A
-            LD      (HL),A         ; Soroc default
-            INC     HL
-            DJNZ    TI_NEXT
-            CALL    VSINIT
-            CALL    VSSAVE          ; seed tab 0 backing with startup text
-            CALL    TB_VINIT       ; tab 0 is visited at cold boot
-            LD      HL,CCPPROMS
-            LD      DE,CCPPROMS+1
-            LD      BC,15
-            XOR     A
-            LD      (HL),A
-            LDIR
-            RET
+TABINIT       CALL      RWDETECT
+              LD        HL,TABCTXS
+              LD        B,16
+TI_NEXT       XOR       A
+              LD        (HL),A                         ; CURDRV
+              INC       HL
+              LD        A,095H
+              LD        (HL),A                         ; default IOBYTE in every tab
+              INC       HL
+              LD        A,1
+              LD        (HL),A                         ; LOGVEC = 0001H
+              INC       HL
+              XOR       A
+              LD        (HL),A
+              INC       HL
+              LD        (HL),A
+              INC       HL
+              LD        (HL),A
+              INC       HL
+              INC       A
+              LD        (HL),A                         ; Soroc default
+              INC       HL
+              DJNZ      TI_NEXT
+              CALL      VSINIT
+              CALL      VSSAVE                         ; seed tab 0 backing with startup text
+              CALL      TB_VINIT                       ; tab 0 is visited at cold boot
+              LD        HL,CCPPROMS
+              LD        DE,CCPPROMS+1
+              LD        BC,15
+              XOR       A
+              LD        (HL),A
+              LDIR
+              RET
 
 ; Map a logical tab A to its manual hold flag; preserves B.
-TB_HPTR     LD      E,A
-            LD      D,0
-            LD      HL,TBHOLD
-            ADD     HL,DE
-            RET
-TBCLEARH    CALL    TB_HPTR
-            LD      (HL),0
-            RET
-TB_TFL  LD      E,A
-            LD      D,0
-            LD      HL,TSKFLAGS
-            ADD     HL,DE
-            LD      A,(HL)
-            RET
+TB_HPTR       LD        E,A
+              LD        D,0
+              LD        HL,TBHOLD
+              ADD       HL,DE
+              RET
+TBCLEARH      CALL      TB_HPTR
+              LD        (HL),0
+              RET
+TB_TFL        LD        E,A
+              LD        D,0
+              LD        HL,TSKFLAGS
+              ADD       HL,DE
+              LD        A,(HL)
+              RET
 ; 8-byte saved executable name for tab A.
-TBNPTR      LD      L,A
-            LD      H,0
-            ADD     HL,HL
-            ADD     HL,HL
-            ADD     HL,HL
-            LD      DE,TBNAMES
-            ADD     HL,DE
-            RET
+TBNPTR        LD        L,A
+              LD        H,0
+              ADD       HL,HL
+              ADD       HL,HL
+              ADD       HL,HL
+              LD        DE,TBNAMES
+              ADD       HL,DE
+              RET
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Implementation of CP/M STYLE BDOS
 ; Function to invoke is passed in C, as follows:
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-B_C_TERMCPM        EQU        00H            ; System reset
-B_C_READ        EQU        01H            ; Console read
-B_C_WRITE        EQU        02H            ; Console write
-B_C_RAWIO        EQU        06H            ; Direct console I/O
-B_GET_IOB        EQU        07H            ; Get IOBYTE
-B_SET_IOB        EQU        08H            ; Set IOBYTE
-B_C_WRTSTR        EQU        09H            ; Console write string
-B_C_RDSTR        EQU        0AH            ; Read console string
-B_C_STAT        EQU        0BH            ; Console status
-B_S_BDOSVER        EQU        0CH            ; Return version number
-B_DRV_ALLRST    EQU        0DH            ; Reset disks
-B_DRV_SET        EQU        0EH            ; Select disk
-B_F_OPEN        EQU        0FH            ; Open file
-B_F_CLOSE        EQU        10H            ; Close file
-B_F_SFIRST        EQU        11H            ; Search for first match in directory
-B_F_SNEXT        EQU        12H            ; Search for next match in directory
-B_F_DELETE        EQU        13H            ; Delete file
-B_F_READ        EQU        14H            ; Read file sequentially
-B_F_WRITE         EQU        15H            ; Write file sequentially
-B_F_MAKE        EQU        16H            ; Create and open file
-B_F_RENAME        EQU        17H            ; Rename file 
-B_DRV_LOGVEC    EQU        18H            ; Return bitmap of logged-in drives
-B_DRV_GET        EQU        19H            ; Return current drive
-B_F_DMAOFF        EQU        1AH            ; Set DMA address
-B_DRV_AVEC        EQU        1BH            ; Return address of allocation map
-B_DRV_SRO        EQU        1CH            ; Software write-protect current drive
-B_DRV_ROVEC        EQU        1DH            ; Return bitmap of read-only drives
-B_DRV_DPB        EQU        1FH            ; Get Drive Parameter Block address
-B_F_USERNUM        EQU        20H            ; Get/set user number
-B_F_RDRAND        EQU        21H            ; Random access read record
-B_F_WRTRAND        EQU        22H            ; Random access write record
-B_F_SIZE        EQU        23H            ; Compute file size
-B_F_RANDREC        EQU        24H            ; Update random access pointer
-B_DRV_RESET        EQU        25H            ; Selectively reset disk drives
+B_C_TERMCPM   EQU       00H                            ; System reset
+B_C_READ      EQU       01H                            ; Console read
+B_C_WRITE     EQU       02H                            ; Console write
+B_C_RAWIO     EQU       06H                            ; Direct console I/O
+B_GET_IOB     EQU       07H                            ; Get IOBYTE
+B_SET_IOB     EQU       08H                            ; Set IOBYTE
+B_C_WRTSTR    EQU       09H                            ; Console write string
+B_C_RDSTR     EQU       0AH                            ; Read console string
+B_C_STAT      EQU       0BH                            ; Console status
+B_S_BDOSVER   EQU       0CH                            ; Return version number
+B_DRV_ALLRST  EQU       0DH                            ; Reset disks
+B_DRV_SET     EQU       0EH                            ; Select disk
+B_F_OPEN      EQU       0FH                            ; Open file
+B_F_CLOSE     EQU       10H                            ; Close file
+B_F_SFIRST    EQU       11H                            ; Search for first match in directory
+B_F_SNEXT     EQU       12H                            ; Search for next match in directory
+B_F_DELETE    EQU       13H                            ; Delete file
+B_F_READ      EQU       14H                            ; Read file sequentially
+B_F_WRITE     EQU       15H                            ; Write file sequentially
+B_F_MAKE      EQU       16H                            ; Create and open file
+B_F_RENAME    EQU       17H                            ; Rename file
+B_DRV_LOGVEC  EQU       18H                            ; Return bitmap of logged-in drives
+B_DRV_GET     EQU       19H                            ; Return current drive
+B_F_DMAOFF    EQU       1AH                            ; Set DMA address
+B_DRV_AVEC    EQU       1BH                            ; Return address of allocation map
+B_DRV_SRO     EQU       1CH                            ; Software write-protect current drive
+B_DRV_ROVEC   EQU       1DH                            ; Return bitmap of read-only drives
+B_DRV_DPB     EQU       1FH                            ; Get Drive Parameter Block address
+B_F_USERNUM   EQU       20H                            ; Get/set user number
+B_F_RDRAND    EQU       21H                            ; Random access read record
+B_F_WRTRAND   EQU       22H                            ; Random access write record
+B_F_SIZE      EQU       23H                            ; Compute file size
+B_F_RANDREC   EQU       24H                            ; Update random access pointer
+B_DRV_RESET   EQU       25H                            ; Selectively reset disk drives
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 
@@ -626,612 +626,612 @@ B_DRV_RESET        EQU        25H            ; Selectively reset disk drives
 ; not CPU time.  A busy foreground gets long uninterrupted bursts;
 ; background work gets a short turn.  When foreground is idle/blocked,
 ; background uses the original 32-call quantum.
-SCHFGQ      EQU     128
-SCHBGQ      EQU     8
+SCHFGQ        EQU       128
+SCHBGQ        EQU       8
 ; Software cursor: foreground physical text only, never saved in a
 ; RamWorks backing screen. Polling input normally bypasses VGET, so
 ; draw the reverse-video cell while a foreground task waits for a key.
-            ORG     005A8H
-CUON        LD      A,(CUACTIVE)
-            OR      A
-            RET     NZ
-            LD      A,(VSOK)
-            OR      A
-            RET     Z
-            PUSH    BC
-            PUSH    DE
-            PUSH    HL
-            LD      HL,(VSPTR)    ; 6502 VCOL,VROW pair
-            LD      A,(HL)
-            LD      C,A
-            INC     HL
-            LD      A,(HL)
-            CP      24
-            JR      NC,CUONDONE
-            ADD     A,A
-            LD      E,A
-            LD      D,0
-            LD      HL,CUROWTAB
-            ADD     HL,DE
-            LD      E,(HL)
-            INC     HL
-            LD      D,(HL)
-            LD      A,C
-            AND     1
-            LD      (CUHALF),A    ; 0 AUX, 1 MAIN
-            SRL     C
-            LD      B,0
-            EX      DE,HL
-            ADD     HL,BC
-            LD      (CUADDR),HL
-            CALL    CUMAP
-            LD      A,(HL)
-            LD      (CUUNDER),A
-            BIT     7,A
-            JR      Z,CUONINV
-            AND     07FH
-            CP      060H
-            JR      NC,CUONINV
-            AND     03FH         ; uppercase: avoid MouseText
-CUONINV     LD      (HL),A
-            CALL    VSPREP       ; leave RAMRD/WRT, PAGE1 normal
-            LD      A,1
-            LD      (CUACTIVE),A
-CUONDONE    POP     HL
-            POP     DE
-            POP     BC
-            RET
+              ORG       005A8H
+CUON          LD        A,(CUACTIVE)
+              OR        A
+              RET       NZ
+              LD        A,(VSOK)
+              OR        A
+              RET       Z
+              PUSH      BC
+              PUSH      DE
+              PUSH      HL
+              LD        HL,(VSPTR)                     ; 6502 VCOL,VROW pair
+              LD        A,(HL)
+              LD        C,A
+              INC       HL
+              LD        A,(HL)
+              CP        24
+              JR        NC,CUONDONE
+              ADD       A,A
+              LD        E,A
+              LD        D,0
+              LD        HL,CUROWTAB
+              ADD       HL,DE
+              LD        E,(HL)
+              INC       HL
+              LD        D,(HL)
+              LD        A,C
+              AND       1
+              LD        (CUHALF),A                     ; 0 AUX, 1 MAIN
+              SRL       C
+              LD        B,0
+              EX        DE,HL
+              ADD       HL,BC
+              LD        (CUADDR),HL
+              CALL      CUMAP
+              LD        A,(HL)
+              LD        (CUUNDER),A
+              BIT       7,A
+              JR        Z,CUONINV
+              AND       07FH
+              CP        060H
+              JR        NC,CUONINV
+              AND       03FH                           ; uppercase: avoid MouseText
+CUONINV       LD        (HL),A
+              CALL      VSPREP                         ; leave RAMRD/WRT, PAGE1 normal
+              LD        A,1
+              LD        (CUACTIVE),A
+CUONDONE      POP       HL
+              POP       DE
+              POP       BC
+              RET
 
-SCHIDLEQ    EQU     32
-            ORG     00600H
+SCHIDLEQ      EQU       32
+              ORG       00600H
 ; Stage 1 scheduler. RUNTASK is TABMODE; SCHFG owns the physical screen.
 ; These are cooperative slices: no call is interrupted mid-operation.
 ; SCHMAIN is called with MAIN/CCP stack active after a transient yields.
-SCHMAIN     LD      A,(SCHEN)
-            OR      A
-            RET     Z
-SMLOOP      LD      A,(TABREQ)
-            CP      0FFH
-            RET     NZ             ; manual tab switch has priority
-            LD      A,(SCHFG)
-            LD      E,A
-            LD      D,0
-            LD      HL,TSKFLAGS
-            ADD     HL,DE
-            LD      A,(HL)
-            OR      A
-            RET     Z              ; foreground is at CCP, not in .COM
-            CALL    SCHONE         ; optional background quantum
-            LD      A,(SCHFG)
-            LD      B,A
-            CALL    SCHSWAP        ; restore foreground BDOS context
-            ; Stage 3: a foreground .COM parked on CONIN must not
-            ; enter the blocking 6502 VGET while other jobs are runnable.
-            ; Poll the *physical* keyboard and keep running background
-            ; quanta until a key appears (or a manual tab switch arrives).
-            LD      A,(SCHFG)
-            LD      E,A
-            LD      D,0
-            LD      HL,SCHWAIT
-            ADD     HL,DE
-            LD      A,(HL)
-            OR      A
-            JR      Z,SMRUN
-            CALL    SCHHAVE
-            OR      A
-            JR      Z,SMRUN       ; no background jobs: normal VGET cursor
-            CALL    CUON
-            CALL    BIOSCONST
-            OR      A
-            JR      Z,SMLOOP      ; input not ready; don't enter VGET
-            CALL    CUOFF
-            CALL    SCHWAKE       ; input can complete: make task runnable
-SMRUN       CALL    CUOFF         ; restore cell before foreground runs
-            LD      A,SCHFGQ
-            LD      (SCHQLEFT),A  ; foreground receives longer quantum
-            CALL    TABRESUM       ; foreground until next yield/exit
-            JR      SMLOOP
+SCHMAIN       LD        A,(SCHEN)
+              OR        A
+              RET       Z
+SMLOOP        LD        A,(TABREQ)
+              CP        0FFH
+              RET       NZ                             ; manual tab switch has priority
+              LD        A,(SCHFG)
+              LD        E,A
+              LD        D,0
+              LD        HL,TSKFLAGS
+              ADD       HL,DE
+              LD        A,(HL)
+              OR        A
+              RET       Z                              ; foreground is at CCP, not in .COM
+              CALL      SCHONE                         ; optional background quantum
+              LD        A,(SCHFG)
+              LD        B,A
+              CALL      SCHSWAP                        ; restore foreground BDOS context
+              ; Stage 3: a foreground .COM parked on CONIN must not
+              ; enter the blocking 6502 VGET while other jobs are runnable.
+              ; Poll the *physical* keyboard and keep running background
+              ; quanta until a key appears (or a manual tab switch arrives).
+              LD        A,(SCHFG)
+              LD        E,A
+              LD        D,0
+              LD        HL,SCHWAIT
+              ADD       HL,DE
+              LD        A,(HL)
+              OR        A
+              JR        Z,SMRUN
+              CALL      SCHHAVE
+              OR        A
+              JR        Z,SMRUN                        ; no background jobs: normal VGET cursor
+              CALL      CUON
+              CALL      BIOSCONST
+              OR        A
+              JR        Z,SMLOOP                       ; input not ready; don't enter VGET
+              CALL      CUOFF
+              CALL      SCHWAKE                        ; input can complete: make task runnable
+SMRUN         CALL      CUOFF                          ; restore cell before foreground runs
+              LD        A,SCHFGQ
+              LD        (SCHQLEFT),A                   ; foreground receives longer quantum
+              CALL      TABRESUM                       ; foreground until next yield/exit
+              JR        SMLOOP
 
 ; Called from foreground CCP's console line editor before CONIN.
 ; When background work exists, poll keyboard and run background slices.
 ; Preserve the editor's live IX, BC, DE and flags across task execution.
-SCHIDLE     PUSH    AF
-            PUSH    BC
-            PUSH    DE
-            PUSH    IX
-            PUSH    IY
-SIAGAIN     CALL    SCHHAVE
-            OR      A
-            JR      Z,SIDONE      ; no background jobs: normal VGET
-            LD      A,3
-            LD      (CMD),A
-            LD      (SOFTCARD),A
-            LD      A,(AREG)
-            OR      A
-            JR      NZ,SIDONE     ; physical key waiting, let VGET read
-            CALL    CUON         ; show cursor during cooperative polling
-            CALL    SCHONE
-            JR      SIAGAIN
-SIDONE      CALL    CUOFF         ; key or blocking VGET takes ownership
-            POP     IY
-            POP     IX
-            POP     DE
-            POP     BC
-            POP     AF
-            RET
+SCHIDLE       PUSH      AF
+              PUSH      BC
+              PUSH      DE
+              PUSH      IX
+              PUSH      IY
+SIAGAIN       CALL      SCHHAVE
+              OR        A
+              JR        Z,SIDONE                       ; no background jobs: normal VGET
+              LD        A,3
+              LD        (CMD),A
+              LD        (SOFTCARD),A
+              LD        A,(AREG)
+              OR        A
+              JR        NZ,SIDONE                      ; physical key waiting, let VGET read
+              CALL      CUON                           ; show cursor during cooperative polling
+              CALL      SCHONE
+              JR        SIAGAIN
+SIDONE        CALL      CUOFF                          ; key or blocking VGET takes ownership
+              POP       IY
+              POP       IX
+              POP       DE
+              POP       BC
+              POP       AF
+              RET
 
 ; Pick a runnable background tab. Does not touch the screen or terminal
 ; personality. Run for one quantum; then restore foreground CCP context.
-SCHONE      LD      A,(SCHEN)
-            OR      A
-            RET     Z
-            LD      A,(SCHNEXT)
-            LD      C,A
-            LD      B,16
-SOSCAN      LD      A,(TABCOUNT)
-            CP      C
-            JR      NZ,SOIDX
-            LD      C,0
-SOIDX       LD      A,(SCHFG)
-            CP      C
-            JR      Z,SOADV
-            LD      E,C
-            LD      D,0
-            LD      HL,TSKFLAGS
-            ADD     HL,DE
-            LD      A,(HL)
-            OR      A
-            JR      Z,SOADV
-            LD      HL,SCHWAIT
-            ADD     HL,DE
-            LD      A,(HL)
-            OR      A
-            JR      NZ,SOADV
-            LD      HL,TBHOLD
-            ADD     HL,DE
-            LD      A,(HL)
-            OR      A
-            JR      NZ,SOADV
-            LD      A,C
-            INC     A
-            LD      (SCHNEXT),A
-            LD      B,C
-            CALL    SCHSWAP
-            ; A busy foreground needs quick redraws; give background
-            ; only a few calls.  When foreground is at CCP or blocked
-            ; on input, allow full-sized background quanta instead.
-            LD      A,(SCHFG)
-            LD      E,A
-            LD      D,0
-            LD      HL,TSKFLAGS
-            ADD     HL,DE
-            LD      A,(HL)
-            OR      A
-            JR      Z,SOFULL
-            LD      HL,SCHWAIT
-            ADD     HL,DE
-            LD      A,(HL)
-            OR      A
-            JR      NZ,SOFULL
-            LD      A,SCHBGQ
-            JR      SOQUANT
-SOFULL      LD      A,SCHIDLEQ
-SOQUANT     LD      (SCHQLEFT),A
-            CALL    TABRESUM
-            LD      A,(SCHFG)
-            LD      B,A
-            CALL    SCHSWAP
-            LD      A,1
-            RET
-SOADV       INC     C
-            DJNZ    SOSCAN
-            XOR     A
-            RET
+SCHONE        LD        A,(SCHEN)
+              OR        A
+              RET       Z
+              LD        A,(SCHNEXT)
+              LD        C,A
+              LD        B,16
+SOSCAN        LD        A,(TABCOUNT)
+              CP        C
+              JR        NZ,SOIDX
+              LD        C,0
+SOIDX         LD        A,(SCHFG)
+              CP        C
+              JR        Z,SOADV
+              LD        E,C
+              LD        D,0
+              LD        HL,TSKFLAGS
+              ADD       HL,DE
+              LD        A,(HL)
+              OR        A
+              JR        Z,SOADV
+              LD        HL,SCHWAIT
+              ADD       HL,DE
+              LD        A,(HL)
+              OR        A
+              JR        NZ,SOADV
+              LD        HL,TBHOLD
+              ADD       HL,DE
+              LD        A,(HL)
+              OR        A
+              JR        NZ,SOADV
+              LD        A,C
+              INC       A
+              LD        (SCHNEXT),A
+              LD        B,C
+              CALL      SCHSWAP
+              ; A busy foreground needs quick redraws; give background
+              ; only a few calls.  When foreground is at CCP or blocked
+              ; on input, allow full-sized background quanta instead.
+              LD        A,(SCHFG)
+              LD        E,A
+              LD        D,0
+              LD        HL,TSKFLAGS
+              ADD       HL,DE
+              LD        A,(HL)
+              OR        A
+              JR        Z,SOFULL
+              LD        HL,SCHWAIT
+              ADD       HL,DE
+              LD        A,(HL)
+              OR        A
+              JR        NZ,SOFULL
+              LD        A,SCHBGQ
+              JR        SOQUANT
+SOFULL        LD        A,SCHIDLEQ
+SOQUANT       LD        (SCHQLEFT),A
+              CALL      TABRESUM
+              LD        A,(SCHFG)
+              LD        B,A
+              CALL      SCHSWAP
+              LD        A,1
+              RET
+SOADV         INC       C
+              DJNZ      SOSCAN
+              XOR       A
+              RET
 
 ; Boolean: is there any runnable background task? Preserves BC, DE.
-SCHHAVE     PUSH    BC
-            PUSH    DE
-            PUSH    HL
-            LD      A,(SCHNEXT)
-            LD      C,A
-            LD      B,16
-SHSCAN      LD      A,(TABCOUNT)
-            CP      C
-            JR      NZ,SHIDX
-            LD      C,0
-SHIDX       LD      A,(SCHFG)
-            CP      C
-            JR      Z,SHADV
-            LD      E,C
-            LD      D,0
-            LD      HL,TSKFLAGS
-            ADD     HL,DE
-            LD      A,(HL)
-            OR      A
-            JR      Z,SHADV
-            LD      HL,SCHWAIT
-            ADD     HL,DE
-            LD      A,(HL)
-            OR      A
-            JR      NZ,SHADV
-            LD      HL,TBHOLD
-            ADD     HL,DE
-            LD      A,(HL)
-            OR      A
-            JR      NZ,SHADV
-            LD      A,1
-            JR      SHDONE
-SHADV       INC     C
-            DJNZ    SHSCAN
-            XOR     A
-SHDONE      POP     HL
-            POP     DE
-            POP     BC
-            RET
+SCHHAVE       PUSH      BC
+              PUSH      DE
+              PUSH      HL
+              LD        A,(SCHNEXT)
+              LD        C,A
+              LD        B,16
+SHSCAN        LD        A,(TABCOUNT)
+              CP        C
+              JR        NZ,SHIDX
+              LD        C,0
+SHIDX         LD        A,(SCHFG)
+              CP        C
+              JR        Z,SHADV
+              LD        E,C
+              LD        D,0
+              LD        HL,TSKFLAGS
+              ADD       HL,DE
+              LD        A,(HL)
+              OR        A
+              JR        Z,SHADV
+              LD        HL,SCHWAIT
+              ADD       HL,DE
+              LD        A,(HL)
+              OR        A
+              JR        NZ,SHADV
+              LD        HL,TBHOLD
+              ADD       HL,DE
+              LD        A,(HL)
+              OR        A
+              JR        NZ,SHADV
+              LD        A,1
+              JR        SHDONE
+SHADV         INC       C
+              DJNZ      SHSCAN
+              XOR       A
+SHDONE        POP       HL
+              POP       DE
+              POP       BC
+              RET
 
 ; No terminal snapshot and no physical terminal-mode changes on a
 ; background context switch; only COMMON BDOS drive state is exchanged.
-SCHSWAP     LD      A,(TABMODE)
-            CP      B
-            RET     Z
-            PUSH    BC
-            CALL    VSSTSAVE       ; flush active terminal state to descriptor
-            CALL    SCHSAVE
-            POP     BC
-            LD      A,B
-            LD      (TABMODE),A
-            CALL    SCHLOAD
-            CALL    VSSTLOAD       ; restore cursor/escape parser/mode
-            JP      VSSELECT       ; 6502 maps backing screen for this task
+SCHSWAP       LD        A,(TABMODE)
+              CP        B
+              RET       Z
+              PUSH      BC
+              CALL      VSSTSAVE                       ; flush active terminal state to descriptor
+              CALL      SCHSAVE
+              POP       BC
+              LD        A,B
+              LD        (TABMODE),A
+              CALL      SCHLOAD
+              CALL      VSSTLOAD                       ; restore cursor/escape parser/mode
+              JP        VSSELECT                       ; 6502 maps backing screen for this task
 
-            ORG     00770H
+              ORG       00770H
 ; 16 eight-character executable names, only valid while TSKFLAGS is set.
-TBNAMES     DEFS    128
+TBNAMES       DEFS      128
 ; Explicit manual pause is separate from SCHWAIT (console-read parking).
-TBHOLD      DEFS    16
+TBHOLD        DEFS      16
 
-            ORG     00800H
+              ORG       00800H
 ; BDOS 10 may suspend only at an empty line. A successful hotkey
 ; parks the read itself; resume restarts it, without submitting CR.
-AXLSKEY     LD      A,0FAH        ; deferred BDOS 10 input
-            LD      L,A
-            RET
+AXLSKEY       LD        A,0FAH                         ; deferred BDOS 10 input
+              LD        L,A
+              RET
 
 ; Blocked BDOS 1 and BIOS CONIN sample Open Apple at key-read time.
-TSKCIN      CALL    BIOSCONIN
-            CALL    TSKKEY
-            JR      C,TSKCIKEY
-            OR      A
-            JR      Z,TSKCIN     ; OA-current was consumed
-            CP      3
-            JR      NZ,TSKECHO
-            LD      A,1
-            LD      (LCQUIT),A
-            XOR     A
-            LD      L,A
-            RET
-TSKECHO     PUSH    AF
-            LD      E,A
-            CALL    C_WRITE
-            POP     AF
-            LD      L,A
-            RET
-TSKCIKEY    LD      A,0F1H        ; deferred cooked input
-            LD      L,A
-            RET
+TSKCIN        CALL      BIOSCONIN
+              CALL      TSKKEY
+              JR        C,TSKCIKEY
+              OR        A
+              JR        Z,TSKCIN                       ; OA-current was consumed
+              CP        3
+              JR        NZ,TSKECHO
+              LD        A,1
+              LD        (LCQUIT),A
+              XOR       A
+              LD        L,A
+              RET
+TSKECHO       PUSH      AF
+              LD        E,A
+              CALL      C_WRITE
+              POP       AF
+              LD        L,A
+              RET
+TSKCIKEY      LD        A,0F1H                         ; deferred cooked input
+              LD        L,A
+              RET
 
-TSKBIRD     CALL    BIOSCONIN
-            CALL    TSKKEY
-            JR      C,TSKBIKEY
-            OR      A
-            JR      Z,TSKBIRD    ; OA-current was consumed
-            LD      L,A
-            RET
-TSKBIKEY    LD      A,0F2H        ; deferred BIOS character input
-            LD      L,A
-            RET
+TSKBIRD       CALL      BIOSCONIN
+              CALL      TSKKEY
+              JR        C,TSKBIKEY
+              OR        A
+              JR        Z,TSKBIRD                      ; OA-current was consumed
+              LD        L,A
+              RET
+TSKBIKEY      LD        A,0F2H                         ; deferred BIOS character input
+              LD        L,A
+              RET
 
-TSKINIT     LD      HL,SCHWAIT
-            LD      DE,SCHWAIT+1
-            LD      BC,15
-            XOR     A
-            LD      (HL),A
-            LDIR
-            LD      (SCHFG),A
-            LD      (SCHNEXT),A
-            LD      A,SCHFGQ
-            LD      (SCHQLEFT),A
-            LD      A,(TABCOUNT)
-            CP      2
-            LD      A,0
-            JR      C,SKINIT0
-            INC     A
-SKINIT0     LD      (SCHEN),A
-            LD      HL,TSKFLAGS
-            LD      DE,TSKFLAGS+1
-            LD      BC,15
-            XOR     A
-            LD      (HL),A
-            LDIR
-            LD      A,0FFH
-            LD      (TABREQ),A
-            LD      HL,TBHOLD
-            LD      DE,TBHOLD+1
-            LD      BC,15
-            XOR     A
-            LD      (HL),A
-            LDIR
-            RET
+TSKINIT       LD        HL,SCHWAIT
+              LD        DE,SCHWAIT+1
+              LD        BC,15
+              XOR       A
+              LD        (HL),A
+              LDIR
+              LD        (SCHFG),A
+              LD        (SCHNEXT),A
+              LD        A,SCHFGQ
+              LD        (SCHQLEFT),A
+              LD        A,(TABCOUNT)
+              CP        2
+              LD        A,0
+              JR        C,SKINIT0
+              INC       A
+SKINIT0       LD        (SCHEN),A
+              LD        HL,TSKFLAGS
+              LD        DE,TSKFLAGS+1
+              LD        BC,15
+              XOR       A
+              LD        (HL),A
+              LDIR
+              LD        A,0FFH
+              LD        (TABREQ),A
+              LD        HL,TBHOLD
+              LD        DE,TBHOLD+1
+              LD        BC,15
+              XOR       A
+              LD        (HL),A
+              LDIR
+              RET
 
-TSKFLPTR    LD      A,(TABMODE)
-            LD      E,A
-            LD      D,0
-            LD      HL,TSKFLAGS
-            ADD     HL,DE
-            RET
-TSKACTIVE   CALL    TSKFLPTR
-            LD      A,(HL)
-            RET
+TSKFLPTR      LD        A,(TABMODE)
+              LD        E,A
+              LD        D,0
+              LD        HL,TSKFLAGS
+              ADD       HL,DE
+              RET
+TSKACTIVE     CALL      TSKFLPTR
+              LD        A,(HL)
+              RET
 
 ; A=ASCII key, XREG=Open Apple state sampled by the 6502 at key read.
 ; Carry=1 if a DIFFERENT tab was queued. OA+current beeps and returns
 ; carry=0, A=0 (consumed), so callers don't suspend or pass the key.
 ; Arrow keys wrap around TABCOUNT; numeric/hex keys select directly.
 ; Preserve BC (TABDECODE uses C, and AXLINE holds its count there).
-TSKKEY      PUSH    BC
-            PUSH    AF
-            LD      A,(XREG)
-            BIT     7,A
-            JR      Z,TSKIGNORE
-            POP     AF
-            PUSH    AF
-            CP      08H          ; Apple IIe left-arrow
-            JR      Z,TSKPREV
-            CP      15H          ; Apple IIe right-arrow
-            JR      Z,TSKNEXT
-            CALL    TABDECODE
-            JR      C,TSKIGNORE
-            JR      TSKQUEUE
-TSKPREV     LD      A,(TABMODE)
-            OR      A
-            JR      NZ,TSKPREVB
-            LD      A,(TABCOUNT)
-TSKPREVB    DEC     A
-            JR      TSKQUEUE
-TSKNEXT     LD      A,(TABMODE)
-            INC     A
-            LD      B,A
-            LD      A,(TABCOUNT)
-            CP      B
-            JR      Z,TSKWRAP
-            JR      C,TSKWRAP
-            LD      A,B
-            JR      TSKQUEUE
-TSKWRAP     XOR     A
-TSKQUEUE    LD      B,A           ; B is saved by TSKKEY prologue
-            LD      A,(SCHFG)
-            CP      B
-            JR      Z,TSKSAME
-            LD      A,B
-            LD      (TABREQ),A
-            LD      A,3
-            LD      (AXQUIT),A
-            POP     BC          ; discard the original character/flags
-            POP     BC          ; restore caller's BC
-            SCF
-            RET
-TSKSAME     PUSH    HL          ; UNIMP changes HL (6502 vector)
-            CALL    UNIMP        ; beep: Open Apple + current tab
-            POP     HL
-            LD      A,(0E010H)   ; clear physical key strobe (status path)
-            POP     BC          ; discard saved character/flags
-            POP     BC          ; restore caller BC
-            XOR     A           ; consumed: no input, no suspension
-            RET
-TSKIGNORE   POP     AF          ; ordinary key: return it unchanged
-            POP     BC
-            OR      A           ; clear carry
-            RET
+TSKKEY        PUSH      BC
+              PUSH      AF
+              LD        A,(XREG)
+              BIT       7,A
+              JR        Z,TSKIGNORE
+              POP       AF
+              PUSH      AF
+              CP        08H                            ; Apple IIe left-arrow
+              JR        Z,TSKPREV
+              CP        15H                            ; Apple IIe right-arrow
+              JR        Z,TSKNEXT
+              CALL      TABDECODE
+              JR        C,TSKIGNORE
+              JR        TSKQUEUE
+TSKPREV       LD        A,(TABMODE)
+              OR        A
+              JR        NZ,TSKPREVB
+              LD        A,(TABCOUNT)
+TSKPREVB      DEC       A
+              JR        TSKQUEUE
+TSKNEXT       LD        A,(TABMODE)
+              INC       A
+              LD        B,A
+              LD        A,(TABCOUNT)
+              CP        B
+              JR        Z,TSKWRAP
+              JR        C,TSKWRAP
+              LD        A,B
+              JR        TSKQUEUE
+TSKWRAP       XOR       A
+TSKQUEUE      LD        B,A                            ; B is saved by TSKKEY prologue
+              LD        A,(SCHFG)
+              CP        B
+              JR        Z,TSKSAME
+              LD        A,B
+              LD        (TABREQ),A
+              LD        A,3
+              LD        (AXQUIT),A
+              POP       BC                             ; discard the original character/flags
+              POP       BC                             ; restore caller's BC
+              SCF
+              RET
+TSKSAME       PUSH      HL                             ; UNIMP changes HL (6502 vector)
+              CALL      UNIMP                          ; beep: Open Apple + current tab
+              POP       HL
+              LD        A,(0E010H)                     ; clear physical key strobe (status path)
+              POP       BC                             ; discard saved character/flags
+              POP       BC                             ; restore caller BC
+              XOR       A                              ; consumed: no input, no suspension
+              RET
+TSKIGNORE     POP       AF                             ; ordinary key: return it unchanged
+              POP       BC
+              OR        A                              ; clear carry
+              RET
 
-TSKSET      PUSH    AF
-            CALL    TSKFLPTR
-            POP     AF
-            LD      (HL),A
-            RET
+TSKSET        PUSH      AF
+              CALL      TSKFLPTR
+              POP       AF
+              LD        (HL),A
+              RET
 
 ; DE = 27 * logical session index + TSKREGS, return HL.
-TSKSLOTP    LD      A,(TABMODE)
-            LD      L,A
-            LD      H,0
-            LD      E,L
-            LD      D,H
-            ADD     HL,HL
-            ADD     HL,HL
-            ADD     HL,HL           ; 8n
-            LD      B,H
-            LD      C,L
-            ADD     HL,HL           ; 16n
-            ADD     HL,BC           ; 24n
-            ADD     HL,DE           ; 25n
-            ADD     HL,DE           ; 26n
-            ADD     HL,DE           ; 27n
-            LD      DE,TSKREGS
-            ADD     HL,DE
-            RET
+TSKSLOTP      LD        A,(TABMODE)
+              LD        L,A
+              LD        H,0
+              LD        E,L
+              LD        D,H
+              ADD       HL,HL
+              ADD       HL,HL
+              ADD       HL,HL                          ; 8n
+              LD        B,H
+              LD        C,L
+              ADD       HL,HL                          ; 16n
+              ADD       HL,BC                          ; 24n
+              ADD       HL,DE                          ; 25n
+              ADD       HL,DE                          ; 26n
+              ADD       HL,DE                          ; 27n
+              LD        DE,TSKREGS
+              ADD       HL,DE
+              RET
 
 ; Copy 27 bytes of preserved Z80/BDOS context to the current slot.
 ; TASKSAVE is called immediately after AUXBDOS, before changing tabs.
-TASKSAVE    LD      (TSKBC),BC
-            LD      (TSKDE),DE
-            LD      (TSKIX),IX
-            LD      (TSKIY),IY
-            EXX
-            LD      (TSKAB),BC
-            LD      (TSKAD),DE
-            LD      (TSKAH),HL
-            EXX
-            EX      AF,AF'
-            PUSH    AF
-            POP     HL
-            LD      (TSKAA),HL
-            EX      AF,AF'
-            LD      HL,(AXASP)
-            LD      (TSKSP),HL
-            LD      HL,(AXRHL)
-            LD      (TSKHL),HL
-            LD      HL,(DMAADDR)
-            LD      (TSKDM),HL
-            LD      HL,(AXDMAP)
-            LD      (TSKDP),HL
-            LD      A,(AXRES)
-            LD      (TSKRE),A
-            LD      HL,(AXLIP)
-            LD      (TSKLI),HL
-            LD      A,(AXRES)
-            CP      0F1H        ; cooked CONIN deferred by Open Apple
-            JR      Z,TSKWAIT
-            CP      0F2H        ; raw BIOS CONIN deferred
-            JR      Z,TSKWAIT
-            CP      0FAH        ; BDOS 10 read deferred
-            JR      NZ,TSKNOWT
-TSKWAIT     CALL    SCHBLCK      ; background must not retry VGET
-TSKNOWT     LD      A,1
-            CALL    TSKSET
-            LD      HL,TSKBUFF
-            CALL    TSKSLOTP
-            EX      DE,HL
-            LD      HL,TSKBUFF
-            LD      BC,TSKSIZE
-            LDIR
-            RET
+TASKSAVE      LD        (TSKBC),BC
+              LD        (TSKDE),DE
+              LD        (TSKIX),IX
+              LD        (TSKIY),IY
+              EXX
+              LD        (TSKAB),BC
+              LD        (TSKAD),DE
+              LD        (TSKAH),HL
+              EXX
+              EX        AF,AF'
+              PUSH      AF
+              POP       HL
+              LD        (TSKAA),HL
+              EX        AF,AF'
+              LD        HL,(AXASP)
+              LD        (TSKSP),HL
+              LD        HL,(AXRHL)
+              LD        (TSKHL),HL
+              LD        HL,(DMAADDR)
+              LD        (TSKDM),HL
+              LD        HL,(AXDMAP)
+              LD        (TSKDP),HL
+              LD        A,(AXRES)
+              LD        (TSKRE),A
+              LD        HL,(AXLIP)
+              LD        (TSKLI),HL
+              LD        A,(AXRES)
+              CP        0F1H                           ; cooked CONIN deferred by Open Apple
+              JR        Z,TSKWAIT
+              CP        0F2H                           ; raw BIOS CONIN deferred
+              JR        Z,TSKWAIT
+              CP        0FAH                           ; BDOS 10 read deferred
+              JR        NZ,TSKNOWT
+TSKWAIT       CALL      SCHBLCK                        ; background must not retry VGET
+TSKNOWT       LD        A,1
+              CALL      TSKSET
+              LD        HL,TSKBUFF
+              CALL      TSKSLOTP
+              EX        DE,HL
+              LD        HL,TSKBUFF
+              LD        BC,TSKSIZE
+              LDIR
+              RET
 
 ; Reconstitute the same registers and return values before the saved
 ; AUX stack is made active. Caller must have selected the RamWorks bank.
-TASKLOAD    CALL    TSKSLOTP
-            LD      DE,TSKBUFF
-            LD      BC,TSKSIZE
-            LDIR
-            LD      HL,(TSKSP)
-            LD      (AXASP),HL
-            LD      HL,(TSKHL)
-            LD      (AXRHL),HL
-            LD      HL,(TSKDM)
-            LD      (DMAADDR),HL
-            LD      HL,(TSKDP)
-            LD      (AXDMAP),HL
-            LD      A,(TSKRE)
-            LD      (AXRES),A
-            LD      HL,(TSKLI)
-            LD      (AXLIP),HL
-            LD      BC,(TSKAB)
-            LD      DE,(TSKAD)
-            LD      HL,(TSKAH)
-            EXX
-            LD      HL,(TSKAA)
-            PUSH    HL
-            EX      AF,AF'
-            POP     AF
-            EX      AF,AF'
-            LD      IX,(TSKIX)
-            LD      IY,(TSKIY)
-            LD      BC,(TSKBC)
-            LD      DE,(TSKDE)
-            RET
+TASKLOAD      CALL      TSKSLOTP
+              LD        DE,TSKBUFF
+              LD        BC,TSKSIZE
+              LDIR
+              LD        HL,(TSKSP)
+              LD        (AXASP),HL
+              LD        HL,(TSKHL)
+              LD        (AXRHL),HL
+              LD        HL,(TSKDM)
+              LD        (DMAADDR),HL
+              LD        HL,(TSKDP)
+              LD        (AXDMAP),HL
+              LD        A,(TSKRE)
+              LD        (AXRES),A
+              LD        HL,(TSKLI)
+              LD        (AXLIP),HL
+              LD        BC,(TSKAB)
+              LD        DE,(TSKAD)
+              LD        HL,(TSKAH)
+              EXX
+              LD        HL,(TSKAA)
+              PUSH      HL
+              EX        AF,AF'
+              POP       AF
+              EX        AF,AF'
+              LD        IX,(TSKIX)
+              LD        IY,(TSKIY)
+              LD        BC,(TSKBC)
+              LD        DE,(TSKDE)
+              RET
 
 ; TAB n resumes a parked program. All MLI and cache resources are
 ; shared, hence physical handles were flushed when it was parked.
-TABRESUM    CALL    TSKACTIVE
-            OR      A
-            RET     Z
-            XOR     A
-            CALL    TSKSET          ; clear active flag during execution
-            LD      A,(TABMODE)
-            CALL    TABPHYS
-            CALL    AXBANK
-            CALL    AXSNAP          ; save ProDOS MAIN LC; do not load .COM
-            CALL    TASKLOAD
-            CALL    AXCONT          ; returns after new ^] or program exit
-            LD      A,(AXQUIT)
-            CP      3
-            JR      Z,TSKRSUS
-            ; Completed program retains its own AUX LC/TPA for CCP SAVE.
-            CALL    CACHEALL
-            CALL    AXMAINLC
-            CALL    SVFLPTR
-            LD      (HL),1
-            JR      TSKRFIN
-TSKRSUS     CALL    CACHEALL
-            CALL    AXMAINLC       ; parked bank's LC must survive
-TSKRFIN     XOR     A
-            CALL    AXBANK
-            LD      A,(AXQUIT)
-            CP      3
-            ; Backing display is live; no snapshot at suspension.
-            LD      HL,FILEBUF
-            LD      (DMAADDR),HL
-            LD      HL,0080H
-            LD      (AXDMAP),HL
-            CALL    SBWSET         ; defer WBOOT until this tab has CCP
-            RET
+TABRESUM      CALL      TSKACTIVE
+              OR        A
+              RET       Z
+              XOR       A
+              CALL      TSKSET                         ; clear active flag during execution
+              LD        A,(TABMODE)
+              CALL      TABPHYS
+              CALL      AXBANK
+              CALL      AXSNAP                         ; save ProDOS MAIN LC; do not load .COM
+              CALL      TASKLOAD
+              CALL      AXCONT                         ; returns after new ^] or program exit
+              LD        A,(AXQUIT)
+              CP        3
+              JR        Z,TSKRSUS
+              ; Completed program retains its own AUX LC/TPA for CCP SAVE.
+              CALL      CACHEALL
+              CALL      AXMAINLC
+              CALL      SVFLPTR
+              LD        (HL),1
+              JR        TSKRFIN
+TSKRSUS       CALL      CACHEALL
+              CALL      AXMAINLC                       ; parked bank's LC must survive
+TSKRFIN       XOR       A
+              CALL      AXBANK
+              LD        A,(AXQUIT)
+              CP        3
+              ; Backing display is live; no snapshot at suspension.
+              LD        HL,FILEBUF
+              LD        (DMAADDR),HL
+              LD        HL,0080H
+              LD        (AXDMAP),HL
+              CALL      SBWSET                         ; defer WBOOT until this tab has CCP
+              RET
 
-TSKMSG      DEFM    'Suspended (Open Apple+0-9/A-F/arrows)'
-            DEFB    13,'$'
-TSKBUSY     DEFM    'Session suspended: select it first'
-            DEFB    13,'$'
+TSKMSG        DEFM      'Suspended (Open Apple+0-9/A-F/arrows)'
+              DEFB      13,'$'
+TSKBUSY       DEFM      'Session suspended: select it first'
+              DEFB      13,'$'
 ; Shared serialization buffer and one copy for each session.
 TSKBUFF
-TSKBC       DEFW    0
-TSKDE       DEFW    0
-TSKIX       DEFW    0
-TSKIY       DEFW    0
-TSKAB       DEFW    0
-TSKAD       DEFW    0
-TSKAH       DEFW    0
-TSKAA       DEFW    0
-TSKSP       DEFW    0
-TSKHL       DEFW    0
-TSKDM       DEFW    0
-TSKDP       DEFW    0
-TSKRE       DEFB    0
-TSKLI       DEFW    0             ; interrupted BDOS 10 AUX buffer pointer
+TSKBC         DEFW      0
+TSKDE         DEFW      0
+TSKIX         DEFW      0
+TSKIY         DEFW      0
+TSKAB         DEFW      0
+TSKAD         DEFW      0
+TSKAH         DEFW      0
+TSKAA         DEFW      0
+TSKSP         DEFW      0
+TSKHL         DEFW      0
+TSKDM         DEFW      0
+TSKDP         DEFW      0
+TSKRE         DEFB      0
+TSKLI         DEFW      0                              ; interrupted BDOS 10 AUX buffer pointer
 TSKEND
-TSKSIZE     EQU     TSKEND-TSKBUFF
+TSKSIZE       EQU       TSKEND-TSKBUFF
 
 ; On resume, complete a parked input call *before* returning to AUX.
 ; AXRES carries a private marker only when suspended in keyboard I/O.
 ; No synthetic NUL/CR is sent to MBASIC, WordStar or the CCP.
-AXRETRY     LD      A,(AXRES)
-            CP      0F1H
-            JR      Z,ARCOOK
-            CP      0F2H
-            JR      Z,ARBIOS
-            CP      0FAH
-            JR      Z,ARLINE
-            CP      0F6H
-            JR      Z,ARRAW
-            CP      0F3H
-            JR      Z,ARSTAT
-            JP      AXGO
-ARCOOK      CALL    TSKCIN
-            JR      ARDONE
-ARBIOS      CALL    TSKBIRD
-            JR      ARDONE
-ARLINE      LD      DE,(AXLIP)
-            CALL    AXLINE
-            JR      ARDONE
-ARRAW       LD      E,0FFH
-            CALL    AUXBDOS6
-            JR      ARDONE
-ARSTAT      CALL    TSKSTAT       ; retry actual BIOS/BDOS status request
-ARDONE      LD      (AXRES),A
-            LD      (AXRHL),HL
-            LD      A,(AXQUIT)
-            CP      3
-            CALL    Z,TASKSAVE
-            LD      A,(AXQUIT)
-            OR      A
-            JP      NZ,AXFIN
-            JP      AXGO
+AXRETRY       LD        A,(AXRES)
+              CP        0F1H
+              JR        Z,ARCOOK
+              CP        0F2H
+              JR        Z,ARBIOS
+              CP        0FAH
+              JR        Z,ARLINE
+              CP        0F6H
+              JR        Z,ARRAW
+              CP        0F3H
+              JR        Z,ARSTAT
+              JP        AXGO
+ARCOOK        CALL      TSKCIN
+              JR        ARDONE
+ARBIOS        CALL      TSKBIRD
+              JR        ARDONE
+ARLINE        LD        DE,(AXLIP)
+              CALL      AXLINE
+              JR        ARDONE
+ARRAW         LD        E,0FFH
+              CALL      AUXBDOS6
+              JR        ARDONE
+ARSTAT        CALL      TSKSTAT                        ; retry actual BIOS/BDOS status request
+ARDONE        LD        (AXRES),A
+              LD        (AXRHL),HL
+              LD        A,(AXQUIT)
+              CP        3
+              CALL      Z,TASKSAVE
+              LD        A,(AXQUIT)
+              OR        A
+              JP        NZ,AXFIN
+              JP        AXGO
 
 ; CCP-only MouseText print. A='A'/$41 (Open Apple), 'H'/$48 (left),
 ; 'U'/$55 (right). The stock VPUT path forces normal or inverse ASCII,
@@ -1240,36 +1240,36 @@ ARDONE      LD      (AXRES),A
 ; All three sign-on glyphs are deliberately away from row wrap.
 ; Reuse the working software-cursor's bank-0 mapping helper; never
 ; alter video interpretation for CP/M applications.
-MTCHAR      PUSH    AF
-            CALL    CUOFF
-            LD      E,' '
-            CALL    C_WRITE
-            LD      HL,(VSPTR)   ; 6502 state: VCOL followed by VROW
-            LD      A,(HL)
-            DEC     A           ; one cell back, same line (no wrap)
-            LD      C,A
-            INC     HL
-            LD      A,(HL)
-            ADD     A,A
-            LD      E,A
-            LD      D,0
-            LD      HL,CUROWTAB
-            ADD     HL,DE
-            LD      E,(HL)
-            INC     HL
-            LD      D,(HL)
-            LD      A,C
-            AND     1
-            LD      (CUHALF),A  ; even=aux, odd=main
-            SRL     C
-            LD      B,0
-            EX      DE,HL
-            ADD     HL,BC
-            LD      (CUADDR),HL
-            CALL    CUMAP       ; selects bank 0 physical screen
-            POP     AF
-            LD      (HL),A      ; low screen code $41/$48/$55 = MouseText
-            JP      VSPREP      ; restore normal main/video switches
+MTCHAR        PUSH      AF
+              CALL      CUOFF
+              LD        E,' '
+              CALL      C_WRITE
+              LD        HL,(VSPTR)                     ; 6502 state: VCOL followed by VROW
+              LD        A,(HL)
+              DEC       A                              ; one cell back, same line (no wrap)
+              LD        C,A
+              INC       HL
+              LD        A,(HL)
+              ADD       A,A
+              LD        E,A
+              LD        D,0
+              LD        HL,CUROWTAB
+              ADD       HL,DE
+              LD        E,(HL)
+              INC       HL
+              LD        D,(HL)
+              LD        A,C
+              AND       1
+              LD        (CUHALF),A                     ; even=aux, odd=main
+              SRL       C
+              LD        B,0
+              EX        DE,HL
+              ADD       HL,BC
+              LD        (CUADDR),HL
+              CALL      CUMAP                          ; selects bank 0 physical screen
+              POP       AF
+              LD        (HL),A                         ; low screen code $41/$48/$55 = MouseText
+              JP        VSPREP                         ; restore normal main/video switches
 
 ; ================================================================
 ; RamWorks Stage 2: 6502 renderer maintains live screen backing.
@@ -1284,281 +1284,281 @@ MTCHAR      PUSH    AF
 ; $C073 banks and $C0xx switches are always restored before returning.
 ; The two live CP/M AUX banks 0/1 are never used for screen storage.
 ; ================================================================
-            ORG     00B00H
-VS80ON      EQU     0E001H
-VSPAGE1     EQU     0E054H
-VSPAGE2     EQU     0E055H
-VSHIRES0    EQU     0E056H
-VSHIRES1    EQU     0E057H
-VSTEXT      EQU     0F400H
-VSSCRATCH   EQU     03000H
-VSMINSIZE   EQU     0400H
-VSTLEN      EQU     9          ; contiguous VCOL..VATTR in 6502
+              ORG       00B00H
+VS80ON        EQU       0E001H
+VSPAGE1       EQU       0E054H
+VSPAGE2       EQU       0E055H
+VSHIRES0      EQU       0E056H
+VSHIRES1      EQU       0E057H
+VSTEXT        EQU       0F400H
+VSSCRATCH     EQU       03000H
+VSMINSIZE     EQU       0400H
+VSTLEN        EQU       9                              ; contiguous VCOL..VATTR in 6502
 
 ; 6502 $B81E returns VCOL address as A=low, X=high. Convert to
 ; SoftCard Z80 address by subtracting $1000 from its high byte.
-VSINIT      LD      HL,VSMETAS
-            LD      DE,VSMETAS+1
-            LD      BC,159
-            XOR     A
-            LD      (HL),A
-            LDIR
-            LD      A,(RWTOTAL)
-            CP      3
-            LD      A,0
-            JR      C,VSNOTRW
-            INC     A
-VSNOTRW     LD      (VSOK),A
-            LD      HL,0B81EH
-            LD      (ADDR),HL
-            LD      A,1
-            LD      (CMD),A
-            LD      (SOFTCARD),A
-            LD      A,(AREG)
-            LD      L,A
-            LD      A,(XREG)
-            SUB     010H
-            LD      H,A
-            LD      (VSPTR),HL
-            RET
+VSINIT        LD        HL,VSMETAS
+              LD        DE,VSMETAS+1
+              LD        BC,159
+              XOR       A
+              LD        (HL),A
+              LDIR
+              LD        A,(RWTOTAL)
+              CP        3
+              LD        A,0
+              JR        C,VSNOTRW
+              INC       A
+VSNOTRW       LD        (VSOK),A
+              LD        HL,0B81EH
+              LD        (ADDR),HL
+              LD        A,1
+              LD        (CMD),A
+              LD        (SOFTCARD),A
+              LD        A,(AREG)
+              LD        L,A
+              LD        A,(XREG)
+              SUB       010H
+              LD        H,A
+              LD        (VSPTR),HL
+              RET
 
 ; Every snapshot bank provides an 8KB HGR window: 4 x 2KB screens.
 ; session 0..3 -> bank 2; 4..7 -> bank 5; 8..11 -> bank 10;
 ; 12..15 -> bank 15. Data lives at Z80 $1000..$2FFF.
-VSSLOT      LD      B,A           ; 0 main half, 1 auxiliary half
-            LD      A,(TABMODE)
-            AND     3
-            ADD     A,A
-            ADD     A,A
-            ADD     A,A           ; logical slot within group * $0800
-            ADD     A,010H
-            LD      D,A
-            LD      E,0
-            LD      A,B
-            OR      A
-            RET     Z
-            LD      A,D
-            ADD     A,4
-            LD      D,A
-            RET
+VSSLOT        LD        B,A                            ; 0 main half, 1 auxiliary half
+              LD        A,(TABMODE)
+              AND       3
+              ADD       A,A
+              ADD       A,A
+              ADD       A,A                            ; logical slot within group * $0800
+              ADD       A,010H
+              LD        D,A
+              LD        E,0
+              LD        A,B
+              OR        A
+              RET       Z
+              LD        A,D
+              ADD       A,4
+              LD        D,A
+              RET
 
-VSMETA      LD      A,(TABMODE)
-            LD      L,A
-            LD      H,0
-            LD      E,L
-            LD      D,H
-            ADD     HL,HL         ; 2n
-            ADD     HL,HL         ; 4n
-            ADD     HL,HL         ; 8n
-            ADD     HL,DE         ; 9n
-            ADD     HL,DE         ; 10n
-            LD      DE,VSMETAS
-            ADD     HL,DE
-            RET
+VSMETA        LD        A,(TABMODE)
+              LD        L,A
+              LD        H,0
+              LD        E,L
+              LD        D,H
+              ADD       HL,HL                          ; 2n
+              ADD       HL,HL                          ; 4n
+              ADD       HL,HL                          ; 8n
+              ADD       HL,DE                          ; 9n
+              ADD       HL,DE                          ; 10n
+              LD        DE,VSMETAS
+              ADD       HL,DE
+              RET
 
-VSSBANK     LD      A,(TABMODE)
-            CP      4
-            JR      C,VSB_FIRST
-            SRL     A
-            SRL     A            ; group 1..3
-            LD      B,A
-            ADD     A,A
-            ADD     A,A
-            ADD     A,B          ; group * 5
-            RET
-VSB_FIRST   LD      A,2
-            RET
+VSSBANK       LD        A,(TABMODE)
+              CP        4
+              JR        C,VSB_FIRST
+              SRL       A
+              SRL       A                              ; group 1..3
+              LD        B,A
+              ADD       A,A
+              ADD       A,A
+              ADD       A,B                            ; group * 5
+              RET
+VSB_FIRST     LD        A,2
+              RET
 
 ; Explicitly normalise main/aux CPU access before copying video.
 ; The scheduler and virtual-terminal code remain untouched.
-VSPREP      XOR     A
-            LD      (SW80OFF),A
-            LD      (RDMAIN),A
-            LD      (WRMAIN),A
-            LD      A,(VSHIRES0)
-            LD      A,(VSPAGE1)
-            RET
+VSPREP        XOR       A
+              LD        (SW80OFF),A
+              LD        (RDMAIN),A
+              LD        (WRMAIN),A
+              LD        A,(VSHIRES0)
+              LD        A,(VSPAGE1)
+              RET
 
 ; The live physical screen is always in RamWorks bank 0.
-VSPREP0     XOR     A
-            CALL    AXBANK
-            JP      VSPREP
+VSPREP0       XOR       A
+              CALL      AXBANK
+              JP        VSPREP
 
 ; Open AUX HGR window for the current session's backing screen.
-VSWINDOW    CALL    VSPREP
-            CALL    VSSBANK
-            CALL    AXBANK
-            XOR     A
-            LD      (VS80ON),A
-            LD      A,(VSHIRES1)
-            LD      A,(VSPAGE2)
-            RET
+VSWINDOW      CALL      VSPREP
+              CALL      VSSBANK
+              CALL      AXBANK
+              XOR       A
+              LD        (VS80ON),A
+              LD        A,(VSHIRES1)
+              LD        A,(VSPAGE2)
+              RET
 
 ; Close AUX HGR window and return to bank 0 with MAIN reads/writes.
-VSUNWIN     CALL    VSPREP
-            XOR     A
-            CALL    AXBANK
-            RET
+VSUNWIN       CALL      VSPREP
+              XOR       A
+              CALL      AXBANK
+              RET
 
 ; Read physical MAIN text page from bank 0, not inherited mapping.
-VSFROMMAIN  CALL    VSPREP0
-            LD      HL,VSTEXT
-            LD      DE,VSSCRATCH
-            LD      BC,VSMINSIZE
-            LDIR
-            RET
+VSFROMMAIN    CALL      VSPREP0
+              LD        HL,VSTEXT
+              LD        DE,VSSCRATCH
+              LD        BC,VSMINSIZE
+              LDIR
+              RET
 ; Only TEXT1 is AUX; the copy scratch stays MAIN.
-VSFROMAUX   CALL    VSPREP0
-            XOR     A
-            LD      (VS80ON),A
-            LD      A,(VSPAGE2)
-            LD      HL,VSTEXT
-            LD      DE,VSSCRATCH
-            LD      BC,VSMINSIZE
-            LDIR
-            JP      VSPREP
+VSFROMAUX     CALL      VSPREP0
+              XOR       A
+              LD        (VS80ON),A
+              LD        A,(VSPAGE2)
+              LD        HL,VSTEXT
+              LD        DE,VSSCRATCH
+              LD        BC,VSMINSIZE
+              LDIR
+              JP        VSPREP
 
 ; A=half (0 main, 1 aux): copy staged 1K to bank2 snapshot.
-VSWRITE     CALL    VSSLOT
-            PUSH    DE
-            CALL    VSWINDOW
-            POP     DE
-            LD      HL,VSSCRATCH
-            LD      BC,VSMINSIZE
-            LDIR
-            JP      VSUNWIN
+VSWRITE       CALL      VSSLOT
+              PUSH      DE
+              CALL      VSWINDOW
+              POP       DE
+              LD        HL,VSSCRATCH
+              LD        BC,VSMINSIZE
+              LDIR
+              JP        VSUNWIN
 
 ; A=half: copy saved 1K to staging scratch, then restore bank0.
-VSREAD      CALL    VSSLOT
-            PUSH    DE
-            CALL    VSWINDOW
-            POP     HL
-            LD      DE,VSSCRATCH
-            LD      BC,VSMINSIZE
-            LDIR
-            JP      VSUNWIN
+VSREAD        CALL      VSSLOT
+              PUSH      DE
+              CALL      VSWINDOW
+              POP       HL
+              LD        DE,VSSCRATCH
+              LD        BC,VSMINSIZE
+              LDIR
+              JP        VSUNWIN
 
-VSSAVE      LD      A,(VSOK)
-            OR      A
-            RET     Z
-            CALL    VSMETA
-            LD      A,1
-            LD      (HL),A
-            INC     HL
-            EX      DE,HL
-            LD      HL,(VSPTR)
-            LD      BC,VSTLEN
-            LDIR
-            CALL    VSFROMMAIN
-            XOR     A
-            CALL    VSWRITE
-            CALL    VSFROMAUX
-            LD      A,1
-            JP      VSWRITE
+VSSAVE        LD        A,(VSOK)
+              OR        A
+              RET       Z
+              CALL      VSMETA
+              LD        A,1
+              LD        (HL),A
+              INC       HL
+              EX        DE,HL
+              LD        HL,(VSPTR)
+              LD        BC,VSTLEN
+              LDIR
+              CALL      VSFROMMAIN
+              XOR       A
+              CALL      VSWRITE
+              CALL      VSFROMAUX
+              LD        A,1
+              JP        VSWRITE
 
 ; Restore byte-identical MAIN and AUX text pages, cursor/parser data,
 ; then return to 80-col text state. Initial unused tab is cleared.
-VSREST      LD      A,(VSOK)
-            OR      A
-            JP      Z,CCPCLS
-            CALL    VSMETA
-            LD      A,(HL)
-            OR      A
-            JR      NZ,VRDRAW
-            CALL    CCPCLS         ; new tab: clear physical screen
-            CALL    VSSAVE         ; seed BOTH halves from clean physical screen
-            JP      VSSTSAVE       ; save current cursor/parser state
-VRDRAW      XOR     A
-            CALL    VSREAD
-            CALL    VSPREP0       ; MAIN screen target, bank 0
-            LD      HL,VSSCRATCH
-            LD      DE,VSTEXT
-            LD      BC,VSMINSIZE
-            LDIR
-            LD      A,1
-            CALL    VSREAD
-            CALL    VSPREP0       ; reset RAMRD/RAMWRT/PAGE1
-            XOR     A
-            LD      (VS80ON),A
-            LD      A,(VSPAGE2)
-            LD      HL,VSSCRATCH
-            LD      DE,VSTEXT
-            LD      BC,VSMINSIZE
-            LDIR
-            JP      VSPREP
+VSREST        LD        A,(VSOK)
+              OR        A
+              JP        Z,CCPCLS
+              CALL      VSMETA
+              LD        A,(HL)
+              OR        A
+              JR        NZ,VRDRAW
+              CALL      CCPCLS                         ; new tab: clear physical screen
+              CALL      VSSAVE                         ; seed BOTH halves from clean physical screen
+              JP        VSSTSAVE                       ; save current cursor/parser state
+VRDRAW        XOR       A
+              CALL      VSREAD
+              CALL      VSPREP0                        ; MAIN screen target, bank 0
+              LD        HL,VSSCRATCH
+              LD        DE,VSTEXT
+              LD        BC,VSMINSIZE
+              LDIR
+              LD        A,1
+              CALL      VSREAD
+              CALL      VSPREP0                        ; reset RAMRD/RAMWRT/PAGE1
+              XOR       A
+              LD        (VS80ON),A
+              LD        A,(VSPAGE2)
+              LD        HL,VSSCRATCH
+              LD        DE,VSTEXT
+              LD        BC,VSMINSIZE
+              LDIR
+              JP        VSPREP
 
-VSPTR       DEFW    0
-VSOK        DEFB    0
+VSPTR         DEFW      0
+VSOK          DEFB      0
 
 ; Shared MAIN descriptors; never in the application's switchable AUX RAM.
-            ORG     00C70H
+              ORG       00C70H
 ; Extended TAB commands.  Parsed CCP tail is " N ACTION " or " LIST ".
-TBCMD       LD      A,(FILEBUF)
-            OR      A
-            JP      Z,TB_LIST
-            LD      A,(FILEBUF+2)
-            CP      'L'
-            JR      NZ,TC_CHECKH
-            LD      HL,FILEBUF+2
-            LD      DE,TCLIST
-            CALL    TCMATCH
-            JP      Z,TB_LIST
-            JP      CCPBAD
-TC_CHECKH   CP      'H'
-            JR      NZ,TC_NUM
-            LD      HL,FILEBUF+2
-            LD      DE,TCHELP
-            CALL    TCMATCH
-            JP      Z,TB_HELP
-            JP      CCPBAD
-TC_NUM      CALL    TABDECODE
-            JP      C,CCPBAD
-            LD      B,A
-            LD      A,(FILEBUF+3)
-            CP      ' '
-            JP      NZ,CCPBAD
-            LD      A,(FILEBUF+4)
-            OR      A
-            JP      Z,TB_SWITCH
-            LD      HL,FILEBUF+4
-            LD      DE,TCSUSP
-            CALL    TCMATCH
-            JP      Z,TB_PAUSE
-            LD      HL,FILEBUF+4
-            LD      DE,TCRESUM
-            CALL    TCMATCH
-            JP      Z,TB_UNPS
-            LD      HL,FILEBUF+4
-            LD      DE,TCEXCL
-            CALL    TCMATCH
-            JP      Z,TB_EXCL
-            LD      HL,FILEBUF+4
-            LD      DE,TCKILL
-            CALL    TCMATCH
-            JP      Z,TB_KILL
-            JP      CCPBAD
-TCMATCH     LD      A,(HL)
-            CP      ' '            ; any unambiguous prefix accepted
-            RET     Z
-            LD      A,(DE)
-            CP      (HL)
-            RET     NZ
-            INC     DE
-            INC     HL
-            JR      TCMATCH
+TBCMD         LD        A,(FILEBUF)
+              OR        A
+              JP        Z,TB_LIST
+              LD        A,(FILEBUF+2)
+              CP        'L'
+              JR        NZ,TC_CHECKH
+              LD        HL,FILEBUF+2
+              LD        DE,TCLIST
+              CALL      TCMATCH
+              JP        Z,TB_LIST
+              JP        CCPBAD
+TC_CHECKH     CP        'H'
+              JR        NZ,TC_NUM
+              LD        HL,FILEBUF+2
+              LD        DE,TCHELP
+              CALL      TCMATCH
+              JP        Z,TB_HELP
+              JP        CCPBAD
+TC_NUM        CALL      TABDECODE
+              JP        C,CCPBAD
+              LD        B,A
+              LD        A,(FILEBUF+3)
+              CP        ' '
+              JP        NZ,CCPBAD
+              LD        A,(FILEBUF+4)
+              OR        A
+              JP        Z,TB_SWITCH
+              LD        HL,FILEBUF+4
+              LD        DE,TCSUSP
+              CALL      TCMATCH
+              JP        Z,TB_PAUSE
+              LD        HL,FILEBUF+4
+              LD        DE,TCRESUM
+              CALL      TCMATCH
+              JP        Z,TB_UNPS
+              LD        HL,FILEBUF+4
+              LD        DE,TCEXCL
+              CALL      TCMATCH
+              JP        Z,TB_EXCL
+              LD        HL,FILEBUF+4
+              LD        DE,TCKILL
+              CALL      TCMATCH
+              JP        Z,TB_KILL
+              JP        CCPBAD
+TCMATCH       LD        A,(HL)
+              CP        ' '                            ; any unambiguous prefix accepted
+              RET       Z
+              LD        A,(DE)
+              CP        (HL)
+              RET       NZ
+              INC       DE
+              INC       HL
+              JR        TCMATCH
 
 
-            ORG     00D00H
-TABCTXS     DEFS    112          ; 16 * 7 bytes
-TSKFLAGS    DEFS    16           ; one parked flag per logical session
-TSKREGS     DEFS    432          ; 16 * 27-byte saved Z80 contexts
-VSMETAS     DEFS    160          ; 16 * (valid + 9 terminal bytes)
-CCPPROMS    DEFS    16           ; 1 if restored CCP screen includes prompt
-SCHWAIT     DEFS    16           ; background task parked on input
-SCHFG       DEFB    0            ; visible/keyboard-owning session
-SCHNEXT     DEFB    0            ; round-robin background cursor
-SCHQLEFT    DEFB    SCHFGQ       ; syscall quantum remaining
-SCHEN       DEFB    0            ; enabled if >=2 sessions
+              ORG       00D00H
+TABCTXS       DEFS      112                            ; 16 * 7 bytes
+TSKFLAGS      DEFS      16                             ; one parked flag per logical session
+TSKREGS       DEFS      432                            ; 16 * 27-byte saved Z80 contexts
+VSMETAS       DEFS      160                            ; 16 * (valid + 9 terminal bytes)
+CCPPROMS      DEFS      16                             ; 1 if restored CCP screen includes prompt
+SCHWAIT       DEFS      16                             ; background task parked on input
+SCHFG         DEFB      0                              ; visible/keyboard-owning session
+SCHNEXT       DEFB      0                              ; round-robin background cursor
+SCHQLEFT      DEFB      SCHFGQ                         ; syscall quantum remaining
+SCHEN         DEFB      0                              ; enabled if >=2 sessions
 
 ; Reclaimed MAIN $4000-$6FFF: permanent CCP SAVE and helpers.
 ; No AUX LC snapshot is ever written here.
@@ -1567,229 +1567,229 @@ SCHEN       DEFB    0            ; enabled if >=2 sessions
 ; Select its RamWorks bank; never use a global high-memory snapshot.
 ; Only MAIN $AUXSTAGE is passed as the ProDOS write DMA buffer.
 ; ================================================================
-            ORG     04000H
-SAVEFILE   LD      HL,FILEBUF+2   ; decimal pages (the first argument)
-           LD      B,0
-SVDEC      LD      A,(HL)
-           CP      ' '
-           JR      Z,SVNUM
-           SUB     '0'
-           JP      C,SVBAD
-           CP      10
-           JP      NC,SVBAD
-           LD      C,A
-           LD      A,B
-           CP      23             ; max previous value 22: 22*10+9<256
-           JP      NC,SVBAD
-           ADD     A,A
-           LD      D,A
-           ADD     A,A
-           ADD     A,A
-           ADD     A,D
-           ADD     A,C
-           CP      223            ; legal pages: 0 through 222
-           JP      NC,SVBAD
-           LD      B,A
-           INC     HL
-           JR      SVDEC
-SVNUM      LD      A,B
-           LD      (SVPAGES),A
-           CP      176            ; higher pages need post-transient LC image
-           JR      C,SVMAKE
-           CALL    SVFLPTR
-           LD      A,(HL)
-           OR      A
-           JP      Z,SVBAD        ; no completed image in THIS tab
-SVMAKE     LD      DE,FCB2
-           CALL    F_MAKE
-           OR      A
-           JP      NZ,SVIOERR
-           LD      HL,0100H
-           LD      (SVPTR),HL
-           LD      A,(SVPAGES)
-           OR      A
-           JR      Z,SVEMPTY
-           LD      A,(TABMODE)
-           CALL    TABPHYS
-           CALL    AXBANK        ; select owner of low RAM and AUX LC
-           CALL    SVPREP         ; preserve ProDOS's full MAIN LC bank2
-SVPAGE     LD      A,(SVPAGES)
-           OR      A
-           JR      Z,SVDONE
-           LD      B,2            ; two 128-byte records per page
-SVRECORD   PUSH    BC
-           CALL    SVCOPY         ; ordinary AUX or live AUX LC
-           LD      HL,AUXSTAGE
-           LD      (DMAADDR),HL
-           LD      DE,FCB2
-           CALL    F_WRITE        ; normal MAIN ProDOS write
-           POP     BC
-           OR      A
-           JR      NZ,SVFAIL
-           DJNZ    SVRECORD
-           LD      A,(SVPAGES)
-           DEC     A
-           LD      (SVPAGES),A
-           JR      SVPAGE
-SVDONE     LD      DE,FCB2
-           CALL    F_CLOSE
-           LD      (SVSTAT),A
-           CALL    SVREST         ; restore full MAIN LC bank2/common
-           LD      A,(SVSTAT)
-           OR      A
-           JR      NZ,SVIOERR
-           JR      SVRESET
-SVFAIL     LD      DE,FCB2
-           CALL    F_CLOSE
-           CALL    SVREST         ; must restore LC on write failure too
-           JR      SVIOERR
-SVEMPTY    LD      DE,FCB2       ; SAVE 0: just create empty file
-           CALL    F_CLOSE
-           OR      A
-           JR      NZ,SVIOERR
-SVRESET    XOR     A
-           CALL    AXBANK        ; restore bank 0, including error paths
-           LD      HL,FILEBUF
-           LD      (DMAADDR),HL
-           RET
-SVIOERR    LD      DE,REMSG
-           CALL    C_WRITESTR
-           JR      SVRESET
-SVBAD      LD      DE,BFMSG
-           CALL    C_WRITESTR
-           JR      SVRESET
+              ORG       04000H
+SAVEFILE      LD        HL,FILEBUF+2                   ; decimal pages (the first argument)
+              LD        B,0
+SVDEC         LD        A,(HL)
+              CP        ' '
+              JR        Z,SVNUM
+              SUB       '0'
+              JP        C,SVBAD
+              CP        10
+              JP        NC,SVBAD
+              LD        C,A
+              LD        A,B
+              CP        23                             ; max previous value 22: 22*10+9<256
+              JP        NC,SVBAD
+              ADD       A,A
+              LD        D,A
+              ADD       A,A
+              ADD       A,A
+              ADD       A,D
+              ADD       A,C
+              CP        223                            ; legal pages: 0 through 222
+              JP        NC,SVBAD
+              LD        B,A
+              INC       HL
+              JR        SVDEC
+SVNUM         LD        A,B
+              LD        (SVPAGES),A
+              CP        176                            ; higher pages need post-transient LC image
+              JR        C,SVMAKE
+              CALL      SVFLPTR
+              LD        A,(HL)
+              OR        A
+              JP        Z,SVBAD                        ; no completed image in THIS tab
+SVMAKE        LD        DE,FCB2
+              CALL      F_MAKE
+              OR        A
+              JP        NZ,SVIOERR
+              LD        HL,0100H
+              LD        (SVPTR),HL
+              LD        A,(SVPAGES)
+              OR        A
+              JR        Z,SVEMPTY
+              LD        A,(TABMODE)
+              CALL      TABPHYS
+              CALL      AXBANK                         ; select owner of low RAM and AUX LC
+              CALL      SVPREP                         ; preserve ProDOS's full MAIN LC bank2
+SVPAGE        LD        A,(SVPAGES)
+              OR        A
+              JR        Z,SVDONE
+              LD        B,2                            ; two 128-byte records per page
+SVRECORD      PUSH      BC
+              CALL      SVCOPY                         ; ordinary AUX or live AUX LC
+              LD        HL,AUXSTAGE
+              LD        (DMAADDR),HL
+              LD        DE,FCB2
+              CALL      F_WRITE                        ; normal MAIN ProDOS write
+              POP       BC
+              OR        A
+              JR        NZ,SVFAIL
+              DJNZ      SVRECORD
+              LD        A,(SVPAGES)
+              DEC       A
+              LD        (SVPAGES),A
+              JR        SVPAGE
+SVDONE        LD        DE,FCB2
+              CALL      F_CLOSE
+              LD        (SVSTAT),A
+              CALL      SVREST                         ; restore full MAIN LC bank2/common
+              LD        A,(SVSTAT)
+              OR        A
+              JR        NZ,SVIOERR
+              JR        SVRESET
+SVFAIL        LD        DE,FCB2
+              CALL      F_CLOSE
+              CALL      SVREST                         ; must restore LC on write failure too
+              JR        SVIOERR
+SVEMPTY       LD        DE,FCB2                        ; SAVE 0: just create empty file
+              CALL      F_CLOSE
+              OR        A
+              JR        NZ,SVIOERR
+SVRESET       XOR       A
+              CALL      AXBANK                         ; restore bank 0, including error paths
+              LD        HL,FILEBUF
+              LD        (DMAADDR),HL
+              RET
+SVIOERR       LD        DE,REMSG
+              CALL      C_WRITESTR
+              JR        SVRESET
+SVBAD         LD        DE,BFMSG
+              CALL      C_WRITESTR
+              JR        SVRESET
 
 ; SAVE temporarily installs the AUX RAM read trampoline in MAIN LC.
 ; Preserve ProDOS MAIN LC across that operation and F_WRITE, using
 ; MAIN $1000-$3FFF (scratch only after the transient has terminated).
-SVPREP     XOR     A
-           LD      (SW80OFF),A
-           LD      (ZPMAIN),A
-           LD      (RDMAIN),A
-           LD      (WRMAIN),A
-           LD      A,(LCB2RW)
-           LD      A,(LCB2RW)
-           LD      HL,0B000H
-           LD      DE,01000H
-           LD      BC,03000H
-           LDIR
-           LD      A,(LCB1RO)
-           RET
+SVPREP        XOR       A
+              LD        (SW80OFF),A
+              LD        (ZPMAIN),A
+              LD        (RDMAIN),A
+              LD        (WRMAIN),A
+              LD        A,(LCB2RW)
+              LD        A,(LCB2RW)
+              LD        HL,0B000H
+              LD        DE,01000H
+              LD        BC,03000H
+              LDIR
+              LD        A,(LCB1RO)
+              RET
 
 ; Before $B000 use the MAIN LC trampoline to read ordinary AUX RAM.
 ; From $B000, use ALTZP to read the selected bank's live AUX LC.
 ; This routine itself executes in ordinary MAIN $4000 code and writes
 ; to MAIN $AUXSTAGE, so it does not execute from the switched LC.
-SVCOPY     LD      HL,(SVPTR)
-           LD      DE,0B000H
-           XOR     A
-           SBC     HL,DE
-           JR      NC,SVHIGH
-           LD      A,(LCB2RW)
-           LD      A,(LCB2RW)
-           LD      HL,LCIMG
-           LD      DE,LCBASE
-           LD      BC,LCLEN
-           LDIR
-           LD      HL,(SVPTR)
-           LD      DE,AUXSTAGE
-           LD      BC,128
-           CALL    LCA2M         ; BC=0 on return; HL advanced 128
-           LD      (SVPTR),HL
-           LD      A,(LCB1RO)
-           RET
-SVHIGH     LD      A,(LCB2RW)
-           LD      A,(LCB2RW)   ; select LC bank 2 read/write
-           XOR     A
-           LD      (ZPAUX),A    ; read high memory from selected AUX LC
-           LD      HL,(SVPTR)
-           LD      DE,AUXSTAGE
-           LD      BC,128
-           LDIR                  ; AUX LC -> ordinary MAIN staging
-           LD      (ZPMAIN),A   ; ProDOS's MAIN LC and zero page
-           LD      A,(LCB1RO)
-           LD      HL,(SVPTR)
-           LD      DE,128
-           ADD     HL,DE
-           LD      (SVPTR),HL
-           RET
+SVCOPY        LD        HL,(SVPTR)
+              LD        DE,0B000H
+              XOR       A
+              SBC       HL,DE
+              JR        NC,SVHIGH
+              LD        A,(LCB2RW)
+              LD        A,(LCB2RW)
+              LD        HL,LCIMG
+              LD        DE,LCBASE
+              LD        BC,LCLEN
+              LDIR
+              LD        HL,(SVPTR)
+              LD        DE,AUXSTAGE
+              LD        BC,128
+              CALL      LCA2M                          ; BC=0 on return; HL advanced 128
+              LD        (SVPTR),HL
+              LD        A,(LCB1RO)
+              RET
+SVHIGH        LD        A,(LCB2RW)
+              LD        A,(LCB2RW)                     ; select LC bank 2 read/write
+              XOR       A
+              LD        (ZPAUX),A                      ; read high memory from selected AUX LC
+              LD        HL,(SVPTR)
+              LD        DE,AUXSTAGE
+              LD        BC,128
+              LDIR                                     ; AUX LC -> ordinary MAIN staging
+              LD        (ZPMAIN),A                     ; ProDOS's MAIN LC and zero page
+              LD        A,(LCB1RO)
+              LD        HL,(SVPTR)
+              LD        DE,128
+              ADD       HL,DE
+              LD        (SVPTR),HL
+              RET
 
 ; Put back ProDOS's original MAIN LC bank 2/common after closing file.
-SVREST     LD      A,(LCB2RW)
-           LD      A,(LCB2RW)
-           LD      HL,01000H
-           LD      DE,0B000H
-           LD      BC,03000H
-           LDIR
-           LD      A,(LCB1RO)
-           RET
-SVPAGES    DEFB    0
-SVPTR      DEFW    0100H
-SVSTAT     DEFB    0
+SVREST        LD        A,(LCB2RW)
+              LD        A,(LCB2RW)
+              LD        HL,01000H
+              LD        DE,0B000H
+              LD        BC,03000H
+              LDIR
+              LD        A,(LCB1RO)
+              RET
+SVPAGES       DEFB      0
+SVPTR         DEFW      0100H
+SVSTAT        DEFB      0
 ; SAVE validity belongs to the logical tab, not to a shared snapshot.
 ; Each tab's completed image remains in its own physical RamWorks bank.
-SVVALID    DEFS    16
-SVFLPTR    LD      A,(TABMODE)
-           LD      L,A
-           LD      H,0
-           LD      DE,SVVALID
-           ADD     HL,DE
-           RET
-SVCLEAR    LD      HL,SVVALID
-           LD      DE,SVVALID+1
-           LD      BC,15
-           XOR     A
-           LD      (HL),A
-           LDIR
-           RET
+SVVALID       DEFS      16
+SVFLPTR       LD        A,(TABMODE)
+              LD        L,A
+              LD        H,0
+              LD        DE,SVVALID
+              ADD       HL,DE
+              RET
+SVCLEAR       LD        HL,SVVALID
+              LD        DE,SVVALID+1
+              LD        BC,15
+              XOR       A
+              LD        (HL),A
+              LDIR
+              RET
 
 ; CCP helper routines relocated here to keep resident code below $9800.
 ; Uppercase the command input (Pascal string) in place.
-UCASE      LD      B,(HL)
-UCL1       LD      A,B
-           OR      A
-           RET     Z
-           INC     HL
-           LD      A,(HL)
-           CP      'a'
-           JR      C,UCS1
-           CP      'z'+1
-           JR      NC,UCS1
-           SUB     'a'-'A'
-           LD      (HL),A
-UCS1       DJNZ    UCL1
-           RET
+UCASE         LD        B,(HL)
+UCL1          LD        A,B
+              OR        A
+              RET       Z
+              INC       HL
+              LD        A,(HL)
+              CP        'a'
+              JR        C,UCS1
+              CP        'z'+1
+              JR        NC,UCS1
+              SUB       'a'-'A'
+              LD        (HL),A
+UCS1          DJNZ      UCL1
+              RET
 
 
 ; Shared confirmation reader. A=0 for Y; A=1 for N.
 ; Invalid input is ignored; C_READ echoes typed characters.
-CCPYESNO   CALL    C_WRITESTR
-CYKEY      CALL    XSCCPKEY      ; check active XSUB stream first
-           AND     0DFH
-           CP      'Y'
-           JR      Z,CYYES
-           CP      'N'
-           JR      NZ,CYKEY
-           XOR     A
-           LD      (XSLEFT),A   ; discard pending synthetic CR of Y/N record
-           LD      E,13
-           CALL    C_WRITE
-           LD      A,1
-           RET
-CYYES      XOR     A
-           LD      (XSLEFT),A
-           LD      E,13
-           CALL    C_WRITE
-           XOR     A
-           RET
-CCPBYE     LD      DE,BYEASK
-           CALL    CCPYESNO
-           OR      A
-           RET     NZ
-           XOR     A
-           LD      (CMD),A
-           JP      BYERESUME      ; Stable SoftCard handoff; next start is cold
-BYEASK     DEFM    'Y/N? $'
+CCPYESNO      CALL      C_WRITESTR
+CYKEY         CALL      XSCCPKEY                       ; check active XSUB stream first
+              AND       0DFH
+              CP        'Y'
+              JR        Z,CYYES
+              CP        'N'
+              JR        NZ,CYKEY
+              XOR       A
+              LD        (XSLEFT),A                     ; discard pending synthetic CR of Y/N record
+              LD        E,13
+              CALL      C_WRITE
+              LD        A,1
+              RET
+CYYES         XOR       A
+              LD        (XSLEFT),A
+              LD        E,13
+              CALL      C_WRITE
+              XOR       A
+              RET
+CCPBYE        LD        DE,BYEASK
+              CALL      CCPYESNO
+              OR        A
+              RET       NZ
+              XOR       A
+              LD        (CMD),A
+              JP        BYERESUME                      ; Stable SoftCard handoff; next start is cold
+BYEASK        DEFM      'Y/N? $'
 
 
 
@@ -1809,185 +1809,185 @@ BYEASK     DEFM    'Y/N? $'
 ; unambiguous to slot firmware. Restore monitor vectors on return.
 ; No per-card UART registers used. ROM input is blocking and 7-bit.
 ; ================================================================
-            ORG     04400H
+              ORG       04400H
 ; Physical LST: from IOBYTE bits 7:6:
 ; TTY=serial2, CRT=screen, LPT=printer1, UL1=serial2.
-IOLIST      LD      A,(IOBYTE)
-            AND     0C0H
-            CP      040H
-            JP      Z,IOVOUT
-            CP      080H
-            JP      Z,IOPRN
-            JP      IOSEROUT
+IOLIST        LD        A,(IOBYTE)
+              AND       0C0H
+              CP        040H
+              JP        Z,IOVOUT
+              CP        080H
+              JP        Z,IOPRN
+              JP        IOSEROUT
 ; RDR and PUN are routed through their own IOBYTE fields.
 ; The selectors live at MAIN $4C00 to avoid crowding the slot driver.
-IOPUNCH     JP      IOPUNSEL
-IOREADER    JP      IORDRSEL
+IOPUNCH       JP        IOPUNSEL
+IOREADER      JP        IORDRSEL
 ; CON: CRT=VRAWPUT, BAT=RDR input / LST output; TTY/UC1=serial2.
-IOCONOUT    LD      A,(IOBYTE)
-            AND     3
-            CP      2
-            JP      Z,IOLIST
-            JP      IOSEROUT
-IOVOUT      LD      A,E
-            LD      HL,RAWOUT
-            JP      C_SENDA
+IOCONOUT      LD        A,(IOBYTE)
+              AND       3
+              CP        2
+              JP        Z,IOLIST
+              JP        IOSEROUT
+IOVOUT        LD        A,E
+              LD        HL,RAWOUT
+              JP        C_SENDA
 ; Main/AUX redirected BDOS 1 input. Console echo uses selected device.
-IOCCOOK     CALL    IOCONIN
-            PUSH    AF
-            LD      E,A
-            CALL    IOCONOUT
-            POP     AF
-            LD      L,A
-            RET
+IOCCOOK       CALL      IOCONIN
+              PUSH      AF
+              LD        E,A
+              CALL      IOCONOUT
+              POP       AF
+              LD        L,A
+              RET
 ; No portable poll-ready entry in arbitrary slot firmware.
 ; Conservative CONST = 00; LISTST = FF (blocking output driver).
-IOZERO      XOR     A
-            LD      L,A
-            RET
-IOSTAT      JP      IOZERO
+IOZERO        XOR       A
+              LD        L,A
+              RET
+IOSTAT        JP        IOZERO
 ; Firmware output. E=CP/M character. Physical slot selected in A.
-IOPRN       LD      A,010H
-            LD      HL,0C100H
-            JP      IOSEND
-IOSEROUT    LD      A,020H
-            LD      HL,0C200H
-IOSEND      PUSH    BC
-            PUSH    DE
-            PUSH    HL
-            LD      (XREG),A     ; Apple slot ROMs conventionally use X=n*16
-            LD      A,E
-            OR      080H         ; Apple monitor character convention
-            LD      (AREG),A
-            LD      (ADDR),HL
-            LD      HL,(0F036H)  ; 6502 monitor CSW
-            PUSH    HL
-            LD      HL,(0F038H)  ; KSW
-            PUSH    HL
-            LD      HL,(ADDR)
-            LD      (0F036H),HL  ; current slot output
-            LD      HL,0FD1BH    ; native keyboard, not this slot
-            LD      (0F038H),HL
-            ; Card ROM invokes Apple Monitor at $Fxxx.  Normally the
-            ; MAIN LC RAM is selected ($C088), so expose ROM briefly.
-            LD      A,(0E08AH)  ; 6502 $C08A: bank 1, read ROM
-            LD      A,1
-            LD      (CMD),A
-            LD      (SOFTCARD),A
-            LD      A,(LCB1RO) ; restore bank 1 LC RAM for ProDOS
-            POP     HL
-            LD      (0F038H),HL
-            POP     HL
-            LD      (0F036H),HL
-            POP     HL
-            POP     DE
-            POP     BC
-            XOR     A
-            LD      L,A
-            RET
+IOPRN         LD        A,010H
+              LD        HL,0C100H
+              JP        IOSEND
+IOSEROUT      LD        A,020H
+              LD        HL,0C200H
+IOSEND        PUSH      BC
+              PUSH      DE
+              PUSH      HL
+              LD        (XREG),A                       ; Apple slot ROMs conventionally use X=n*16
+              LD        A,E
+              OR        080H                           ; Apple monitor character convention
+              LD        (AREG),A
+              LD        (ADDR),HL
+              LD        HL,(0F036H)                    ; 6502 monitor CSW
+              PUSH      HL
+              LD        HL,(0F038H)                    ; KSW
+              PUSH      HL
+              LD        HL,(ADDR)
+              LD        (0F036H),HL                    ; current slot output
+              LD        HL,0FD1BH                      ; native keyboard, not this slot
+              LD        (0F038H),HL
+              ; Card ROM invokes Apple Monitor at $Fxxx.  Normally the
+              ; MAIN LC RAM is selected ($C088), so expose ROM briefly.
+              LD        A,(0E08AH)                     ; 6502 $C08A: bank 1, read ROM
+              LD        A,1
+              LD        (CMD),A
+              LD        (SOFTCARD),A
+              LD        A,(LCB1RO)                     ; restore bank 1 LC RAM for ProDOS
+              POP       HL
+              LD        (0F038H),HL
+              POP       HL
+              LD        (0F036H),HL
+              POP       HL
+              POP       DE
+              POP       BC
+              XOR       A
+              LD        L,A
+              RET
 ; Input from slot 2. Firmware is blocking; high bit is Apple's
 ; character marker, not reliable serial 8-bit data, so strip it.
-IOSERIN     PUSH    BC
-            PUSH    DE
-            PUSH    HL
-            LD      A,020H
-            LD      (XREG),A
-            LD      HL,0C200H
-            LD      (ADDR),HL
-            LD      HL,(0F036H)
-            PUSH    HL
-            LD      HL,(0F038H)
-            PUSH    HL
-            LD      HL,0FDF0H    ; monitor video COUT1 != slot 2
-            LD      (0F036H),HL
-            LD      HL,0C200H
-            LD      (0F038H),HL  ; select slot 2 as input
-            ; Slot firmware can call the Monitor ROM at $Fxxx.
-            LD      A,(0E08AH)  ; 6502 $C08A: bank 1, read ROM
-            LD      A,1
-            LD      (CMD),A
-            LD      (SOFTCARD),A
-            LD      A,(LCB1RO) ; restore bank 1 LC RAM for ProDOS
-            LD      A,(AREG)
-            AND     07FH
-            LD      (IOCHAR),A
-            POP     HL
-            LD      (0F038H),HL
-            POP     HL
-            LD      (0F036H),HL
-            POP     HL
-            POP     DE
-            POP     BC
-            LD      A,(IOCHAR)
-            LD      L,A
-            RET
-IOCHAR      DEFB    0
+IOSERIN       PUSH      BC
+              PUSH      DE
+              PUSH      HL
+              LD        A,020H
+              LD        (XREG),A
+              LD        HL,0C200H
+              LD        (ADDR),HL
+              LD        HL,(0F036H)
+              PUSH      HL
+              LD        HL,(0F038H)
+              PUSH      HL
+              LD        HL,0FDF0H                      ; monitor video COUT1 != slot 2
+              LD        (0F036H),HL
+              LD        HL,0C200H
+              LD        (0F038H),HL                    ; select slot 2 as input
+              ; Slot firmware can call the Monitor ROM at $Fxxx.
+              LD        A,(0E08AH)                     ; 6502 $C08A: bank 1, read ROM
+              LD        A,1
+              LD        (CMD),A
+              LD        (SOFTCARD),A
+              LD        A,(LCB1RO)                     ; restore bank 1 LC RAM for ProDOS
+              LD        A,(AREG)
+              AND       07FH
+              LD        (IOCHAR),A
+              POP       HL
+              LD        (0F038H),HL
+              POP       HL
+              LD        (0F036H),HL
+              POP       HL
+              POP       DE
+              POP       BC
+              LD        A,(IOCHAR)
+              LD        L,A
+              RET
+IOCHAR        DEFB      0
 
-            ORG     04500H
+              ORG       04500H
 ; 64 byte buffer for storing a file path as a Pascal style string
 PATHBUF
-PATHLEN        DEFB    0
-PATH        DEFS    64
+PATHLEN       DEFB      0
+PATH          DEFS      64
 
 ; 64 byte buffer for storing a second file path as a Pascal style string
 PATHBUF2
-PATHLEN2    DEFB    0
-PATH2        DEFS    64
+PATHLEN2      DEFB      0
+PATH2         DEFS      64
 
 ; Record file reference numbers for each I/O buffer
 ; Or 0 if no file is using the buffer
-FRN1        DEFB    0
-FRN2        DEFB    0
-FRN3        DEFB    0
-FRN4        DEFB    0
+FRN1          DEFB      0
+FRN2          DEFB      0
+FRN3          DEFB      0
+FRN4          DEFB      0
 
 ; 512 byte buffer for reading directories (used by F_SFIRST and F_SNEXT)
 DIRBUF
-DIRBUF1        DEFS    128
-DIRBUF2        DEFS    128
-DIRBUF3        DEFS    128
-DIRBUF4        DEFS    128
+DIRBUF1       DEFS      128
+DIRBUF2       DEFS      128
+DIRBUF3       DEFS      128
+DIRBUF4       DEFS      128
 
-            ORG     04800H
+              ORG       04800H
 ; Drive read-only check/reporter is an independent helper. Move it out
 ; of resident $8100-$97FF, which must not overlap IOBUF1 at $9800.
 ; Its callers use CALL DCHKRO / JP RODENY; all JR targets stay local.
-DCHKRO    PUSH    BC
-            PUSH    HL
-            XOR        A
-            LD        (ROERROR),A    ; Clear stale error from previous call
-            LD        A,(DE)
-            OR        A
-            JR        NZ,DCR_EXPL
-            LD        A,(CURDRV)
-            AND        0FH
-            JR        DCR_IDX
-DCR_EXPL    DEC        A
-DCR_IDX    CP        16
-            JR        NC,DCR_BAD
-            LD        (RODRIVE),A    ; Actual effective drive for message
-            LD        B,A
-            LD        HL,(ROVEC)
-            LD        A,B
-            OR        A
-            JR        Z,DCR_BIT
-DCR_SHF    SRL        H
-            RR        L
-            DEC        A
-            JR        NZ,DCR_SHF
-DCR_BIT        LD        A,L
-            AND        01H
-            JR        DCR_DONE
-DCR_BAD        LD        A,1
-            OR        A
-DCR_DONE    POP        HL
-            POP        BC
-            RET
-RODENY    JP        RODISK        ; CP/M: BDOS Err on d: R/O
+DCHKRO        PUSH      BC
+              PUSH      HL
+              XOR       A
+              LD        (ROERROR),A                    ; Clear stale error from previous call
+              LD        A,(DE)
+              OR        A
+              JR        NZ,DCR_EXPL
+              LD        A,(CURDRV)
+              AND       0FH
+              JR        DCR_IDX
+DCR_EXPL      DEC       A
+DCR_IDX       CP        16
+              JR        NC,DCR_BAD
+              LD        (RODRIVE),A                    ; Actual effective drive for message
+              LD        B,A
+              LD        HL,(ROVEC)
+              LD        A,B
+              OR        A
+              JR        Z,DCR_BIT
+DCR_SHF       SRL       H
+              RR        L
+              DEC       A
+              JR        NZ,DCR_SHF
+DCR_BIT       LD        A,L
+              AND       01H
+              JR        DCR_DONE
+DCR_BAD       LD        A,1
+              OR        A
+DCR_DONE      POP       HL
+              POP       BC
+              RET
+RODENY        JP        RODISK                         ; CP/M: BDOS Err on d: R/O
 
 
 
-            ORG     04900H
+              ORG       04900H
 ; SUBMIT: diagnostics removed; preserve zero-length-file safeguard.
 ; CP/M 2.2 SUBMIT: A:$$$.SUB contains reversed 128-byte records.
 ; Record byte 0 is the command length, followed by command characters.
@@ -1998,189 +1998,189 @@ RODENY    JP        RODISK        ; CP/M: BDOS Err on d: R/O
 ; Native XSUB: this same record reader is called from the CCP and
 ; the AUX BDOS 0Ah handler.  A=1 means SUBREC has a valid next line;
 ; A=0 means absent/invalid submission (fall back to keyboard).
-CCPSUB      XOR     A
-            LD      (XSLEFT),A    ; discard a previous program's partial line
-            CALL    XSNEXT       ; preserves the MAIN DMA pointer
-            LD      (SBFROM),A    ; current CCP line came from $$$.SUB
-            OR      A
-            JR      NZ,SBCCOPY
-            LD      (XSFLAG),A    ; stream ended, future scripts start disabled
-            RET
-SBCCOPY     JP      SBCOPY
-SBNEXT      LD      A,(SBHALT)
-            OR      A
-            JR      Z,SBSTART
-            XOR     A
-            RET
-SBSTART     LD      HL,SUBFCB+12
-            LD      B,24
-            XOR     A
-SBCLEAR     LD      (HL),A
-            INC     HL
-            DJNZ    SBCLEAR
-            LD      DE,SUBFCB
-            CALL    F_OPEN
-            OR      A
-            JR      Z,SBOPEN
-            XOR     A           ; no $$$.SUB: normal keyboard input
-            RET
-SBOPEN      LD      DE,SUBFCB
-            CALL    F_SIZE      ; fills FCB random records 21H..23H
-            OR      A
-            JP      NZ,SBERROR
-            LD      HL,(SUBFCB+21H)
-            LD      A,H
-            OR      L
-            JR      NZ,SBHAVE
-            LD      A,(SUBFCB+23H)
-            OR      A
-            JP      Z,SBZERO    ; retain anomalous zero-sized file
-SBHAVE      ; Move random record index to the LAST existing record.
-            LD      HL,(SUBFCB+21H)
-            LD      A,H
-            OR      L
-            JR      NZ,SBDEC
-            LD      HL,SUBFCB+23H
-            DEC     (HL)        ; borrow from high record counter
-SBDEC       LD      HL,(SUBFCB+21H)
-            DEC     HL
-            LD      (SUBFCB+21H),HL
-            LD      HL,SUBREC
-            LD      (DMAADDR),HL
-            LD      DE,SUBFCB
-            CALL    F_READRAND
-            LD      HL,FILEBUF
-            LD      (DMAADDR),HL
-            OR      A
-            JP      NZ,SBERROR
-            LD      A,(SUBREC)
-            OR      A
-            JP      Z,SBERROR  ; never silently eat an empty/bad record
-            CP      121
-            JP      NC,SBERROR  ; cannot fit CCP's 120-char buffer
-            ; R0..R2 now contain the number of records to retain.
-            LD      HL,(SUBFCB+21H)
-            LD      A,H
-            OR      L
-            JR      NZ,SBTRUNC
-            LD      A,(SUBFCB+23H)
-            OR      A
-            JR      NZ,SBTRUNC
-            JP      SBEMPTY
-SBZERO      ; Preserve unexpectedly empty $$$.SUB for inspection.
-            ; Mark halted to prevent a new attempt at every CCP prompt.
-            LD      DE,SUBFCB
-            CALL    F_CLOSE
-            LD      A,1
-            LD      (SBHALT),A
-            LD      DE,SBZEROMSG
-            CALL    C_WRITESTR
-            XOR     A
-            RET
-SBEMPTY     LD      DE,SUBFCB
-            CALL    F_CLOSE
-            OR      A
-            JP      NZ,SBERROR
-            LD      DE,SUBFCB
-            CALL    F_DELETE    ; last command: ERA $$$.SUB
-            OR      A
-            JP      NZ,SBERROR
-            JP      SBDONE
-SBTRUNC     ; Truncate an open ProDOS file to R0..R2 * 128 bytes.
-            ; IO_BEGIN resolves logical S2=$7E to a physical ProDOS FRN.
-            LD      IX,SUBFCB
-            CALL    IO_BEGIN
-            OR      A
-            JP      NZ,SBERROR
-            LD      A,(IX+0EH)
-            LD      (SEMLIN),A
-            LD      HL,(SUBFCB+21H)
-            LD      A,(SUBFCB+23H)
-            LD      B,7
-SBSHIFT     ADD     HL,HL
-            RLA
-            DJNZ    SBSHIFT
-            LD      (SEMLIE1),HL
-            LD      (SEMLIE3),A
-            LD      HL,SEMLI
-            CALL    PRODOS
-            CALL    IO_END      ; put back virtual S2 marker
-            PUSH    AF
-            LD      DE,SUBFCB
-            CALL    F_CLOSE
-            LD      B,A
-            POP     AF
-            OR      A
-            JP      NZ,SBERROR
-            LD      A,B
-            OR      A
-            JP      NZ,SBERROR
-SBDONE      LD      A,1             ; record consumed; SUBREC remains valid
-            RET
-SBCOPY      LD      A,(SUBREC)
-            ; Length was checked while the on-disk record still existed.
-            LD      (FILEBUF+1),A
-            LD      C,A
-            LD      A,120
-            LD      (FILEBUF),A
-            LD      B,0
-            LD      HL,SUBREC+1
-            LD      DE,FILEBUF+2
-            LDIR
-            ; Echo the submitted command just as if typed at the prompt.
-            LD      HL,SUBREC+1
-            LD      A,(SUBREC)
-            LD      B,A
-SBECHO      LD      E,(HL)
-            PUSH    HL
-            PUSH    BC
-            CALL    C_WRITE
-            POP     BC
-            POP     HL
-            INC     HL
-            DJNZ    SBECHO
-            LD      E,13
-            CALL    C_WRITE
-            LD      A,1
-            RET
-SBERROR     LD      DE,SUBFCB
-            CALL    F_CLOSE    ; best effort, preserve file for diagnosis
-            LD      A,1
-            LD      (SBHALT),A  ; do not retry corrupt file every prompt
-            LD      DE,SBERRMSG
-            CALL    C_WRITESTR
-            XOR     A
-            RET
-SBERRMSG    DEFM    'SUBMIT invalid record or I/O error (file retained)'
-            DEFB    13,'$'
-SBZEROMSG   DEFM    'SUBMIT zero records - $$$.SUB retained for inspection'
-            DEFB    13,'$'
-SBHALT      DEFB    0
-SUBFCB      DEFB    1
-            DEFM    '$$$     SUB'
-            DEFS    24
-SUBREC      DEFS    128
+CCPSUB        XOR       A
+              LD        (XSLEFT),A                     ; discard a previous program's partial line
+              CALL      XSNEXT                         ; preserves the MAIN DMA pointer
+              LD        (SBFROM),A                     ; current CCP line came from $$$.SUB
+              OR        A
+              JR        NZ,SBCCOPY
+              LD        (XSFLAG),A                     ; stream ended, future scripts start disabled
+              RET
+SBCCOPY       JP        SBCOPY
+SBNEXT        LD        A,(SBHALT)
+              OR        A
+              JR        Z,SBSTART
+              XOR       A
+              RET
+SBSTART       LD        HL,SUBFCB+12
+              LD        B,24
+              XOR       A
+SBCLEAR       LD        (HL),A
+              INC       HL
+              DJNZ      SBCLEAR
+              LD        DE,SUBFCB
+              CALL      F_OPEN
+              OR        A
+              JR        Z,SBOPEN
+              XOR       A                              ; no $$$.SUB: normal keyboard input
+              RET
+SBOPEN        LD        DE,SUBFCB
+              CALL      F_SIZE                         ; fills FCB random records 21H..23H
+              OR        A
+              JP        NZ,SBERROR
+              LD        HL,(SUBFCB+21H)
+              LD        A,H
+              OR        L
+              JR        NZ,SBHAVE
+              LD        A,(SUBFCB+23H)
+              OR        A
+              JP        Z,SBZERO                       ; retain anomalous zero-sized file
+SBHAVE                      ; Move random record index to the LAST existing record.
+              LD        HL,(SUBFCB+21H)
+              LD        A,H
+              OR        L
+              JR        NZ,SBDEC
+              LD        HL,SUBFCB+23H
+              DEC       (HL)                           ; borrow from high record counter
+SBDEC         LD        HL,(SUBFCB+21H)
+              DEC       HL
+              LD        (SUBFCB+21H),HL
+              LD        HL,SUBREC
+              LD        (DMAADDR),HL
+              LD        DE,SUBFCB
+              CALL      F_READRAND
+              LD        HL,FILEBUF
+              LD        (DMAADDR),HL
+              OR        A
+              JP        NZ,SBERROR
+              LD        A,(SUBREC)
+              OR        A
+              JP        Z,SBERROR                      ; never silently eat an empty/bad record
+              CP        121
+              JP        NC,SBERROR                     ; cannot fit CCP's 120-char buffer
+              ; R0..R2 now contain the number of records to retain.
+              LD        HL,(SUBFCB+21H)
+              LD        A,H
+              OR        L
+              JR        NZ,SBTRUNC
+              LD        A,(SUBFCB+23H)
+              OR        A
+              JR        NZ,SBTRUNC
+              JP        SBEMPTY
+SBZERO                      ; Preserve unexpectedly empty $$$.SUB for inspection.
+              ; Mark halted to prevent a new attempt at every CCP prompt.
+              LD        DE,SUBFCB
+              CALL      F_CLOSE
+              LD        A,1
+              LD        (SBHALT),A
+              LD        DE,SBZEROMSG
+              CALL      C_WRITESTR
+              XOR       A
+              RET
+SBEMPTY       LD        DE,SUBFCB
+              CALL      F_CLOSE
+              OR        A
+              JP        NZ,SBERROR
+              LD        DE,SUBFCB
+              CALL      F_DELETE                       ; last command: ERA $$$.SUB
+              OR        A
+              JP        NZ,SBERROR
+              JP        SBDONE
+SBTRUNC                     ; Truncate an open ProDOS file to R0..R2 * 128 bytes.
+              ; IO_BEGIN resolves logical S2=$7E to a physical ProDOS FRN.
+              LD        IX,SUBFCB
+              CALL      IO_BEGIN
+              OR        A
+              JP        NZ,SBERROR
+              LD        A,(IX+0EH)
+              LD        (SEMLIN),A
+              LD        HL,(SUBFCB+21H)
+              LD        A,(SUBFCB+23H)
+              LD        B,7
+SBSHIFT       ADD       HL,HL
+              RLA
+              DJNZ      SBSHIFT
+              LD        (SEMLIE1),HL
+              LD        (SEMLIE3),A
+              LD        HL,SEMLI
+              CALL      PRODOS
+              CALL      IO_END                         ; put back virtual S2 marker
+              PUSH      AF
+              LD        DE,SUBFCB
+              CALL      F_CLOSE
+              LD        B,A
+              POP       AF
+              OR        A
+              JP        NZ,SBERROR
+              LD        A,B
+              OR        A
+              JP        NZ,SBERROR
+SBDONE        LD        A,1                            ; record consumed; SUBREC remains valid
+              RET
+SBCOPY        LD        A,(SUBREC)
+              ; Length was checked while the on-disk record still existed.
+              LD        (FILEBUF+1),A
+              LD        C,A
+              LD        A,120
+              LD        (FILEBUF),A
+              LD        B,0
+              LD        HL,SUBREC+1
+              LD        DE,FILEBUF+2
+              LDIR
+              ; Echo the submitted command just as if typed at the prompt.
+              LD        HL,SUBREC+1
+              LD        A,(SUBREC)
+              LD        B,A
+SBECHO        LD        E,(HL)
+              PUSH      HL
+              PUSH      BC
+              CALL      C_WRITE
+              POP       BC
+              POP       HL
+              INC       HL
+              DJNZ      SBECHO
+              LD        E,13
+              CALL      C_WRITE
+              LD        A,1
+              RET
+SBERROR       LD        DE,SUBFCB
+              CALL      F_CLOSE                        ; best effort, preserve file for diagnosis
+              LD        A,1
+              LD        (SBHALT),A                     ; do not retry corrupt file every prompt
+              LD        DE,SBERRMSG
+              CALL      C_WRITESTR
+              XOR       A
+              RET
+SBERRMSG      DEFM      'SUBMIT invalid record or I/O error (file retained)'
+              DEFB      13,'$'
+SBZEROMSG     DEFM      'SUBMIT zero records - $$$.SUB retained for inspection'
+              DEFB      13,'$'
+SBHALT        DEFB      0
+SUBFCB        DEFB      1
+              DEFM      '$$$     SUB'
+              DEFS      24
+SUBREC        DEFS      128
 ; A WBOOT from a background AUX tab must never reset the foreground
 ; CCP stack. Defer it until that tab becomes the visible CCP.
-SBW_PTR     LD      A,(TABMODE)
-            LD      E,A
-            LD      D,0
-            LD      HL,SBWARM
-            ADD     HL,DE
-            RET
-SBWSET      LD      A,(AXQUIT)
-            CP      1
-            RET     NZ
-            CALL    SBW_PTR
-            LD      (HL),1
-            RET
-SBWGET      CALL    SBW_PTR
-            LD      A,(HL)
-            RET
-SBWCLR      CALL    SBW_PTR
-            LD      (HL),0
-            RET
-SBWARM      DEFS    16
+SBW_PTR       LD        A,(TABMODE)
+              LD        E,A
+              LD        D,0
+              LD        HL,SBWARM
+              ADD       HL,DE
+              RET
+SBWSET        LD        A,(AXQUIT)
+              CP        1
+              RET       NZ
+              CALL      SBW_PTR
+              LD        (HL),1
+              RET
+SBWGET        CALL      SBW_PTR
+              LD        A,(HL)
+              RET
+SBWCLR        CALL      SBW_PTR
+              LD        (HL),0
+              RET
+SBWARM        DEFS      16
 
 ; ---------------------------------------------------------------------
 ; IOBYTE RDR:/PUN: routing.  CP/M physical device names are BIOS-defined.
@@ -2190,1439 +2190,1441 @@ SBWARM      DEFS    16
 ; IOBYTE field bits: RDR 3:2, PUN 5:4.
 ; Keep out of the 256-byte slot-firmware bridge at $4400-$44FF.
 ; ---------------------------------------------------------------------
-            ORG     04C00H
-IOPUNSEL    LD      A,(IOBYTE)
-            AND     030H
-            CP      020H
-            JP      Z,IOPRN     ; UP1: slot 1 printer
-            CP      030H
-            JP      Z,IOVOUT    ; UP2: built-in video
-            JP      IOSEROUT    ; TTY/PTP: shared slot 2 serial
-IORDRSEL    LD      A,(IOBYTE)
-            AND     00CH
-            CP      008H
-            JP      Z,IORDKEY   ; UR1: built-in keyboard
-            CP      00CH
-            JP      Z,IORDEOF   ; UR2: no reader, return EOF
-            JP      IOSERIN     ; TTY/PTR: shared slot 2 serial
-IORDKEY     LD      HL,RDKEY    ; 6502 VGET, blocking, no echo
-            LD      (ADDR),HL
-            LD      A,1
-            LD      (CMD),A
-            LD      (SOFTCARD),A
-            LD      A,(AREG)
-            AND     07FH
-            LD      L,A
-            RET
-IORDEOF     LD      A,01AH      ; CP/M text EOF
-            LD      L,A
-            RET
+              ORG       04C00H
+IOPUNSEL      LD        A,(IOBYTE)
+              AND       030H
+              CP        020H
+              JP        Z,IOPRN                        ; UP1: slot 1 printer
+              CP        030H
+              JP        Z,IOVOUT                       ; UP2: built-in video
+              JP        IOSEROUT                       ; TTY/PTP: shared slot 2 serial
+IORDRSEL      LD        A,(IOBYTE)
+              AND       00CH
+              CP        008H
+              JP        Z,IORDKEY                      ; UR1: built-in keyboard
+              CP        00CH
+              JP        Z,IORDEOF                      ; UR2: no reader, return EOF
+              JP        IOSERIN                        ; TTY/PTR: shared slot 2 serial
+IORDKEY       LD        HL,RDKEY                       ; 6502 VGET, blocking, no echo
+              LD        (ADDR),HL
+              LD        A,1
+              LD        (CMD),A
+              LD        (SOFTCARD),A
+              LD        A,(AREG)
+              AND       07FH
+              LD        L,A
+              RET
+IORDEOF       LD        A,01AH                         ; CP/M text EOF
+              LD        L,A
+              RET
 ; CON:=BAT: uses RDR: for input; other non-CRT console modes use serial.
-IOCONIN     LD      A,(IOBYTE)
-            AND     3
-            CP      2
-            JP      Z,IOREADER
-            JP      IOSERIN
+IOCONIN       LD        A,(IOBYTE)
+              AND       3
+              CP        2
+              JP        Z,IOREADER
+              JP        IOSERIN
 
-            ORG     05000H
+              ORG       05000H
 ; Native XSUB: opt-in only by an XSUB directive *inside* .SUB.
 ; No resident AUX code; submit input stays in MAIN and is owned by one tab.
-CCPXSUB     LD      A,(SBFROM)
-            OR      A
-            RET     Z            ; manual XSUB does not enable batch mode
-            LD      A,(TABMODE)
-            LD      (XSOWNER),A
-            LD      A,1
-            LD      (XSFLAG),A
-            XOR     A
-            LD      (XSLEFT),A
-            RET
+CCPXSUB       LD        A,(SBFROM)
+              OR        A
+              RET       Z                              ; manual XSUB does not enable batch mode
+              LD        A,(TABMODE)
+              LD        (XSOWNER),A
+              LD        A,1
+              LD        (XSFLAG),A
+              XOR       A
+              LD        (XSLEFT),A
+              RET
 
 ; SBNEXT uses the shared MAIN DMA pointer. Don't perturb its caller.
-XSNEXT      PUSH    BC
-            PUSH    DE
-            PUSH    IX
-            PUSH    IY
-            LD      HL,(DMAADDR)
-            PUSH    HL
-            CALL    SBNEXT
-            POP     HL
-            LD      (DMAADDR),HL
-            POP     IY
-            POP     IX
-            POP     DE
-            POP     BC
-            RET
+XSNEXT        PUSH      BC
+              PUSH      DE
+              PUSH      IX
+              PUSH      IY
+              LD        HL,(DMAADDR)
+              PUSH      HL
+              CALL      SBNEXT
+              POP       HL
+              LD        (DMAADDR),HL
+              POP       IY
+              POP       IX
+              POP       DE
+              POP       BC
+              RET
 
 ; A=1 if native XSUB is enabled for the current tab; A=0 otherwise.
-XSENABL     PUSH    BC
-            LD      A,(XSFLAG)
-            OR      A
-            JR      Z,XSEOFF
-            LD      A,(TABMODE)
-            LD      B,A
-            LD      A,(XSOWNER)
-            CP      B
-            JR      NZ,XSEOFF
-            LD      A,1
-            POP     BC
-            RET
-XSEOFF      XOR     A
-            POP     BC
-            RET
+XSENABL       PUSH      BC
+              LD        A,(XSFLAG)
+              OR        A
+              JR        Z,XSEOFF
+              LD        A,(TABMODE)
+              LD        B,A
+              LD        A,(XSOWNER)
+              CP        B
+              JR        NZ,XSEOFF
+              LD        A,1
+              POP       BC
+              RET
+XSEOFF        XOR       A
+              POP       BC
+              RET
 
 ; Avoid parking a tab on physical keyboard input when a scripted
 ; character is actually ready. For other BDOS calls keep normal SCHPRE.
-XSPRE       LD      A,C
-            CP      1            ; cooked BDOS CONIN
-            JR      Z,XSPCHECK
-            CP      10           ; buffered BDOS CONIN
-            JR      Z,XSPCHECK
-            CP      0F2H         ; BIOS CONIN
-            JP      NZ,SCHPRE
-XSPCHECK    CALL    XSREADY
-            OR      A            ; clear carry on a ready virtual byte
-            RET     NZ
-            JP      SCHPRE
+XSPRE         LD        A,C
+              CP        1                              ; cooked BDOS CONIN
+              JR        Z,XSPCHECK
+              CP        10                             ; buffered BDOS CONIN
+              JR        Z,XSPCHECK
+              CP        0F2H                           ; BIOS CONIN
+              JP        NZ,SCHPRE
+XSPCHECK      CALL      XSREADY
+              OR        A                              ; clear carry on a ready virtual byte
+              RET       NZ
+              JP        SCHPRE
 
 ; Lazy reverse-record fetch: pending line, then CR. Polls may prefetch,
 ; but the same record is subsequently consumed by *any* input API.
 ; Return A=1 when a character is ready; zero when none.
-XSREADY     CALL    XSENABL
-            OR      A
-            RET     Z
-            LD      A,(XSLEFT)
-            OR      A
-            JR      NZ,XSYES
-            CALL    XSNEXT
-            OR      A
-            JR      Z,XSEOF
-            LD      A,(SUBREC)
-            INC     A
-            LD      (XSLEFT),A
-            LD      HL,SUBREC+1
-            LD      (XSPTR),HL
-XSYES       LD      A,1
-            RET
-XSEOF       XOR     A
-            LD      (XSFLAG),A  ; future submissions require XSUB again
-            RET
+XSREADY       CALL      XSENABL
+              OR        A
+              RET       Z
+              LD        A,(XSLEFT)
+              OR        A
+              JR        NZ,XSYES
+              CALL      XSNEXT
+              OR        A
+              JR        Z,XSEOF
+              LD        A,(SUBREC)
+              INC       A
+              LD        (XSLEFT),A
+              LD        HL,SUBREC+1
+              LD        (XSPTR),HL
+XSYES         LD        A,1
+              RET
+XSEOF         XOR       A
+              LD        (XSFLAG),A                     ; future submissions require XSUB again
+              RET
 
 ; Carry set and A=byte when scripted, carry clear when keyboard needed.
-XSCHAR      PUSH    BC
-            PUSH    DE
-            PUSH    HL
-            CALL    XSREADY
-            OR      A
-            JR      Z,XSCNONE
-            LD      A,(XSLEFT)
-            DEC     A
-            LD      (XSLEFT),A
-            JR      Z,XSCR
-            LD      HL,(XSPTR)
-            LD      A,(HL)
-            INC     HL
-            LD      (XSPTR),HL
-            JR      XSCGOT
-XSCR        LD      A,13
-XSCGOT      SCF
-            JR      XSCEXIT
-XSCNONE     XOR     A             ; no virtual byte: carry clear
-XSCEXIT     POP     HL
-            POP     DE
-            POP     BC
-            RET
+XSCHAR        PUSH      BC
+              PUSH      DE
+              PUSH      HL
+              CALL      XSREADY
+              OR        A
+              JR        Z,XSCNONE
+              LD        A,(XSLEFT)
+              DEC       A
+              LD        (XSLEFT),A
+              JR        Z,XSCR
+              LD        HL,(XSPTR)
+              LD        A,(HL)
+              INC       HL
+              LD        (XSPTR),HL
+              JR        XSCGOT
+XSCR          LD        A,13
+XSCGOT        SCF
+              JR        XSCEXIT
+XSCNONE       XOR       A                              ; no virtual byte: carry clear
+XSCEXIT       POP       HL
+              POP       DE
+              POP       BC
+              RET
 
 ; MAIN CCP ERA/BYE Y/N uses C_READ directly, not BDOS 0Ah/01h.
 ; Echo synthetic input just like C_READ does, otherwise original read.
-XSCCPKEY    CALL    XSCHAR
-            JP      NC,C_READ
-            PUSH    AF
-            LD      E,A
-            CALL    C_WRITE
-            POP     AF
-            RET
+XSCCPKEY      CALL      XSCHAR
+              JP        NC,C_READ
+              PUSH      AF
+              LD        E,A
+              CALL      C_WRITE
+              POP       AF
+              RET
 
 ; AUX BDOS 01: cooked, echoing input; normal scheduler when no script.
-XSCIN       CALL    XSCHAR
-            JP      NC,AXCIN
-            LD      L,A
-            PUSH    HL
-            LD      E,A
-            CALL    C_WRITE
-            POP     HL
-            LD      A,L
-            RET
+XSCIN         CALL      XSCHAR
+              JP        NC,AXCIN
+              LD        L,A
+              PUSH      HL
+              LD        E,A
+              CALL      C_WRITE
+              POP       HL
+              LD        A,L
+              RET
 
 ; AUX BIOS CONIN: raw input, no echo.
-XSBIIN      CALL    XSCHAR
-            JP      NC,AXBIREAD
-            LD      L,A
-            RET
+XSBIIN        CALL      XSCHAR
+              JP        NC,AXBIREAD
+              LD        L,A
+              RET
 
 ; AUX BDOS 06: substitute only when E=FF (input mode).
-XSRAW       LD      A,E
-            CP      0FFH
-            JP      NZ,AUXBDOS6
-            CALL    XSCHAR
-            JP      NC,AUXBDOS6
-            LD      L,A
-            RET
+XSRAW         LD        A,E
+              CP        0FFH
+              JP        NZ,AUXBDOS6
+              CALL      XSCHAR
+              JP        NC,AUXBDOS6
+              LD        L,A
+              RET
 
 ; AUX BDOS 11 and BIOS CONST: status polls see pending SUBMIT input.
-XSSTAT      CALL    XSREADY
-            OR      A
-            JP      Z,ABDSTAT
-            LD      A,0FFH
-            LD      L,A
-            RET
-XSBSTAT     CALL    XSREADY
-            OR      A
-            JP      Z,AXBICON
-            LD      A,0FFH
-            LD      L,A
-            RET
+XSSTAT        CALL      XSREADY
+              OR        A
+              JP        Z,ABDSTAT
+              LD        A,0FFH
+              LD        L,A
+              RET
+XSBSTAT       CALL      XSREADY
+              OR        A
+              JP        Z,AXBICON
+              LD        A,0FFH
+              LD        L,A
+              RET
 
 ; AUX BDOS 0Ah: consume the *same* pending character stream as 01/06.
 ; This matters if an app polls before asking for buffered input, or
 ; consumes the first few characters via BDOS 01h before using 0Ah.
 ; AXLINE has validated caller buffer and fetched its capacity into AXLBUF.
-AXLSUB      LD      B,0           ; number of chars copied
-            LD      HL,AXLBUF+2
-XSLNEXT     PUSH    BC
-            PUSH    HL
-            CALL    XSCHAR
-            POP     HL
-            POP     BC
-            JR      NC,XSLDONE
-            CP      13
-            JR      Z,XSLDONE
-            LD      C,A           ; preserve character
-            LD      A,(AXLBUF)
-            CP      B
-            JR      Z,XSLNEXT     ; discard beyond caller's capacity
-            LD      (HL),C
-            INC     HL
-            INC     B
-            PUSH    HL
-            PUSH    BC
-            LD      E,C
-            CALL    C_WRITE
-            POP     BC
-            POP     HL
-            JR      XSLNEXT
-XSLDONE     LD      (HL),13
-            LD      A,B
-            LD      (AXLBUF+1),A
-            LD      C,A
-            LD      B,0
-            INC     BC           ; first buffer byte (maximum)
-            INC     BC           ; count byte
-            INC     BC           ; trailing CR
-            LD      HL,AXLBUF
-            LD      DE,(AXLIP)
-            CALL    AXM2A
-            LD      E,13
-            CALL    C_WRITE
-            XOR     A
-            LD      L,A
-            RET
+AXLSUB        LD        B,0                            ; number of chars copied
+              LD        HL,AXLBUF+2
+XSLNEXT       PUSH      BC
+              PUSH      HL
+              CALL      XSCHAR
+              POP       HL
+              POP       BC
+              JR        NC,XSLDONE
+              CP        13
+              JR        Z,XSLDONE
+              LD        C,A                            ; preserve character
+              LD        A,(AXLBUF)
+              CP        B
+              JR        Z,XSLNEXT                      ; discard beyond caller's capacity
+              LD        (HL),C
+              INC       HL
+              INC       B
+              PUSH      HL
+              PUSH      BC
+              LD        E,C
+              CALL      C_WRITE
+              POP       BC
+              POP       HL
+              JR        XSLNEXT
+XSLDONE       LD        (HL),13
+              LD        A,B
+              LD        (AXLBUF+1),A
+              LD        C,A
+              LD        B,0
+              INC       BC                             ; first buffer byte (maximum)
+              INC       BC                             ; count byte
+              INC       BC                             ; trailing CR
+              LD        HL,AXLBUF
+              LD        DE,(AXLIP)
+              CALL      AXM2A
+              LD        E,13
+              CALL      C_WRITE
+              XOR       A
+              LD        L,A
+              RET
 
-XSFLAG      DEFB    0
-XSOWNER     DEFB    0
-SBFROM      DEFB    0
-XSLEFT      DEFB    0
-XSPTR       DEFW    0
+XSFLAG        DEFB      0
+XSOWNER       DEFB      0
+SBFROM        DEFB      0
+XSLEFT        DEFB      0
+XSPTR         DEFW      0
 
-            ORG     05200H
+              ORG       05200H
 ; Visited tab membership is independent of task activity and video validity.
 ; Each entry is 0 (never visited / killed) or 1 (visited).
-TB_VPTR     LD      E,A
-            LD      D,0
-            LD      HL,TBVIS
-            ADD     HL,DE
-            RET
-TB_VMARK    CALL    TB_VPTR
-            LD      (HL),1
-            RET
-TB_VINIT    LD      HL,TBVIS
-            LD      DE,TBVIS+1
-            LD      BC,15
-            XOR     A
-            LD      (HL),A
-            LDIR
-            LD      A,1
-            LD      (TBVIS),A
-            RET
-TBVIS  DEFS    16
+TB_VPTR       LD        E,A
+              LD        D,0
+              LD        HL,TBVIS
+              ADD       HL,DE
+              RET
+TB_VMARK      CALL      TB_VPTR
+              LD        (HL),1
+              RET
+TB_VINIT      LD        HL,TBVIS
+              LD        DE,TBVIS+1
+              LD        BC,15
+              XOR       A
+              LD        (HL),A
+              LDIR
+              LD        A,1
+              LD        (TBVIS),A
+              RET
+TBVIS         DEFS      16
 
-            ORG     05300H
+              ORG       05300H
 ; Listing does not switch banks or enter the paused applications.
-TB_LIST     LD      B,0
-TL_NEXT     LD      A,B
-            CALL    TB_VPTR
-            LD      A,(HL)
-            OR      A
-            JR      Z,TL_SKIP     ; slot has not been visited, or was KILLed
-            PUSH    BC
-            LD      A,(SCHFG)
-            CP      B
-            LD      E,' '
-            JR      NZ,TL_MARK
-            LD      E,'*'
-TL_MARK     CALL    C_WRITE
-            LD      A,B
-            CALL    PHNYB
-            LD      E,' '
-            CALL    C_WRITE
-            CALL    TL_DRIVE       ; fixed-width drive/user field, 5 columns
-            LD      A,B
-            CALL    TB_TFL
-            OR      A
-            JR      NZ,TL_PROG
-            LD      DE,TL_CCP
-            JR      TL_NAME
-TL_PROG     LD      A,B
-            CALL    TBNPTR
-            LD      C,8
-TL_CHAR     LD      E,(HL)
-            PUSH    BC
-            PUSH    HL
-            CALL    C_WRITE
-            POP     HL
-            POP     BC
-            INC     HL
-            DEC     C
-            JR      NZ,TL_CHAR
-            JR      TL_STATE
-TL_NAME     CALL    C_WRITESTR
-TL_STATE    LD      A,B
-            CALL    TB_HPTR
-            LD      A,(HL)
-            OR      A
-            JR      Z,TL_WAIT
-            LD      DE,TL_HOLD
-            JR      TL_LABEL
-TL_WAIT     LD      E,B
-            LD      D,0
-            LD      HL,SCHWAIT
-            ADD     HL,DE
-            LD      A,(HL)
-            OR      A
-            JR      Z,TL_EOL
-            LD      DE,TL_BLOCK
-TL_LABEL    CALL    C_WRITESTR
-TL_EOL      LD      E,13
-            CALL    C_WRITE
-            POP     BC
-TL_SKIP     INC     B
-            LD      A,(TABCOUNT)
-            CP      B
-            JR      NZ,TL_NEXT
-            RET
+TB_LIST       LD        B,0
+TL_NEXT       LD        A,B
+              CALL      TB_VPTR
+              LD        A,(HL)
+              OR        A
+              JR        Z,TL_SKIP                      ; slot has not been visited, or was KILLed
+              PUSH      BC
+              LD        A,(SCHFG)
+              CP        B
+              LD        E,' '
+              JR        NZ,TL_MARK
+              LD        E,'*'
+TL_MARK       CALL      C_WRITE
+              LD        A,B
+              CALL      PHNYB
+              LD        E,' '
+              CALL      C_WRITE
+              CALL      TL_DRIVE                       ; fixed-width drive/user field, 5 columns
+              LD        A,B
+              CALL      TB_TFL
+              OR        A
+              JR        NZ,TL_PROG
+              LD        DE,TL_CCP
+              JR        TL_NAME
+TL_PROG       LD        A,B
+              CALL      TBNPTR
+              LD        C,8
+TL_CHAR       LD        E,(HL)
+              PUSH      BC
+              PUSH      HL
+              CALL      C_WRITE
+              POP       HL
+              POP       BC
+              INC       HL
+              DEC       C
+              JR        NZ,TL_CHAR
+              JR        TL_STATE
+TL_NAME       CALL      C_WRITESTR
+TL_STATE      LD        A,B
+              CALL      TB_HPTR
+              LD        A,(HL)
+              OR        A
+              JR        Z,TL_WAIT
+              LD        DE,TL_HOLD
+              JR        TL_LABEL
+TL_WAIT       LD        E,B
+              LD        D,0
+              LD        HL,SCHWAIT
+              ADD       HL,DE
+              LD        A,(HL)
+              OR        A
+              JR        Z,TL_EOL
+              LD        DE,TL_BLOCK
+TL_LABEL      CALL      C_WRITESTR
+TL_EOL        LD        E,13
+              CALL      C_WRITE
+              POP       BC
+TL_SKIP       INC       B
+              LD        A,(TABCOUNT)
+              CP        B
+              JR        NZ,TL_NEXT
+              RET
 
 ; Drive for tab B. The currently executing tab has live CURDRV;
 ; inactive tabs have their last CURDRV (including user bits) at
 ; TABCTXS[tab*7 + 0]. Do NOT temporarily change TABMODE/TABPICK.
-TL_DRIVE    LD      A,(TABMODE)
-            CP      B
-            JR      NZ,TL_DSAVE
-            LD      A,(CURDRV)
-            JR      TL_DCHAR
-TL_DSAVE    LD      A,B
-            LD      HL,TABCTXS
-            LD      DE,7
-TL_DLOOP    OR      A
-            JR      Z,TL_DGET
-            ADD     HL,DE
-            DEC     A
-            JR      TL_DLOOP
-TL_DGET     LD      A,(HL)
+TL_DRIVE      LD        A,(TABMODE)
+              CP        B
+              JR        NZ,TL_DSAVE
+              LD        A,(CURDRV)
+              JR        TL_DCHAR
+TL_DSAVE      LD        A,B
+              LD        HL,TABCTXS
+              LD        DE,7
+TL_DLOOP      OR        A
+              JR        Z,TL_DGET
+              ADD       HL,DE
+              DEC       A
+              JR        TL_DLOOP
+TL_DGET       LD        A,(HL)
 ; A = drive/user byte. Emit exactly FIVE columns:
 ;   A:___ (user 0), A1:__ (user 1..9), A15:_ (user 10..15)
 ; with underscores representing spaces. B holds the TAB LIST index.
-TL_DCHAR    PUSH    BC
-            LD      C,A           ; preserve combined user/drive code
-            AND     00FH
-            ADD     A,'A'
-            LD      E,A
-            CALL    C_WRITE
-            LD      A,C
-            RRCA
-            RRCA
-            RRCA
-            RRCA
-            AND     00FH
-            OR      A
-            JR      Z,TL_UZERO
-            CP      10
-            JR      NC,TL_UTWO
-            CALL    RWDECIMAL     ; one user-number digit
-            LD      B,2           ; two spaces follow the colon
-            JR      TL_COLON
-TL_UTWO     CALL    RWDECIMAL     ; two digits, user 10..15
-            LD      B,1
-            JR      TL_COLON
-TL_UZERO    LD      B,3           ; no user-number digits
-TL_COLON    LD      E,':'
-            PUSH    BC
-            CALL    C_WRITE
-            POP     BC
-TL_DPAD     LD      E,' '
-            PUSH    BC           ; console output may affect counters
-            CALL    C_WRITE
-            POP     BC
-            DJNZ    TL_DPAD
-            POP     BC           ; restore TAB LIST loop index
-            RET
+TL_DCHAR      PUSH      BC
+              LD        C,A                            ; preserve combined user/drive code
+              AND       00FH
+              ADD       A,'A'
+              LD        E,A
+              CALL      C_WRITE
+              LD        A,C
+              RRCA
+              RRCA
+              RRCA
+              RRCA
+              AND       00FH
+              OR        A
+              JR        Z,TL_UZERO
+              CP        10
+              JR        NC,TL_UTWO
+              CALL      RWDECIMAL                      ; one user-number digit
+              LD        B,2                            ; two spaces follow the colon
+              JR        TL_COLON
+TL_UTWO       CALL      RWDECIMAL                      ; two digits, user 10..15
+              LD        B,1
+              JR        TL_COLON
+TL_UZERO      LD        B,3                            ; no user-number digits
+TL_COLON      LD        E,':'
+              PUSH      BC
+              CALL      C_WRITE
+              POP       BC
+TL_DPAD       LD        E,' '
+              PUSH      BC                             ; console output may affect counters
+              CALL      C_WRITE
+              POP       BC
+              DJNZ      TL_DPAD
+              POP       BC                             ; restore TAB LIST loop index
+              RET
 
 
 
 
-TL_CCP      DEFM    'CCP     $'   ; 8 columns, same as .COM names
+TL_CCP        DEFM      'CCP     $'                    ; 8 columns, same as .COM names
 
-            ORG     05500H
+              ORG       05500H
 ; USER command. CCP normalized FILEBUF as: " n ", or empty.
 ; USER with no argument prints current code, USER 0..15 selects it.
-CCPUSER     LD      A,(FILEBUF)
-            OR      A
-            JR      Z,CU_SHOW
-            LD      HL,FILEBUF+2
-            LD      A,(HL)
-            CP      '0'
-            JP      C,CCPBAD
-            CP      '9'+1
-            JP      NC,CCPBAD
-            SUB     '0'
-            LD      B,A
-            INC     HL
-            LD      A,(HL)
-            CP      ' '
-            JR      Z,CU_SET
-            ; Two-digit values 10..15 only.
-            LD      A,B
-            CP      1
-            JP      NZ,CCPBAD
-            LD      A,(HL)
-            CP      '0'
-            JP      C,CCPBAD
-            CP      '6'
-            JP      NC,CCPBAD
-            SUB     '0'-10
-            LD      B,A
-            INC     HL
-            LD      A,(HL)
-            CP      ' '
-            JP      NZ,CCPBAD
-CU_SET      LD      E,B
-            CALL    F_USERNUM
-            RET
-CU_SHOW     LD      E,0FFH
-            CALL    F_USERNUM
-            CALL    RWDECIMAL
-            LD      E,13
-            JP      C_WRITE
+CCPUSER       LD        A,(FILEBUF)
+              OR        A
+              JR        Z,CU_SHOW
+              LD        HL,FILEBUF+2
+              LD        A,(HL)
+              CP        '0'
+              JP        C,CCPBAD
+              CP        '9'+1
+              JP        NC,CCPBAD
+              SUB       '0'
+              LD        B,A
+              INC       HL
+              LD        A,(HL)
+              CP        ' '
+              JR        Z,CU_SET
+              ; Two-digit values 10..15 only.
+              LD        A,B
+              CP        1
+              JP        NZ,CCPBAD
+              LD        A,(HL)
+              CP        '0'
+              JP        C,CCPBAD
+              CP        '6'
+              JP        NC,CCPBAD
+              SUB       '0'-10
+              LD        B,A
+              INC       HL
+              LD        A,(HL)
+              CP        ' '
+              JP        NZ,CCPBAD
+CU_SET        LD        E,B
+              CALL      F_USERNUM
+              RET
+CU_SHOW       LD        E,0FFH
+              CALL      F_USERNUM
+              CALL      RWDECIMAL
+              LD        E,13
+              JP        C_WRITE
 
 ; Lazy user-area directory creation. Called ONLY after a file CREATE
 ; returned $44 (parent pathname missing), never on ordinary opens.
 ; PATHBUF holds A3/FILE etc. Preserve its original Pascal length.
 ; ProDOS CREATE folder: filetype $0F and storage type $0D.
 ; Return A=0 on success or existing directory, else ProDOS error.
-UD_MKDIR    LD      A,(CURDRV)
-            AND     0F0H
-            JP      Z,UD_MISS      ; user zero's A/ must pre-exist
-            LD      A,(PATHLEN)
-            LD      (UD_OLEN),A
-            LD      HL,PATH+0
-            LD      B,0
-UD_SLASH    LD      A,(HL)
-            CP      '/'
-            JR      Z,UD_FOUND
-            INC     B
-            INC     HL
-            LD      A,B
-            CP      5
-            JR      C,UD_SLASH
-            LD      A,044H
-            RET
-UD_FOUND    LD      A,B
-            LD      (PATHLEN),A
-            LD      A,00FH
-            LD      (FMMLIT),A
-            LD      A,00DH
-            LD      (FMMLIS),A
-            LD      HL,FMMLI
-            CALL    PRODOS
-            LD      (UD_STAT),A
-            XOR     A
-            LD      (FMMLIT),A
-            INC     A
-            LD      (FMMLIS),A
-            LD      A,(UD_OLEN)
-            LD      (PATHLEN),A
-            LD      A,(UD_STAT)
-            CP      047H         ; a concurrent CREATE may have made it
-            JR      Z,UD_OK
-            OR      A
-            RET
-UD_OK       XOR     A
-            RET
-UD_MISS     LD      A,044H
-            RET
-UD_OLEN     DEFB    0
-UD_STAT     DEFB    0
-UC_SAVE     DEFB    0
+UD_MKDIR      LD        A,(CURDRV)
+              AND       0F0H
+              JP        Z,UD_MISS                      ; user zero's A/ must pre-exist
+              LD        A,(PATHLEN)
+              LD        (UD_OLEN),A
+              LD        HL,PATH+0
+              LD        B,0
+UD_SLASH      LD        A,(HL)
+              CP        '/'
+              JR        Z,UD_FOUND
+              INC       B
+              INC       HL
+              LD        A,B
+              CP        5
+              JR        C,UD_SLASH
+              LD        A,044H
+              RET
+UD_FOUND      LD        A,B
+              LD        (PATHLEN),A
+              LD        A,00FH
+              LD        (FMMLIT),A
+              LD        A,00DH
+              LD        (FMMLIS),A
+              LD        HL,FMMLI
+              CALL      PRODOS
+              LD        (UD_STAT),A
+              XOR       A
+              LD        (FMMLIT),A
+              INC       A
+              LD        (FMMLIS),A
+              LD        A,(UD_OLEN)
+              LD        (PATHLEN),A
+              LD        A,(UD_STAT)
+              CP        047H                           ; a concurrent CREATE may have made it
+              JR        Z,UD_OK
+              OR        A
+              RET
+UD_OK         XOR       A
+              RET
+UD_MISS       LD        A,044H
+              RET
+UD_OLEN       DEFB      0
+UD_STAT       DEFB      0
+UC_SAVE       DEFB      0
 
 ; FCB file operations keep the USER at OPEN time in S1=$A0+user.
 ; S2 must still be $7E/$FE; ordinary FCBs always use current USER.
 ; Returns A=0..15 and preserves BC, DE, HL, IX, IY.
-F2P_USER    PUSH    HL
-            LD      HL,0EH
-            ADD     HL,DE
-            LD      A,(HL)
-            CP      07EH
-            JR      Z,F2P_LOCK
-            CP      0FEH
-            JR      NZ,F2P_CUR
-F2P_LOCK    DEC     HL
-            LD      A,(HL)
-            AND     0F0H
-            CP      0A0H
-            JR      NZ,F2P_CUR
-            LD      A,(HL)
-            AND     00FH
-            POP     HL
-            RET
-F2P_CUR     LD      A,(CURDRV)
-            RRCA
-            RRCA
-            RRCA
-            RRCA
-            AND     00FH
-            POP     HL
-            RET
+F2P_USER      PUSH      HL
+              LD        HL,0EH
+              ADD       HL,DE
+              LD        A,(HL)
+              CP        07EH
+              JR        Z,F2P_LOCK
+              CP        0FEH
+              JR        NZ,F2P_CUR
+F2P_LOCK      DEC       HL
+              LD        A,(HL)
+              AND       0F0H
+              CP        0A0H
+              JR        NZ,F2P_CUR
+              LD        A,(HL)
+              AND       00FH
+              POP       HL
+              RET
+F2P_CUR       LD        A,(CURDRV)
+              RRCA
+              RRCA
+              RRCA
+              RRCA
+              AND       00FH
+              POP       HL
+              RET
 
-            ORG     05800H
-BITABLE    DEFM    'DIR  '
-           DEFB    081H
-           DEFW    DIRECT
-           DEFM    'ERA  '
-           DEFB    1
-           DEFW    ERASE
-           DEFM    'REN  '
-           DEFB    1
-           DEFW    RENAME
-           DEFM    'TYPE '
-           DEFB    1
-           DEFW    BITYPE
-           DEFM    'SAVE '
-           DEFB    2
-           DEFW    BISAVE
-           DEFM    'BYE  '
-           DEFB    0
-           DEFW    CCPBYE
-           DEFM    'TERM '
-           DEFB    1
-           DEFW    CCPTERM
-           DEFM    'CACHE'
-           DEFB    081H             ; zero or one argument (RESET)
-           DEFW    CCPCACHE
-           DEFM    'CLS  '
-           DEFB    0
-           DEFW    CCPCLS
-           DEFM    'BANKS'
-           DEFB    0
-           DEFW    CCPBANKS
-           DEFM    'TAB  '
-           DEFB    0FEH             ; TAB's variable argument syntax
-           DEFW    CCPTAB
-           DEFM    'HELP '
-           DEFB    0
-           DEFW    CCPHELP
-           DEFM    'XSUB '
-           DEFB    0
-           DEFW    CCPXSUB
-           DEFM    'USER '
-           DEFB    081H         ; USER or USER n
-           DEFW    CCPUSER
+              ORG       05800H
+BITABLE       DEFM      'DIR  '
+              DEFB      081H
+              DEFW      DIRECT
+              DEFM      'ERA  '
+              DEFB      1
+              DEFW      ERASE
+              DEFM      'REN  '
+              DEFB      1
+              DEFW      RENAME
+              DEFM      'TYPE '
+              DEFB      1
+              DEFW      BITYPE
+              DEFM      'SAVE '
+              DEFB      2
+              DEFW      BISAVE
+              DEFM      'BYE  '
+              DEFB      0
+              DEFW      CCPBYE
+              DEFM      'TERM '
+              DEFB      1
+              DEFW      CCPTERM
+              DEFM      'CACHE'
+              DEFB      081H                           ; zero or one argument (RESET)
+              DEFW      CCPCACHE
+              DEFM      'CLS  '
+              DEFB      0
+              DEFW      CCPCLS
+              DEFM      'BANKS'
+              DEFB      0
+              DEFW      CCPBANKS
+              DEFM      'TAB  '
+              DEFB      0FEH                           ; TAB's variable argument syntax
+              DEFW      CCPTAB
+              DEFM      'HELP '
+              DEFB      0
+              DEFW      CCPHELP
+              DEFM      'XSUB '
+              DEFB      0
+              DEFW      CCPXSUB
+              DEFM      'USER '
+              DEFB      081H                           ; USER or USER n
+              DEFW      CCPUSER
 
 
-            ORG     05F00H
+              ORG       05F00H
 ; CP/M 2.2 permits programs to read/write IOBYTE at 0003h directly.
 ; Each AUX transient has a private 0003h; resident BIOS uses MAIN 0003h.
 ; Synchronize AUX -> MAIN at every syscall and at ordinary .COM exit.
 ; Do not modify caller register arguments, return registers or flags.
-AXIOSBD     CALL    AXIOSYN
-            JP      AUXBDOS      ; tail-call: return to AXGATE
-AXIOSYN     PUSH    AF
-            PUSH    HL
-            LD      HL,IOBYTE
-            CALL    LCPEEK       ; reads one byte from active AUX bank
-            LD      (IOBYTE),A
-            POP     HL
-            POP     AF
-            RET
+AXIOSBD       CALL      AXIOSYN
+              JP        AUXBDOS                        ; tail-call: return to AXGATE
+AXIOSYN       PUSH      AF
+              PUSH      HL
+              LD        HL,IOBYTE
+              CALL      LCPEEK                         ; reads one byte from active AUX bank
+              LD        (IOBYTE),A
+              POP       HL
+              POP       AF
+              RET
 ; AXFIN may be entered directly from AUX LC with the application's SP.
 ; Restore the MAIN stack BEFORE calling the synchronizer.
-AXIOSFX     LD      SP,(AXMSP)
-            CALL    AXIOSYN
-            XOR     A
-            LD      (ZPMAIN),A
-            LD      A,(LCB1RO)
-            XOR     A
-            LD      (AXMODE),A
-            RET
+AXIOSFX       LD        SP,(AXMSP)
+              CALL      AXIOSYN
+              XOR       A
+              LD        (ZPMAIN),A
+              LD        A,(LCB1RO)
+              XOR       A
+              LD        (AXMODE),A
+              RET
 
 ; Relocated resident routines: ample MAIN memory, separate from AUX TPA.
-            ORG     06000H
+              ORG       06000H
 ; Short CCP help plus explicit blocked-input label for TAB LIST.
-CCPHELP     LD      DE,CCPH1
-            CALL    C_WRITESTR
-CCPH1       DEFM    'DIR ERA REN SAVE TYPE USER XSUB'
-            DEFB    13
-            DEFM    'BANKS BYE CACHE CLS HELP TAB TERM'
-            DEFB    13,'$'
+CCPHELP       LD        DE,CCPH1
+              JP        C_WRITESTR
 
-            ORG     06100H
+CCPH1         DEFM      'DIR ERA REN SAVE TYPE USER XSUB'
+              DEFB      13
+              DEFM      'BANKS BYE CACHE CLS TAB TERM HELP'
+              DEFB      13,'$'
+
+
+              ORG       06100H
 ; A CP/M FCB is logically open as S2=$7E (or legacy $FE).
 ; During BDOS I/O we temporarily substitute the cached physical FRN;
 ; IO_END always restores $7E. Cache is keyed by canonical ProDOS path,
 ; never by the FCB address (which can be a shared AUX gateway copy).
 ; Directory/loader physical FCBs keep their own ProDOS FRNs unchanged.
-IO_BEGIN    XOR        A
-            LD        (IOVIRT),A
-            LD        A,(IX+0EH)
-            CP        07EH
-            JR        Z,IO_CACHE
-            CP        0FEH
-            JR        Z,IO_CACHE
-            OR        A
-            JR        Z,IO_BAD
-            XOR        A
-            RET
+IO_BEGIN      XOR       A
+              LD        (IOVIRT),A
+              LD        A,(IX+0EH)
+              CP        07EH
+              JR        Z,IO_CACHE
+              CP        0FEH
+              JR        Z,IO_CACHE
+              OR        A
+              JR        Z,IO_BAD
+              XOR       A
+              RET
 IO_BAD        LD        A,9
-            RET
-IO_CACHE    LD        A,1
-            LD        (IOVIRT),A
-            PUSH    IX
-            PUSH    IX
-            POP        DE
-            LD        IX,PATHBUF
-            CALL    FCB2PATH
-            CALL    CACHEFND
-            POP        IX
-            OR        A
-            JR        Z,IO_REOPEN
-            LD        (CMRU),A    ; LRU bookkeeping on cache hit
-            PUSH    AF
-            LD        HL,CHITS
-            CALL    CINC16
-            POP        AF
-            CALL    CACHEREF
-            LD        (IX+0EH),A
-            XOR        A
-            RET
-IO_REOPEN    ; Miss: keep the caller's extent/RC/CR across _F_OPEN.
-            PUSH    IX
-            POP        DE
-            LD        A,(IX+0FH)
-            PUSH    AF
-            LD        A,(IX+0CH)
-            PUSH    AF
-            LD        A,(IX+20H)
-            PUSH    AF
-            PUSH    DE
-            PUSH    IX
-            CALL    _F_OPEN
-            LD        C,A
-            POP        IX
-            POP        DE
-            POP        AF
-            LD        (IX+20H),A
-            POP        AF
-            LD        (IX+0CH),A
-            POP        AF
-            LD        (IX+0FH),A
-            LD        A,C
-            OR        A
-            JR        NZ,IO_FAIL
-            LD        A,(IX+0EH)
-            CALL    GETIOADDR
-            CALL    CACHEPUT
-            XOR        A
-            RET
-IO_FAIL        XOR        A
-            LD        (IOVIRT),A
-            LD        A,C
-            RET
+              RET
+IO_CACHE      LD        A,1
+              LD        (IOVIRT),A
+              PUSH      IX
+              PUSH      IX
+              POP       DE
+              LD        IX,PATHBUF
+              CALL      FCB2PATH
+              CALL      CACHEFND
+              POP       IX
+              OR        A
+              JR        Z,IO_REOPEN
+              LD        (CMRU),A                       ; LRU bookkeeping on cache hit
+              PUSH      AF
+              LD        HL,CHITS
+              CALL      CINC16
+              POP       AF
+              CALL      CACHEREF
+              LD        (IX+0EH),A
+              XOR       A
+              RET
+IO_REOPEN                   ; Miss: keep the caller's extent/RC/CR across _F_OPEN.
+              PUSH      IX
+              POP       DE
+              LD        A,(IX+0FH)
+              PUSH      AF
+              LD        A,(IX+0CH)
+              PUSH      AF
+              LD        A,(IX+20H)
+              PUSH      AF
+              PUSH      DE
+              PUSH      IX
+              CALL      _F_OPEN
+              LD        C,A
+              POP       IX
+              POP       DE
+              POP       AF
+              LD        (IX+20H),A
+              POP       AF
+              LD        (IX+0CH),A
+              POP       AF
+              LD        (IX+0FH),A
+              LD        A,C
+              OR        A
+              JR        NZ,IO_FAIL
+              LD        A,(IX+0EH)
+              CALL      GETIOADDR
+              CALL      CACHEPUT
+              XOR       A
+              RET
+IO_FAIL       XOR       A
+              LD        (IOVIRT),A
+              LD        A,C
+              RET
 
 ; Preserve the BDOS status and keep the physical ProDOS handle cached.
-IO_END        PUSH    AF
-            LD        A,(IOVIRT)
-            OR        A
-            JR        Z,IO_DONE
-            LD        (IX+0EH),07EH
-IO_DONE        POP        AF
-            LD        L,A
-            RET
-IOVIRT        DEFB    0
+IO_END        PUSH      AF
+              LD        A,(IOVIRT)
+              OR        A
+              JR        Z,IO_DONE
+              LD        (IX+0EH),07EH
+IO_DONE       POP       AF
+              LD        L,A
+              RET
+IOVIRT        DEFB      0
 
 ; Increment wrapping 16-bit counter at HL. No file handles are touched.
-CINC16      INC     (HL)
-            RET     NZ
-            INC     HL
-            INC     (HL)
-            RET
+CINC16        INC       (HL)
+              RET       NZ
+              INC       HL
+              INC       (HL)
+              RET
 ; Reset counters only on cold start or via the explicit CACHE RESET.
-CACHERST    LD      HL,0
-            LD      (COPENS),HL
-            LD      (CHITS),HL
-            LD      (CEVICTS),HL
-            RET
-COPENS      DEFW    0
-CHITS       DEFW    0
-CEVICTS     DEFW    0
+CACHERST      LD        HL,0
+              LD        (COPENS),HL
+              LD        (CHITS),HL
+              LD        (CEVICTS),HL
+              RET
+COPENS        DEFW      0
+CHITS         DEFW      0
+CEVICTS       DEFW      0
 
-            ORG     07000H
+              ORG       07000H
 
-AXBDOS      CALL    XSPRE         ; skip physical keyboard wait if XSUB
-            RET     C
-            LD      A,C
-            LD      (AXBADFN),A    ; diagnostic: remember original BDOS C
-            CP      0F0H          ; BP/M private: set terminal (E=0/1)
-            JP      Z,AXTMODE
-            OR      A
-            JP      Z,AUXBDOS0
-            CP      1
-            JP      Z,XSCIN
-            CP      2
-            JP      Z,AUXBDOS2
-            CP      6
-            JP      Z,XSRAW
-            CP      9
-            JP      Z,AUXBDOS9
-            CP      3
-            JP      Z,IOREADER
-            CP      4
-            JP      Z,IOPUNCH
-            CP      5
-            JP      Z,IOLIST
-            CP      0F4H          ; AUX LC BIOS LIST
-            JP      Z,IOLIST
-            CP      0F5H          ; AUX LC BIOS PUNCH
-            JP      Z,IOPUNCH
-            CP      0F6H          ; AUX LC BIOS READER
-            JP      Z,IOREADER
-            CP      11
-            JP      Z,XSSTAT
-            CP      12
-            JP      Z,ABDVER
-            CP      02DH          ; CP/M 3: SET BDOS ERROR MODE (BBC BASIC)
-            JP      Z,AXERRMODE   ; accept request; ignore mode setting
-            CP      10
-            JP      Z,AXLINE
-            CP      13
-            JP      Z,AXRESET
-            CP      24
-            JP      Z,AXLOGV
-            CP      27
-            JP      Z,AXAVEC
-            CP      28
-            JP      Z,AXSETRO
-            CP      29
-            JP      Z,AXROV
-            CP      31
-            JP      Z,AXDPB
-            CP      37
-            JP      Z,AXDRST
-            CP      30
-            JP      Z,AXFSEL      ; BDOS SET FILE ATTRIBUTES needs AUX FCB
-            CP      0F1H
-            JP      Z,XSBSTAT
-            CP      0F2H
-            JP      Z,XSBIIN
-            CP      0F3H
-            JP      Z,AXBIOUT
-            CP      26
-            JP      Z,AXSDMA
-            CP      17
-            JP      Z,AXSFIRST
-            CP      18
-            JP      Z,AXSNEXT
+AXBDOS        CALL      XSPRE                          ; skip physical keyboard wait if XSUB
+              RET       C
+              LD        A,C
+              LD        (AXBADFN),A                    ; diagnostic: remember original BDOS C
+              CP        0F0H                           ; BP/M private: set terminal (E=0/1)
+              JP        Z,AXTMODE
+              OR        A
+              JP        Z,AUXBDOS0
+              CP        1
+              JP        Z,XSCIN
+              CP        2
+              JP        Z,AUXBDOS2
+              CP        6
+              JP        Z,XSRAW
+              CP        9
+              JP        Z,AUXBDOS9
+              CP        3
+              JP        Z,IOREADER
+              CP        4
+              JP        Z,IOPUNCH
+              CP        5
+              JP        Z,IOLIST
+              CP        0F4H                           ; AUX LC BIOS LIST
+              JP        Z,IOLIST
+              CP        0F5H                           ; AUX LC BIOS PUNCH
+              JP        Z,IOPUNCH
+              CP        0F6H                           ; AUX LC BIOS READER
+              JP        Z,IOREADER
+              CP        11
+              JP        Z,XSSTAT
+              CP        12
+              JP        Z,ABDVER
+              CP        02DH                           ; CP/M 3: SET BDOS ERROR MODE (BBC BASIC)
+              JP        Z,AXERRMODE                    ; accept request; ignore mode setting
+              CP        10
+              JP        Z,AXLINE
+              CP        13
+              JP        Z,AXRESET
+              CP        24
+              JP        Z,AXLOGV
+              CP        27
+              JP        Z,AXAVEC
+              CP        28
+              JP        Z,AXSETRO
+              CP        29
+              JP        Z,AXROV
+              CP        31
+              JP        Z,AXDPB
+              CP        37
+              JP        Z,AXDRST
+              CP        30
+              JP        Z,AXFSEL                       ; BDOS SET FILE ATTRIBUTES needs AUX FCB
+              CP        0F1H
+              JP        Z,XSBSTAT
+              CP        0F2H
+              JP        Z,XSBIIN
+              CP        0F3H
+              JP        Z,AXBIOUT
+              CP        26
+              JP        Z,AXSDMA
+              CP        17
+              JP        Z,AXSFIRST
+              CP        18
+              JP        Z,AXSNEXT
 ; Compact AUX BDOS FCB dispatch: contiguous function ranges.
 ; CP/JR/JP leave A untouched; AXFSEL expects original BDOS A value.
-            CP      15
-            JR      C,AXF17
-            CP      17
-            JP      C,AXFSEL      ; 15,16
-AXF17       CP      19
-            JR      C,AXF24
-            CP      24
-            JP      C,AXFSEL      ; 19..23
-AXF24       CP      33
-            JR      C,AXF37
-            CP      37
-            JP      C,AXFSEL      ; 33..36
-AXF37       CP      40
-            JP      Z,AXFSEL
-            CP      14
-            JP      Z,AXDSET
-            CP      25
-            JP      Z,AXDGET
-            CP      32
-            JP      Z,AXUSER
-            CP      7
-            JP      Z,AXIOGET
-            CP      8
-            JP      Z,AXIOSET
+              CP        15
+              JR        C,AXF17
+              CP        17
+              JP        C,AXFSEL                       ; 15,16
+AXF17         CP        19
+              JR        C,AXF24
+              CP        24
+              JP        C,AXFSEL                       ; 19..23
+AXF24         CP        33
+              JR        C,AXF37
+              CP        37
+              JP        C,AXFSEL                       ; 33..36
+AXF37         CP        40
+              JP        Z,AXFSEL
+              CP        14
+              JP        Z,AXDSET
+              CP        25
+              JP        Z,AXDGET
+              CP        32
+              JP        Z,AXUSER
+              CP        7
+              JP        Z,AXIOGET
+              CP        8
+              JP        Z,AXIOSET
 ; CP/M 3 BDOS $2D: Set error mode (E=FE in BBC BASIC).
 ; CP/M 2.2-style Zapple-II has no equivalent error-mode switch.
 ; The CP/M 3 call returns no value; return zero for compatibility.
-AXERRMODE   XOR     A
-            LD      L,A
-            RET
+AXERRMODE     XOR       A
+              LD        L,A
+              RET
 ; Unsupported calls must not pass AUX pointers to the MAIN BDOS.
-AXBAD       LD      A,2
-            LD      (LCQUIT),A
-            LD      A,0FFH
-            LD      L,A
-            RET
+AXBAD         LD        A,2
+              LD        (LCQUIT),A
+              LD        A,0FFH
+              LD        L,A
+              RET
 ; TERM.COM must not switch to the 6502 directly from AUX RAM:
 ; the 6502 console lives at MAIN $B800. This dispatcher is called by
 ; LCGATE with MAIN RAM selected, and the original LC/stack are restored
 ; automatically on return. Private BDOS $F0: E=0 Videx / E=1 Soroc.
-AXTMODE     JP      SCHTMCHK
-AXTMRUN     LD      (AREG),A
-            LD      HL,0B80CH     ; 6502 VSETMODE public entry
-            LD      (ADDR),HL
-            LD      A,1
-            LD      (CMD),A
-            LD      (SOFTCARD),A  ; invoke 6502 with MAIN selected
-            ; VSETMODE updates the Microsoft BASIC table in MAIN $0396.
-            ; BASIC now executes in AUX and reads AUX $0396 instead.
-            ; Mirror its nine bytes (Z80 $F396-$F39E) to AUX too.
-            LD      HL,0F396H
-            LD      DE,0F396H
-            LD      BC,9
-            CALL    AXM2A
-            XOR     A
-            LD      L,A
-            RET
-AXTMERR     LD      A,0FFH
-            LD      L,A
-            RET
+AXTMODE       JP        SCHTMCHK
+AXTMRUN       LD        (AREG),A
+              LD        HL,0B80CH                      ; 6502 VSETMODE public entry
+              LD        (ADDR),HL
+              LD        A,1
+              LD        (CMD),A
+              LD        (SOFTCARD),A                   ; invoke 6502 with MAIN selected
+              ; VSETMODE updates the Microsoft BASIC table in MAIN $0396.
+              ; BASIC now executes in AUX and reads AUX $0396 instead.
+              ; Mirror its nine bytes (Z80 $F396-$F39E) to AUX too.
+              LD        HL,0F396H
+              LD        DE,0F396H
+              LD        BC,9
+              CALL      AXM2A
+              XOR       A
+              LD        L,A
+              RET
+AXTMERR       LD        A,0FFH
+              LD        L,A
+              RET
 
 ; Require the full 36-byte FCB to lie below LC BIOS at $DF00.
-AXCKFCB     LD      A,D
-            CP      0DEH
-            JR      C,AXCKOK
-            JR      NZ,AXCKBAD
-            LD      A,E
-            CP      0DDH
-            JR      NC,AXCKBAD
-AXCKOK      XOR     A
-            RET
-AXCKBAD     LD      A,1
-            RET
+AXCKFCB       LD        A,D
+              CP        0DEH
+              JR        C,AXCKOK
+              JR        NZ,AXCKBAD
+              LD        A,E
+              CP        0DDH
+              JR        NC,AXCKBAD
+AXCKOK        XOR       A
+              RET
+AXCKBAD       LD        A,1
+              RET
 ; An entire 128-byte record must fit below $DF00.
-AXCKDMA     LD      HL,(AXDMAP)
-            LD      A,H
-            CP      0DEH
-            JR      C,AXCKOK
-            JR      NZ,AXCKBAD
-            LD      A,L
-            CP      081H
-            JR      C,AXCKOK
-            JR      AXCKBAD
-AXSDMA      LD      (AXDMAP),DE
-            XOR     A
-            LD      L,A
-            RET
-AXDSET      CALL    DRV_SET
-            XOR     A
-            LD      L,A
-            RET
-AXDGET      CALL    DRV_GET
-            LD      L,A
-            RET
-AXUSER      CALL    F_USERNUM
-            LD      L,A
-            RET
+AXCKDMA       LD        HL,(AXDMAP)
+              LD        A,H
+              CP        0DEH
+              JR        C,AXCKOK
+              JR        NZ,AXCKBAD
+              LD        A,L
+              CP        081H
+              JR        C,AXCKOK
+              JR        AXCKBAD
+AXSDMA        LD        (AXDMAP),DE
+              XOR       A
+              LD        L,A
+              RET
+AXDSET        CALL      DRV_SET
+              XOR       A
+              LD        L,A
+              RET
+AXDGET        CALL      DRV_GET
+              LD        L,A
+              RET
+AXUSER        CALL      F_USERNUM
+              LD        L,A
+              RET
 ; Cooked CONIN via existing BIOS raw read, with echo and ^C exit.
 ; Avoid C_READ's nonreturning main-bank warm boot in AUX mode.
-AXCIN       LD      A,(IOBYTE)
-            AND     3
-            CP      1
-            JP      NZ,IOCCOOK   ; redirected CON input
-            JP      TSKCIN     ; CRT: scheduler/Open Apple aware
-AXIOGET     JP      GET_IOB
-AXIOSET     JP      SET_IOB
-AXAUXRD     LD      A,1AH       ; no input device: CP/M EOF
-            LD      L,A
-            RET
-AXAUXWR     XOR     A            ; no punch/list device attached
-            LD      L,A
-            RET
+AXCIN         LD        A,(IOBYTE)
+              AND       3
+              CP        1
+              JP        NZ,IOCCOOK                     ; redirected CON input
+              JP        TSKCIN                         ; CRT: scheduler/Open Apple aware
+AXIOGET       JP        GET_IOB
+AXIOSET       JP        SET_IOB
+AXAUXRD       LD        A,1AH                          ; no input device: CP/M EOF
+              LD        L,A
+              RET
+AXAUXWR       XOR       A                              ; no punch/list device attached
+              LD        L,A
+              RET
 
 ; Direct BIOS console calls use private C codes $F1..$F3 from the LC
 ; jump-table shims. Caller registers are preserved by those shims.
-AXBICON     LD      A,(IOBYTE)
-            AND     3
-            CP      1
-            JP      NZ,IOSTAT
-            JP      TSKSTAT     ; CRT: catch Open Apple on BIOS CONST
-AXBIREAD    LD      A,(IOBYTE)
-            AND     3
-            CP      1
-            JP      NZ,IOCONIN
-            JP      TSKBIRD    ; CRT: handler moved under $0800
-AXBIOUT     CALL    C_RAWPUT
-            XOR     A
-            LD      L,A
-            RET
+AXBICON       LD        A,(IOBYTE)
+              AND       3
+              CP        1
+              JP        NZ,IOSTAT
+              JP        TSKSTAT                        ; CRT: catch Open Apple on BIOS CONST
+AXBIREAD      LD        A,(IOBYTE)
+              AND       3
+              CP        1
+              JP        NZ,IOCONIN
+              JP        TSKBIRD                        ; CRT: handler moved under $0800
+AXBIOUT       CALL      C_RAWPUT
+              XOR       A
+              LD        L,A
+              RET
 
 ; CP/M disk control calls not involving AUX pointers.
-AXLOGV      JP      DRV_LOGVEC
-AXROV       JP      DRV_ROVEC
-AXSETRO     CALL    DRV_SETRO
-            XOR     A
-            LD      L,A
-            RET
-AXDRST      CALL    DRV_RESET
-            XOR     A
-            LD      L,A
-            RET
-AXRESET     LD      A,(LCB1RO)
-            CALL    DRV_ALLRST
-            LD      (AXSTAT),A
-            LD      A,(LCB2RW)
-            LD      A,(LCB2RW)
-            LD      HL,0080H
-            LD      (AXDMAP),HL
-            LD      A,(AXSTAT)
-            LD      L,A
-            RET
+AXLOGV        JP        DRV_LOGVEC
+AXROV         JP        DRV_ROVEC
+AXSETRO       CALL      DRV_SETRO
+              XOR       A
+              LD        L,A
+              RET
+AXDRST        CALL      DRV_RESET
+              XOR       A
+              LD        L,A
+              RET
+AXRESET       LD        A,(LCB1RO)
+              CALL      DRV_ALLRST
+              LD        (AXSTAT),A
+              LD        A,(LCB2RW)
+              LD        A,(LCB2RW)
+              LD        HL,0080H
+              LD        (AXDMAP),HL
+              LD        A,(AXSTAT)
+              LD        L,A
+              RET
 
 ; Return pointers to storage outside the contiguous CP/M TPA.
 ; $F300 maps to AUX Apple $0300, $F800 to AUX Apple $0800-$0FFF.
 ; The caller may freely read these while LC bank2 remains mapped.
-AXDPB       LD      A,(LCB1RO)
-            CALL    DRV_DPB
-            LD      DE,0F300H
-            LD      BC,15
-            CALL    AXM2A
-            LD      HL,0F300H
-            XOR     A
-            RET
-AXAVEC      LD      A,(LCB1RO)
-            CALL    DRV_AVEC
-            LD      DE,0F800H
-            LD      BC,0800H
-            CALL    AXM2A
-            LD      HL,0F800H
-            XOR     A
-            RET
+AXDPB         LD        A,(LCB1RO)
+              CALL      DRV_DPB
+              LD        DE,0F300H
+              LD        BC,15
+              CALL      AXM2A
+              LD        HL,0F300H
+              XOR       A
+              RET
+AXAVEC        LD        A,(LCB1RO)
+              CALL      DRV_AVEC
+              LD        DE,0F800H
+              LD        BC,0800H
+              CALL      AXM2A
+              LD        HL,0F800H
+              XOR       A
+              RET
 
 ; CP/M BDOS 10: buffered line input into an AUX caller's buffer.
 ; Check the ACTUAL buffer capacity, not a blanket 260-byte region.
 ; The AUX TPA ends at DEFFH; the LC BDOS gateway starts at DF00H.
 ; For capacity N we may write N data bytes plus one CR at DE+2+N.
 ; 260-byte MAIN staging handles all legal one-byte capacities (0..255).
-AXLINE      LD      (AXLIP),DE
-            LD      A,D
-            CP      0DFH
-            JP      NC,AXBAD      ; buffer header must be below DF00H
-AXLVALID    EX      DE,HL
-            LD      DE,AXLBUF
-            LD      BC,1
-            CALL    LCA2M         ; read caller's capacity byte from AUX
-            LD      A,(AXLBUF)
-            LD      C,A
-            LD      B,0
-            LD      HL,(AXLIP)
-            INC     HL
-            INC     HL
-            ADD     HL,BC         ; address of final possible CR byte
-            LD      A,H
-            CP      0DFH
-            JP      NC,AXBAD      ; disallow touching DF00H+ gateway
-            ; Only consume submitted input after XSUB was explicitly
-            ; enabled from a script. XSREADY handles prior status polls.
-            CALL    XSREADY
-            OR      A
-            JP      NZ,AXLSUB
-            LD      A,(AXLBUF)
-            LD      C,A           ; restore capacity after disk calls
-            LD      B,C           ; capacity for line editor
-            LD      C,0           ; bytes entered
-            LD      HL,AXLBUF+2
-AXLNEXT     PUSH    BC
-            PUSH    HL
-            CALL    BIOSCONIN
-            POP     HL
-            POP     BC
-            AND     07FH
-            ; For BDOS 10, park only at the beginning of a line.
-            ; Once characters have been entered, don't discard the line.
-            PUSH    AF
-            LD      A,C
-            OR      A
-            JR      NZ,AXLNOKEY
-            POP     AF
-            CALL    TSKKEY
-            JP      C,AXLSKEY
-            JR      AXLKEY
-AXLNOKEY    POP     AF
-AXLKEY      CP      13
-            JR      Z,AXLDONE
-            CP      3
-            JR      Z,AXLCAN
-            CP      8
-            JR      Z,AXLBS
-            CP      127
-            JR      Z,AXLBS
-            CP      32
-            JR      C,AXLNEXT
-            PUSH    AF
-            LD      A,B
-            CP      C
-            JR      Z,AXLFULL
-            POP     AF
-            LD      (HL),A
-            INC     HL
-            INC     C
-            LD      E,A
-            PUSH    BC
-            PUSH    HL
-            CALL    C_WRITE
-            POP     HL
-            POP     BC
-            JR      AXLNEXT
-AXLFULL     POP     AF
-            JR      AXLNEXT
-AXLBS       LD      A,C
-            OR      A
-            JR      Z,AXLNEXT
-            DEC     C
-            DEC     HL
-            PUSH    BC
-            PUSH    HL
-            LD      E,8
-            CALL    C_WRITE
-            LD      E,' '
-            CALL    C_WRITE
-            LD      E,8
-            CALL    C_WRITE
-            POP     HL
-            POP     BC
-            JR      AXLNEXT
-AXLCAN      LD      A,1
-            LD      (LCQUIT),A
-            XOR     A
-            LD      L,A
-            RET
-AXLDONE     LD      (HL),13
-            LD      A,C
-            LD      (AXLBUF+1),A
-            PUSH    BC
-            LD      E,13
-            CALL    C_WRITE
-            POP     BC
-            LD      B,0
-            INC     BC
-            INC     BC
-            INC     BC
-            LD      HL,AXLBUF
-            LD      DE,(AXLIP)
-            CALL    AXM2A
-            XOR     A
-            LD      L,A
-            RET
+AXLINE        LD        (AXLIP),DE
+              LD        A,D
+              CP        0DFH
+              JP        NC,AXBAD                       ; buffer header must be below DF00H
+AXLVALID      EX        DE,HL
+              LD        DE,AXLBUF
+              LD        BC,1
+              CALL      LCA2M                          ; read caller's capacity byte from AUX
+              LD        A,(AXLBUF)
+              LD        C,A
+              LD        B,0
+              LD        HL,(AXLIP)
+              INC       HL
+              INC       HL
+              ADD       HL,BC                          ; address of final possible CR byte
+              LD        A,H
+              CP        0DFH
+              JP        NC,AXBAD                       ; disallow touching DF00H+ gateway
+              ; Only consume submitted input after XSUB was explicitly
+              ; enabled from a script. XSREADY handles prior status polls.
+              CALL      XSREADY
+              OR        A
+              JP        NZ,AXLSUB
+              LD        A,(AXLBUF)
+              LD        C,A                            ; restore capacity after disk calls
+              LD        B,C                            ; capacity for line editor
+              LD        C,0                            ; bytes entered
+              LD        HL,AXLBUF+2
+AXLNEXT       PUSH      BC
+              PUSH      HL
+              CALL      BIOSCONIN
+              POP       HL
+              POP       BC
+              AND       07FH
+              ; For BDOS 10, park only at the beginning of a line.
+              ; Once characters have been entered, don't discard the line.
+              PUSH      AF
+              LD        A,C
+              OR        A
+              JR        NZ,AXLNOKEY
+              POP       AF
+              CALL      TSKKEY
+              JP        C,AXLSKEY
+              JR        AXLKEY
+AXLNOKEY      POP       AF
+AXLKEY        CP        13
+              JR        Z,AXLDONE
+              CP        3
+              JR        Z,AXLCAN
+              CP        8
+              JR        Z,AXLBS
+              CP        127
+              JR        Z,AXLBS
+              CP        32
+              JR        C,AXLNEXT
+              PUSH      AF
+              LD        A,B
+              CP        C
+              JR        Z,AXLFULL
+              POP       AF
+              LD        (HL),A
+              INC       HL
+              INC       C
+              LD        E,A
+              PUSH      BC
+              PUSH      HL
+              CALL      C_WRITE
+              POP       HL
+              POP       BC
+              JR        AXLNEXT
+AXLFULL       POP       AF
+              JR        AXLNEXT
+AXLBS         LD        A,C
+              OR        A
+              JR        Z,AXLNEXT
+              DEC       C
+              DEC       HL
+              PUSH      BC
+              PUSH      HL
+              LD        E,8
+              CALL      C_WRITE
+              LD        E,' '
+              CALL      C_WRITE
+              LD        E,8
+              CALL      C_WRITE
+              POP       HL
+              POP       BC
+              JR        AXLNEXT
+AXLCAN        LD        A,1
+              LD        (LCQUIT),A
+              XOR       A
+              LD        L,A
+              RET
+AXLDONE       LD        (HL),13
+              LD        A,C
+              LD        (AXLBUF+1),A
+              PUSH      BC
+              LD        E,13
+              CALL      C_WRITE
+              POP       BC
+              LD        B,0
+              INC       BC
+              INC       BC
+              INC       BC
+              LD        HL,AXLBUF
+              LD        DE,(AXLIP)
+              CALL      AXM2A
+              XOR       A
+              LD        L,A
+              RET
 
 ; Search First: FCB (36 bytes) copied to a persistent MAIN search FCB;
 ; F_SNEXT retains TEMPWORD -> AXSRCH and CDBPTR between calls.
-AXSFIRST    CALL    AXCKFCB
-            JP      NZ,AXBAD
-            CALL    AXCKDMA
-            JP      NZ,AXBAD
-            EX      DE,HL
-            LD      DE,AXSRCH
-            LD      BC,36
-            CALL    LCA2M
-            LD      DE,AXSRCH
-            LD      HL,AXDATA
-            LD      (DMAADDR),HL
-            LD      A,(LCB1RO)
-            CALL    F_SFIRST
-            JP      AXSRDONE
-AXSNEXT     CALL    AXCKDMA
-            JP      NZ,AXBAD
-            LD      HL,AXDATA
-            LD      (DMAADDR),HL
-            LD      A,(LCB1RO)
-            CALL    F_SNEXT
-AXSRDONE    LD      (AXSTAT),A
-            LD      A,(LCB2RW)
-            LD      A,(LCB2RW)
-            LD      A,(AXSTAT)
-            OR      A
-            JP      NZ,AXRETURN
-            LD      HL,AXDATA
-            LD      DE,(AXDMAP)
-            LD      BC,128
-            CALL    AXM2A
-AXRETURN    LD      A,(AXSTAT)
-            LD      L,A
-            LD      H,0            ; CP/M byte result: clear high byte
-            RET
+AXSFIRST      CALL      AXCKFCB
+              JP        NZ,AXBAD
+              CALL      AXCKDMA
+              JP        NZ,AXBAD
+              EX        DE,HL
+              LD        DE,AXSRCH
+              LD        BC,36
+              CALL      LCA2M
+              LD        DE,AXSRCH
+              LD        HL,AXDATA
+              LD        (DMAADDR),HL
+              LD        A,(LCB1RO)
+              CALL      F_SFIRST
+              JP        AXSRDONE
+AXSNEXT       CALL      AXCKDMA
+              JP        NZ,AXBAD
+              LD        HL,AXDATA
+              LD        (DMAADDR),HL
+              LD        A,(LCB1RO)
+              CALL      F_SNEXT
+AXSRDONE      LD        (AXSTAT),A
+              LD        A,(LCB2RW)
+              LD        A,(LCB2RW)
+              LD        A,(AXSTAT)
+              OR        A
+              JP        NZ,AXRETURN
+              LD        HL,AXDATA
+              LD        DE,(AXDMAP)
+              LD        BC,128
+              CALL      AXM2A
+AXRETURN      LD        A,(AXSTAT)
+              LD        L,A
+              LD        H,0                            ; CP/M byte result: clear high byte
+              RET
 
 ; Copy one 36-byte auxiliary FCB into MAIN staging; preserve the caller's
 ; AUX pointer to copy back RC/EX/CR/random-record updates afterwards.
-AXFSEL      PUSH    AF
-            CALL    AXCKFCB
-            POP     BC              ; B = original function number
-            JP      NZ,AXBAD
-            LD      A,B
-            LD      (AXFN),A
-            LD      (AXFCBP),DE
-            EX      DE,HL
-            LD      DE,AXFCB
-            LD      BC,36
-            CALL    LCA2M
+AXFSEL        PUSH      AF
+              CALL      AXCKFCB
+              POP       BC                             ; B = original function number
+              JP        NZ,AXBAD
+              LD        A,B
+              LD        (AXFN),A
+              LD        (AXFCBP),DE
+              EX        DE,HL
+              LD        DE,AXFCB
+              LD        BC,36
+              CALL      LCA2M
 ; Writing a record: copy 128 bytes from auxiliary DMA to MAIN DMA first.
-            LD      A,(AXFN)
-            CP      21
-            JP      Z,AXWPRE
-            CP      34
-            JP      Z,AXWPRE
-            CP      40
-            JP      Z,AXWPRE
-            JR      AXDISP
-AXWPRE      CALL    AXCKDMA
-            JP      NZ,AXBAD
-            LD      HL,(AXDMAP)
-            LD      DE,AXDATA
-            LD      BC,128
-            CALL    LCA2M
-AXDISP      LD      DE,AXFCB
-            LD      HL,AXDATA
-            LD      (DMAADDR),HL
+              LD        A,(AXFN)
+              CP        21
+              JP        Z,AXWPRE
+              CP        34
+              JP        Z,AXWPRE
+              CP        40
+              JP        Z,AXWPRE
+              JR        AXDISP
+AXWPRE        CALL      AXCKDMA
+              JP        NZ,AXBAD
+              LD        HL,(AXDMAP)
+              LD        DE,AXDATA
+              LD        BC,128
+              CALL      LCA2M
+AXDISP        LD        DE,AXFCB
+              LD        HL,AXDATA
+              LD        (DMAADDR),HL
 ; Wildcard F_DELETE uses FILEBUF internally, not DMAADDR: redirect it.
-            LD      A,(AXFN)
-            CP      19
-            JP      NZ,AXNOTDEL
-            LD      HL,FILEBUF
-            LD      (DMAADDR),HL
-AXNOTDEL    LD      A,(LCB1RO)
-            LD      A,(AXFN)
-            CP      15
-            JP      Z,AXOP
-            CP      16
-            JP      Z,AXCL
-            CP      19
-            JP      Z,AXDEL
-            CP      20
-            JP      Z,AXRD
-            CP      21
-            JP      Z,AXWR
-            CP      22
-            JP      Z,AXMAKE
-            CP      23
-            JP      Z,AXREN
-            CP      30
-            JP      Z,AXATTR
-            CP      33
-            JP      Z,AXRRD
-            CP      34
-            JP      Z,AXRWR
-            CP      40
-            JP      Z,AXRWR
-            CP      35
-            JP      Z,AXSIZE
-            CP      36
-            JP      Z,AXRREC
-            LD      A,(LCB2RW)
-            LD      A,(LCB2RW)
-            JP      AXBAD
-AXOP        CALL    F_OPEN
-            JR      AXFEND
-AXCL        CALL    F_CLOSE
-            JR      AXFEND
-AXDEL       CALL    F_DELETE
-            JR      AXFEND
-AXRD        CALL    F_READ
-            JR      AXFEND
-AXWR        CALL    F_WRITE
-            JR      AXFEND
-AXMAKE      CALL    F_MAKE
-            JR      AXFEND
-AXREN       CALL    F_RENAME
-            JR      AXFEND
-AXATTR      CALL    F_ATTRIB
-            JR      AXFEND
-AXRRD       CALL    F_READRAND
-            JR      AXFEND
-AXRWR       CALL    F_WRITERAND
-            JR      AXFEND
-AXSIZE      CALL    F_SIZE
-            JR      AXFEND
-AXRREC      CALL    F_RANDREC
+              LD        A,(AXFN)
+              CP        19
+              JP        NZ,AXNOTDEL
+              LD        HL,FILEBUF
+              LD        (DMAADDR),HL
+AXNOTDEL      LD        A,(LCB1RO)
+              LD        A,(AXFN)
+              CP        15
+              JP        Z,AXOP
+              CP        16
+              JP        Z,AXCL
+              CP        19
+              JP        Z,AXDEL
+              CP        20
+              JP        Z,AXRD
+              CP        21
+              JP        Z,AXWR
+              CP        22
+              JP        Z,AXMAKE
+              CP        23
+              JP        Z,AXREN
+              CP        30
+              JP        Z,AXATTR
+              CP        33
+              JP        Z,AXRRD
+              CP        34
+              JP        Z,AXRWR
+              CP        40
+              JP        Z,AXRWR
+              CP        35
+              JP        Z,AXSIZE
+              CP        36
+              JP        Z,AXRREC
+              LD        A,(LCB2RW)
+              LD        A,(LCB2RW)
+              JP        AXBAD
+AXOP          CALL      F_OPEN
+              JR        AXFEND
+AXCL          CALL      F_CLOSE
+              JR        AXFEND
+AXDEL         CALL      F_DELETE
+              JR        AXFEND
+AXRD          CALL      F_READ
+              JR        AXFEND
+AXWR          CALL      F_WRITE
+              JR        AXFEND
+AXMAKE        CALL      F_MAKE
+              JR        AXFEND
+AXREN         CALL      F_RENAME
+              JR        AXFEND
+AXATTR        CALL      F_ATTRIB
+              JR        AXFEND
+AXRRD         CALL      F_READRAND
+              JR        AXFEND
+AXRWR         CALL      F_WRITERAND
+              JR        AXFEND
+AXSIZE        CALL      F_SIZE
+              JR        AXFEND
+AXRREC        CALL      F_RANDREC
 ; Main filesystem has returned: reselect the gateway LC bank BEFORE
 ; returning to LIGATE's caller in the $B000 LC page.
-AXFEND      LD      (AXSTAT),A
-            LD      A,(LCB2RW)
-            LD      A,(LCB2RW)
+AXFEND        LD        (AXSTAT),A
+              LD        A,(LCB2RW)
+              LD        A,(LCB2RW)
 ; Copy caller FCB back, including updated extent/record/file-open marker.
-            LD      HL,AXFCB
-            LD      DE,(AXFCBP)
-            ; Sequential BDOS calls use only the 33-byte FCB.
-            ; Copying 36 bytes would overwrite the next FCB in F80,
-            ; which stores its source, listing and object FCBs adjacent.
-            ; Random-record functions (33,34,35,36,40) need 36 bytes.
-            LD      BC,33
-            LD      A,(AXFN)
-            CP      33
-            JR      C,AXFCPY
-            LD      BC,36
-AXFCPY      CALL    AXM2A
+              LD        HL,AXFCB
+              LD        DE,(AXFCBP)
+              ; Sequential BDOS calls use only the 33-byte FCB.
+              ; Copying 36 bytes would overwrite the next FCB in F80,
+              ; which stores its source, listing and object FCBs adjacent.
+              ; Random-record functions (33,34,35,36,40) need 36 bytes.
+              LD        BC,33
+              LD        A,(AXFN)
+              CP        33
+              JR        C,AXFCPY
+              LD        BC,36
+AXFCPY        CALL      AXM2A
 ; A successful read transfers the 128-byte MAIN DMA result to AUX.
-            LD      A,(AXSTAT)
-            OR      A
-            JP      NZ,AXFRET
-            LD      A,(AXFN)
-            CP      20
-            JP      Z,AXPOSTR
-            CP      33
-            JP      NZ,AXFRET
-AXPOSTR     CALL    AXCKDMA
-            JP      NZ,AXBAD
-            LD      HL,AXDATA
-            LD      DE,(AXDMAP)
-            LD      BC,128
-            CALL    AXM2A
-AXFRET      LD      A,(AXSTAT)
-            LD      L,A
-            LD      H,0            ; CP/M byte result: clear high byte
-            RET
+              LD        A,(AXSTAT)
+              OR        A
+              JP        NZ,AXFRET
+              LD        A,(AXFN)
+              CP        20
+              JP        Z,AXPOSTR
+              CP        33
+              JP        NZ,AXFRET
+AXPOSTR       CALL      AXCKDMA
+              JP        NZ,AXBAD
+              LD        HL,AXDATA
+              LD        DE,(AXDMAP)
+              LD        BC,128
+              CALL      AXM2A
+AXFRET        LD        A,(AXSTAT)
+              LD        L,A
+              LD        H,0                            ; CP/M byte result: clear high byte
+              RET
 
 ; MAIN to AUX copy. With RAMRD=MAIN the code remains executable while
 ; RAMWRT=AUX, but NO CALLs/PUSHes may occur until RAMWRT is reset.
-AXM2A       LD      A,(LCB2RW)
-            LD      A,(LCB2RW)
-            XOR     A
-            LD      (ZPAUX),A       ; AUX LC bank2 for high addresses
-            LD      (WRAUX),A
-            LDIR
-            LD      (WRMAIN),A
-            LD      (ZPMAIN),A
-            LD      A,(LCB1RO)
-            XOR     A
-            RET
+AXM2A         LD        A,(LCB2RW)
+              LD        A,(LCB2RW)
+              XOR       A
+              LD        (ZPAUX),A                      ; AUX LC bank2 for high addresses
+              LD        (WRAUX),A
+              LDIR
+              LD        (WRMAIN),A
+              LD        (ZPMAIN),A
+              LD        A,(LCB1RO)
+              XOR       A
+              RET
 
 ; ================================================================
-            ORG     07590H
-TCLIST      DEFM    'LIST '
-            DEFB    0
-TCSUSP      DEFM    'SUSPEND '
-            DEFB    0
-TCRESUM     DEFM    'RESUME '
-            DEFB    0
-TCEXCL      DEFM    'EXCLUSIVE '
-            DEFB    0
-TCKILL      DEFM    'KILL '
-            DEFB    0
-TCHELP      DEFM    'HELP '
-            DEFB    0
-TL_HOLD     DEFM    ' [Suspended]$'
-TB_HELP     LD      DE,TB_HELPMSG
-            JP      C_WRITESTR
+              ORG       07590H
+TCLIST        DEFM      'LIST '
+              DEFB      0
+TCSUSP        DEFM      'SUSPEND '
+              DEFB      0
+TCRESUM       DEFM      'RESUME '
+              DEFB      0
+TCEXCL        DEFM      'EXCLUSIVE '
+              DEFB      0
+TCKILL        DEFM      'KILL '
+              DEFB      0
+TCHELP        DEFM      'HELP '
+              DEFB      0
+TL_HOLD       DEFM      ' [Suspended]$'
+TB_HELP       LD        DE,TB_HELPMSG
+              JP        C_WRITESTR
 
 
 ; Small command summary; keep clear of the $7600 command table.
-TB_HELPMSG  DEFM    'TAB [LIST], TAB n [SUSP/RES/EXCL/KILL]'
-            DEFB    13,'$'
+TB_HELPMSG    DEFM      'TAB [LIST], TAB n [SUSP/RES/EXCL/KILL]'
+              DEFB      13,'$'
 
-           ORG     07600H
+              ORG       07600H
 ; Builtin dispatch table relocated to MAIN $5800.
 
 ; Native CCP terminal selector.  This code runs with MAIN RAM visible,
 ; unlike the old AUX .COM, so it calls the 6502 VSETMODE vector directly.
 ; The next AUXRUN already mirrors MAIN $0396-$039E to AUX for MBASIC.
-CCPTERM    LD      HL,FILEBUF+2  ; first argument, after leading space
-           LD      DE,TMVIDEX
-           CALL    TMCHK
-           JR      Z,TMVID
-           LD      HL,FILEBUF+2
-           LD      DE,TMSOROC
-           CALL    TMCHK
-           JP      NZ,CCPBAD      ; reject bad / abbreviated mode names
-           LD      A,1           ; Soroc
-           JR      TMSET
-TMVID      XOR     A             ; Videx
-TMSET      LD      (AREG),A
-           LD      HL,0B80CH     ; 6502 VSETMODE, already in MAIN
-           LD      (ADDR),HL
-           LD      A,1
-           LD      (CMD),A
-           LD      (SOFTCARD),A
-           RET
+CCPTERM       LD        HL,FILEBUF+2                   ; first argument, after leading space
+              LD        DE,TMVIDEX
+              CALL      TMCHK
+              JR        Z,TMVID
+              LD        HL,FILEBUF+2
+              LD        DE,TMSOROC
+              CALL      TMCHK
+              JP        NZ,CCPBAD                      ; reject bad / abbreviated mode names
+              LD        A,1                            ; Soroc
+              JR        TMSET
+TMVID         XOR       A                              ; Videx
+TMSET         LD        (AREG),A
+              LD        HL,0B80CH                      ; 6502 VSETMODE, already in MAIN
+              LD        (ADDR),HL
+              LD        A,1
+              LD        (CMD),A
+              LD        (SOFTCARD),A
+              RET
 ; Check five letters and the delimiting space, against a literal.
 ; The CCP parser guarantees a trailing space after the argument.
-TMCHK      LD      B,5
-TMCHL      LD      A,(DE)
-           CP      (HL)
-           RET     NZ
-           INC     DE
-           INC     HL
-           DJNZ    TMCHL
-           LD      A,(HL)
-           CP      ' '
-           RET
-TMVIDEX    DEFM    'VIDEX'
-TMSOROC    DEFM    'SOROC'
+TMCHK         LD        B,5
+TMCHL         LD        A,(DE)
+              CP        (HL)
+              RET       NZ
+              INC       DE
+              INC       HL
+              DJNZ      TMCHL
+              LD        A,(HL)
+              CP        ' '
+              RET
+TMVIDEX       DEFM      'VIDEX'
+TMSOROC       DEFM      'SOROC'
 
 ; BDOS 30: Set CP/M file R/O attribute in ProDOS access byte.
 ; STAT enumerates wildcards and passes each resolved FCB individually.
 ; Leave FCB and DMA unchanged, preserve file type and modification date.
-F_ATTRIB    CALL    DCHKRO
-            JP        NZ,RODENY
-            PUSH    DE
-            POP        IX
-            LD        A,(IX+09H)    ; first extension byte's high bit
-            AND        080H
-            LD        (ATTR_RO),A
-            LD        HL,1
-            ADD        HL,DE
-            LD        B,11
-FA_VALID    LD        A,(HL)
-            AND        07FH
-            CP        '?'
-            JR        Z,FA_ERROR
-            INC        HL
-            DJNZ    FA_VALID
-            LD        IX,PATHBUF
-            CALL    FCB2PATH
-            CALL    CACHECLS        ; Apply attributes with file physically closed
-            OR        A
-            JP        NZ,FA_ERROR
-            LD        HL,GFIMLI
-            CALL    PRODOS        ; GET_FILE_INFO (param count 10)
-            OR        A
-            JR        NZ,FA_ERROR
-            LD        A,(ATTR_RO)
-            OR        A
-            LD        A,(GFIMLIAC)
-            JR        Z,FA_RW
-            AND        03DH        ; disable destroy/rename/write ($C2)
-            JR        FA_CHG
-FA_RW        OR        0C2H        ; enable destroy/rename/write
-FA_CHG    LD        (GFIMLIAC),A
-            LD        A,7
-            LD        (GFIMLIPL),A
-            LD        HL,SFIMLI
-            CALL    PRODOS        ; SET_FILE_INFO reuses parameter block
-            PUSH    AF
-            LD        A,10
-            LD        (GFIMLIPL),A    ; restore for next GET
-            POP        AF
-            CP        04EH
-            JP        Z,ROFILE
-            OR        A
-            JR        NZ,FA_ERROR
-            LD        L,A
-            RET
-FA_ERROR    LD        A,0FFH
-            LD        L,A
-            RET
-ATTR_RO        DEFB    0
+F_ATTRIB      CALL      DCHKRO
+              JP        NZ,RODENY
+              PUSH      DE
+              POP       IX
+              LD        A,(IX+09H)                     ; first extension byte's high bit
+              AND       080H
+              LD        (ATTR_RO),A
+              LD        HL,1
+              ADD       HL,DE
+              LD        B,11
+FA_VALID      LD        A,(HL)
+              AND       07FH
+              CP        '?'
+              JR        Z,FA_ERROR
+              INC       HL
+              DJNZ      FA_VALID
+              LD        IX,PATHBUF
+              CALL      FCB2PATH
+              CALL      CACHECLS                       ; Apply attributes with file physically closed
+              OR        A
+              JP        NZ,FA_ERROR
+              LD        HL,GFIMLI
+              CALL      PRODOS                         ; GET_FILE_INFO (param count 10)
+              OR        A
+              JR        NZ,FA_ERROR
+              LD        A,(ATTR_RO)
+              OR        A
+              LD        A,(GFIMLIAC)
+              JR        Z,FA_RW
+              AND       03DH                           ; disable destroy/rename/write ($C2)
+              JR        FA_CHG
+FA_RW         OR        0C2H                           ; enable destroy/rename/write
+FA_CHG        LD        (GFIMLIAC),A
+              LD        A,7
+              LD        (GFIMLIPL),A
+              LD        HL,SFIMLI
+              CALL      PRODOS                         ; SET_FILE_INFO reuses parameter block
+              PUSH      AF
+              LD        A,10
+              LD        (GFIMLIPL),A                   ; restore for next GET
+              POP       AF
+              CP        04EH
+              JP        Z,ROFILE
+              OR        A
+              JR        NZ,FA_ERROR
+              LD        L,A
+              RET
+FA_ERROR      LD        A,0FFH
+              LD        L,A
+              RET
+ATTR_RO       DEFB      0
 
 ; CP/M 2.2 distinguishes file R/O from software drive R/O.
 ; Errors still return FF to the caller; they do NOT force a warm boot.
 ROFILE        LD        DE,ROFTEXT
-            JR        ROPRINT
+              JR        ROPRINT
 RODISK        LD        DE,RODTEXT
-ROPRINT    PUSH    DE
-            LD        A,1
-            LD        (ROERROR),A
-            LD        DE,ROPTEXT
-            CALL    C_WRITESTR
-            LD        A,(RODRIVE)
-            ADD        A,'A'
-            LD        E,A
-            CALL    C_WRITE
-            POP        DE
-            CALL    C_WRITESTR
-            LD        E,13
-            CALL    C_WRITE
-            LD        A,(AXMODE)    ; .COM running in AUX?
-            OR        A
-            JR        Z,ROPRET
-            LD        A,1
-            LD        (AXQUIT),A    ; Abort transient through normal AUX gateway
+ROPRINT       PUSH      DE
+              LD        A,1
+              LD        (ROERROR),A
+              LD        DE,ROPTEXT
+              CALL      C_WRITESTR
+              LD        A,(RODRIVE)
+              ADD       A,'A'
+              LD        E,A
+              CALL      C_WRITE
+              POP       DE
+              CALL      C_WRITESTR
+              LD        E,13
+              CALL      C_WRITE
+              LD        A,(AXMODE)                     ; .COM running in AUX?
+              OR        A
+              JR        Z,ROPRET
+              LD        A,1
+              LD        (AXQUIT),A                     ; Abort transient through normal AUX gateway
 ROPRET        LD        A,0FFH
-            LD        L,A
-            RET
-RODRIVE    DEFB    0
-ROERROR    DEFB    0
-ROPTEXT    DEFM    'BDOS Err on '
-            DEFB    '$'
-ROFTEXT    DEFM    ': File R/O'
-            DEFB    '$'
-RODTEXT    DEFM    ': R/O'
-            DEFB    '$'
+              LD        L,A
+              RET
+RODRIVE       DEFB      0
+ROERROR       DEFB      0
+ROPTEXT       DEFM      'BDOS Err on '
+              DEFB      '$'
+ROFTEXT       DEFM      ': File R/O'
+              DEFB      '$'
+RODTEXT       DEFM      ': R/O'
+              DEFB      '$'
 
 ; CCP command argument/file validators relocated from resident code.
 ; The CCP parser normalizes arguments as " arg1 arg2 ", always
 ; separating words by ONE space and retaining the leading/trailing space.
 ; Number of words = number of spaces - 1 (or 0 if tail is empty).
-CCPARGC    LD      HL,FILEBUF
-           LD      B,(HL)
-           LD      C,0
-           INC     HL
-CALOOP     LD      A,B
-           OR      A
-           JR      Z,CADONE
-           LD      A,(HL)
-           CP      ' '
-           JR      NZ,CANEXT
-           INC     C
-CANEXT     INC     HL
-           DJNZ    CALOOP
-CADONE     LD      A,C
-           OR      A
-           RET     Z
-           DEC     A
-           RET
+CCPARGC       LD        HL,FILEBUF
+              LD        B,(HL)
+              LD        C,0
+              INC       HL
+CALOOP        LD        A,B
+              OR        A
+              JR        Z,CADONE
+              LD        A,(HL)
+              CP        ' '
+              JR        NZ,CANEXT
+              INC       C
+CANEXT        INC       HL
+              DJNZ      CALOOP
+CADONE        LD        A,C
+              OR        A
+              RET       Z
+              DEC       A
+              RET
 
-CCPBAD     LD      DE,BFMSG
-           CALL    C_WRITESTR
-           LD      A,1
-           OR      A
-           RET
+CCPBAD        LD        DE,BFMSG
+              CALL      C_WRITESTR
+              LD        A,1
+              OR        A
+              RET
 
 ; Disallow ambiguous file specifications in TYPE, REN and SAVE.
 ; Returns A=0 for unambiguous name, nonzero for '?' anywhere.
-ISWILD     LD      B,11
-IWLOOP     LD      A,(HL)
-           CP      '?'
-           RET     Z
-           INC     HL
-           DJNZ    IWLOOP
-           XOR     A
-           RET
-CCPNOWILD  CALL    ISWILD
-           OR      A
-           RET     Z
-           JP      CCPBAD
+ISWILD        LD        B,11
+IWLOOP        LD        A,(HL)
+              CP        '?'
+              RET       Z
+              INC       HL
+              DJNZ      IWLOOP
+              XOR       A
+              RET
+CCPNOWILD     CALL      ISWILD
+              OR        A
+              RET       Z
+              JP        CCPBAD
 
-BITYPE     LD      HL,FCB1NAM
-           CALL    CCPNOWILD
-           RET     NZ
-           JP      TYPEFILE
-BISAVE     LD      HL,FCB2NAM
-           CALL    CCPNOWILD
-           RET     NZ
-           JP      SAVEFILE
+BITYPE        LD        HL,FCB1NAM
+              CALL      CCPNOWILD
+              RET       NZ
+              JP        TYPEFILE
+BISAVE        LD        HL,FCB2NAM
+              CALL      CCPNOWILD
+              RET       NZ
+              JP        SAVEFILE
 
 
 
@@ -3630,637 +3632,637 @@ BISAVE     LD      HL,FCB2NAM
 ; Permanent scratch: main TPA is unused by auxiliary transients.
 ; Cached Apple II text row addresses for the software cursor.
 ; Apple 80-column row interleave. Z80 $F400 = Apple text $0400.
-CUROWTAB   DEFW    0F400H,0F480H,0F500H,0F580H,0F600H,0F680H,0F700H,0F780H
-            DEFW    0F428H,0F4A8H,0F528H,0F5A8H,0F628H,0F6A8H,0F728H,0F7A8H
-            DEFW    0F450H,0F4D0H,0F550H,0F5D0H,0F650H,0F6D0H,0F750H,0F7D0H
+CUROWTAB      DEFW      0F400H,0F480H,0F500H,0F580H,0F600H,0F680H,0F700H,0F780H
+              DEFW      0F428H,0F4A8H,0F528H,0F5A8H,0F628H,0F6A8H,0F728H,0F7A8H
+              DEFW      0F450H,0F4D0H,0F550H,0F5D0H,0F650H,0F6D0H,0F750H,0F7D0H
 
 
-            ORG     07800H
-AXDMAP      DEFW    0080H
-AXFCBP      DEFW    0
-AXFN        DEFB    0
-AXSTAT      DEFB    0
-AXFCB       DEFS    36
-AXSRCH      DEFS    36
-AXDATA      DEFS    128
-AXLIP       DEFW    0
-AXLBUF      DEFS    260
-AXBADFN     DEFB    0            ; last AUX BDOS function for diagnostics
-BDOSFN      DEFB    0            ; last MAIN BDOS function for diagnostics
+              ORG       07800H
+AXDMAP        DEFW      0080H
+AXFCBP        DEFW      0
+AXFN          DEFB      0
+AXSTAT        DEFB      0
+AXFCB         DEFS      36
+AXSRCH        DEFS      36
+AXDATA        DEFS      128
+AXLIP         DEFW      0
+AXLBUF        DEFS      260
+AXBADFN       DEFB      0                              ; last AUX BDOS function for diagnostics
+BDOSFN        DEFB      0                              ; last MAIN BDOS function for diagnostics
 
  ; MAIN-to-AUX-LC resident transition helper, entirely in ordinary MAIN RAM.
  ; ALTZP can switch without changing the instruction fetch at $7Axx.
-            ORG     07A00H
-AXSTART     LD      (AXMSP),SP    ; called with MAIN RAM and main LC
-            XOR     A
-            LD      (AXQUIT),A
-            INC     A
-            LD      (AXMODE),A
-            LD      A,(LCB2RW)
-            LD      A,(LCB2RW)
-            XOR     A
-            LD      (ZPAUX),A
-            JP      LCREN         ; enter the AUX LC DF00h gateway
+              ORG       07A00H
+AXSTART       LD        (AXMSP),SP                     ; called with MAIN RAM and main LC
+              XOR       A
+              LD        (AXQUIT),A
+              INC       A
+              LD        (AXMODE),A
+              LD        A,(LCB2RW)
+              LD        A,(LCB2RW)
+              XOR       A
+              LD        (ZPAUX),A
+              JP        LCREN                          ; enter the AUX LC DF00h gateway
 ; Resume a parked BDOS return. Called from TABRESUM on the MAIN stack.
 ; The suspended stack frame in its AUX bank is still there.
-AXCONT      LD      (AXMSP),SP
-            XOR     A
-            LD      (AXQUIT),A
-            INC     A
-            LD      (AXMODE),A
-            JP      AXRETRY
-AXGATE      LD      (AXASP),SP    ; user's stack may itself be in AUX LC
-            LD      SP,(AXMSP)    ; restore main resident stack
-            XOR     A
-            LD      (ZPMAIN),A    ; restore ProDOS's ZP and LC
-            LD      A,(LCB1RO)
-            CALL    AXIOSBD       ; sync AUX 0003h before dispatch
-            LD      (AXRES),A
-            LD      (AXRHL),HL
-            CALL    SCHTICK        ; never schedules INSIDE a syscall
-            LD      A,(AXQUIT)
-            CP      3
-            CALL    Z,TASKSAVE     ; save before the CCP/other session runs
-            LD      A,(AXQUIT)
-            OR      A
-            JR      NZ,AXFIN
-AXGO        LD      A,(LCB2RW)
-            LD      A,(LCB2RW)
-            XOR     A
-            LD      (ZPAUX),A    ; executable LC image now AUX
-            LD      SP,(AXASP)
-            LD      HL,(AXRHL)
-            LD      A,(AXRES)
-            JP      LCRES         ; LC shim restores RAMRD/RAMWRT AUX
-AXFIN       JP      AXIOSFX      ; plain RET/JP 0000h must sync too
+AXCONT        LD        (AXMSP),SP
+              XOR       A
+              LD        (AXQUIT),A
+              INC       A
+              LD        (AXMODE),A
+              JP        AXRETRY
+AXGATE        LD        (AXASP),SP                     ; user's stack may itself be in AUX LC
+              LD        SP,(AXMSP)                     ; restore main resident stack
+              XOR       A
+              LD        (ZPMAIN),A                     ; restore ProDOS's ZP and LC
+              LD        A,(LCB1RO)
+              CALL      AXIOSBD                        ; sync AUX 0003h before dispatch
+              LD        (AXRES),A
+              LD        (AXRHL),HL
+              CALL      SCHTICK                        ; never schedules INSIDE a syscall
+              LD        A,(AXQUIT)
+              CP        3
+              CALL      Z,TASKSAVE                     ; save before the CCP/other session runs
+              LD        A,(AXQUIT)
+              OR        A
+              JR        NZ,AXFIN
+AXGO          LD        A,(LCB2RW)
+              LD        A,(LCB2RW)
+              XOR       A
+              LD        (ZPAUX),A                      ; executable LC image now AUX
+              LD        SP,(AXASP)
+              LD        HL,(AXRHL)
+              LD        A,(AXRES)
+              JP        LCRES                          ; LC shim restores RAMRD/RAMWRT AUX
+AXFIN         JP        AXIOSFX                        ; plain RET/JP 0000h must sync too
 ; AXMODE is only 1 during AUX transient. SAVE executes outside it,
 ; with its temporary LC shim installed into MAIN LC instead of AUX LC.
-LCPEEK      LD      A,(LCB2RW)
-            LD      A,(LCB2RW)
-            LD      A,(AXMODE)
-            OR      A
-            JR      Z,LPLOCAL
-            LD      (ZPAUX),A
-LPLOCAL     CALL    LCPEE0
-            PUSH    AF
-            XOR     A
-            LD      (ZPMAIN),A
-            LD      A,(LCB1RO)
-            POP     AF
-            RET
-LCA2M       LD      A,(LCB2RW)
-            LD      A,(LCB2RW)
-            LD      A,(AXMODE)
-            OR      A
-            JR      Z,LMLOCAL
-            LD      (ZPAUX),A
-LMLOCAL     CALL    LCA2MR
-            XOR     A
-            LD      (ZPMAIN),A
-            LD      A,(LCB1RO)
-            RET
-AXMSP       DEFW    0
-AXASP       DEFW    0
-AXRES       DEFB    0
-AXRHL       DEFW    0
-AXQUIT      DEFB    0
-AXMODE      DEFB    0
+LCPEEK        LD        A,(LCB2RW)
+              LD        A,(LCB2RW)
+              LD        A,(AXMODE)
+              OR        A
+              JR        Z,LPLOCAL
+              LD        (ZPAUX),A
+LPLOCAL       CALL      LCPEE0
+              PUSH      AF
+              XOR       A
+              LD        (ZPMAIN),A
+              LD        A,(LCB1RO)
+              POP       AF
+              RET
+LCA2M         LD        A,(LCB2RW)
+              LD        A,(LCB2RW)
+              LD        A,(AXMODE)
+              OR        A
+              JR        Z,LMLOCAL
+              LD        (ZPAUX),A
+LMLOCAL       CALL      LCA2MR
+              XOR       A
+              LD        (ZPMAIN),A
+              LD        A,(LCB1RO)
+              RET
+AXMSP         DEFW      0
+AXASP         DEFW      0
+AXRES         DEFB      0
+AXRHL         DEFW      0
+AXQUIT        DEFB      0
+AXMODE        DEFB      0
 
 ; Two CCP commands live in otherwise unused MAIN $7B00-$7BFF.
 ; CLS invokes the new 6502 $B812 entry, so it works in either mode.
 ; Software cursor restore; installed in the free tail of $7A00 region.
 ; Hide the physical cursor before key delivery, TAB switching or
 ; drawing. The cached address works even after terminal state changes.
-CUOFF       LD      A,(CUACTIVE)
-            OR      A
-            RET     Z
-            PUSH    AF
-            PUSH    HL
-            XOR     A
-            LD      (CUACTIVE),A
-            CALL    CUMAP
-            LD      A,(CUUNDER)
-            LD      (HL),A
-            CALL    VSPREP
-            POP     HL
-            POP     AF
-            RET
+CUOFF         LD        A,(CUACTIVE)
+              OR        A
+              RET       Z
+              PUSH      AF
+              PUSH      HL
+              XOR       A
+              LD        (CUACTIVE),A
+              CALL      CUMAP
+              LD        A,(CUUNDER)
+              LD        (HL),A
+              CALL      VSPREP
+              POP       HL
+              POP       AF
+              RET
 ; Select the correct physical Apple II text half (bank 0), not a
 ; background session's virtual HGR backing store.
-CUMAP       CALL    VSPREP0
-            XOR     A
-            LD      (VS80ON),A
-            LD      A,(CUHALF)
-            OR      A
-            JR      Z,CUMAUX
-            LD      A,(VSPAGE1)
-            JR      CUSEL
-CUMAUX      LD      A,(VSPAGE2)
-CUSEL       LD      HL,(CUADDR)
-            RET
-CUACTIVE    DEFB    0
-CUHALF      DEFB    0
-CUADDR      DEFW    0F400H
-CUUNDER     DEFB    0A0H
+CUMAP         CALL      VSPREP0
+              XOR       A
+              LD        (VS80ON),A
+              LD        A,(CUHALF)
+              OR        A
+              JR        Z,CUMAUX
+              LD        A,(VSPAGE1)
+              JR        CUSEL
+CUMAUX        LD        A,(VSPAGE2)
+CUSEL         LD        HL,(CUADDR)
+              RET
+CUACTIVE      DEFB      0
+CUHALF        DEFB      0
+CUADDR        DEFW      0F400H
+CUUNDER       DEFB      0A0H
 
 
-            ORG     07B00H
-CCPCLS      LD      HL,0B812H
-            LD      (ADDR),HL
-            LD      A,1
-            LD      (CMD),A
-            LD      (SOFTCARD),A
-            RET
+              ORG       07B00H
+CCPCLS        LD        HL,0B812H
+              LD        (ADDR),HL
+              LD        A,1
+              LD        (CMD),A
+              LD        (SOFTCARD),A
+              RET
 
 ; CACHE prints three wrapping 16-bit hexadecimal counters. "CACHE RESET"
 ; clears them first, without closing cached files or affecting LRU order.
-CCPCACHE    LD      A,(FILEBUF)
-            OR      A
-            JR      Z,CCSHOW
-            CP      7               ; normalized tail is " RESET "
-            JP      NZ,CCPBAD
-            LD      HL,FILEBUF+2
-            LD      DE,CCRESET
-            LD      B,5
-CCCRLP      LD      A,(DE)
-            CP      (HL)
-            JP      NZ,CCPBAD
-            INC     DE
-            INC     HL
-            DJNZ    CCCRLP
-            CALL    CACHERST
-CCSHOW      LD      DE,CCOPENMSG
-            CALL    C_WRITESTR
-            LD      HL,COPENS
-            CALL    CCHEX16
-            LD      DE,CCHITMSG
-            CALL    C_WRITESTR
-            LD      HL,CHITS
-            CALL    CCHEX16
-            LD      DE,CCEVMSG
-            CALL    C_WRITESTR
-            LD      HL,CEVICTS
-            CALL    CCHEX16
-            LD      E,13
-            JP      C_WRITE
+CCPCACHE      LD        A,(FILEBUF)
+              OR        A
+              JR        Z,CCSHOW
+              CP        7                              ; normalized tail is " RESET "
+              JP        NZ,CCPBAD
+              LD        HL,FILEBUF+2
+              LD        DE,CCRESET
+              LD        B,5
+CCCRLP        LD        A,(DE)
+              CP        (HL)
+              JP        NZ,CCPBAD
+              INC       DE
+              INC       HL
+              DJNZ      CCCRLP
+              CALL      CACHERST
+CCSHOW        LD        DE,CCOPENMSG
+              CALL      C_WRITESTR
+              LD        HL,COPENS
+              CALL      CCHEX16
+              LD        DE,CCHITMSG
+              CALL      C_WRITESTR
+              LD        HL,CHITS
+              CALL      CCHEX16
+              LD        DE,CCEVMSG
+              CALL      C_WRITESTR
+              LD        HL,CEVICTS
+              CALL      CCHEX16
+              LD        E,13
+              JP        C_WRITE
 ; Print four uppercase hex digits (high byte then low byte).
-CCHEX16     LD      A,(HL)
-            PUSH    AF
-            INC     HL
-            LD      A,(HL)
-            CALL    CCHEX8
-            POP     AF
-CCHEX8      PUSH    AF
-            RRCA
-            RRCA
-            RRCA
-            RRCA
-            CALL    PHNYB
-            POP     AF
-            JP      PHNYB
-CCRESET     DEFM    'RESET'
-CCOPENMSG   DEFM    'Cache (hex): opens='
-            DEFB    '$'
-CCHITMSG    DEFM    ' hits='
-            DEFB    '$'
-CCEVMSG     DEFM    ' evictions='
-            DEFB    '$'
+CCHEX16       LD        A,(HL)
+              PUSH      AF
+              INC       HL
+              LD        A,(HL)
+              CALL      CCHEX8
+              POP       AF
+CCHEX8        PUSH      AF
+              RRCA
+              RRCA
+              RRCA
+              RRCA
+              CALL      PHNYB
+              POP       AF
+              JP        PHNYB
+CCRESET       DEFM      'RESET'
+CCOPENMSG     DEFM      'Cache (hex): opens='
+              DEFB      '$'
+CCHITMSG      DEFM      ' hits='
+              DEFB      '$'
+CCEVMSG       DEFM      ' evictions='
+              DEFB      '$'
 
-CCPBANKS    JP      RWREPORT
+CCPBANKS      JP        RWREPORT
 
 ; TAB n SUSPEND/RESUME/EXCLUSIVE operate on manually runnable state.
-TB_PAUSE    LD      A,(SCHFG)
-            CP      B
-            JP      Z,TB_NOBG         ; background only
-            LD      A,B
-            CALL    TB_HPTR
-            LD      (HL),1
-            RET
-TB_UNPS  LD      A,B
-            CALL    TBCLEARH
-            RET
-TB_NOBG     JP      UNIMP           ; a foreground tab cannot be paused
+TB_PAUSE      LD        A,(SCHFG)
+              CP        B
+              JP        Z,TB_NOBG                      ; background only
+              LD        A,B
+              CALL      TB_HPTR
+              LD        (HL),1
+              RET
+TB_UNPS       LD        A,B
+              CALL      TBCLEARH
+              RET
+TB_NOBG       JP        UNIMP                          ; a foreground tab cannot be paused
 TB_EXCL
-            PUSH    BC             ; LDIR consumes BC; B is target tab
-            LD      HL,TBHOLD
-            LD      DE,TBHOLD+1
-            LD      BC,15
-            LD      A,1
-            LD      (HL),A
-            LDIR
-            POP     BC
-            LD      A,B
-            CALL    TBCLEARH
-            LD      A,(TABMODE)
-            CP      B
-            JP      NZ,TB_SWITCH
-            RET
+              PUSH      BC                             ; LDIR consumes BC; B is target tab
+              LD        HL,TBHOLD
+              LD        DE,TBHOLD+1
+              LD        BC,15
+              LD        A,1
+              LD        (HL),A
+              LDIR
+              POP       BC
+              LD        A,B
+              CALL      TBCLEARH
+              LD        A,(TABMODE)
+              CP        B
+              JP        NZ,TB_SWITCH
+              RET
 
-            ORG     07C00H
+              ORG       07C00H
 
 ; LC entry points are absolute RUNTIME addresses, not source image labels.
-LCBASE      EQU     0DF00H
-LCBACK      EQU     03000H  ; MAIN $3000-$3FFF: saved MAIN LC bank2
-LC_BDOS     EQU     LCBASE      ; BDOS at DF00, TPA ends DEFF
-SW80OFF     EQU     0E000H
-RDMAIN      EQU     0E002H
-RDAUX       EQU     0E003H
-WRMAIN      EQU     0E004H
-WRAUX       EQU     0E005H
-ZPMAIN      EQU     0E008H
-ZPAUX       EQU     0E009H
-LCB2RW      EQU     0E083H
-LCB1RO      EQU     0E088H
+LCBASE        EQU       0DF00H
+LCBACK        EQU       03000H                         ; MAIN $3000-$3FFF: saved MAIN LC bank2
+LC_BDOS       EQU       LCBASE                         ; BDOS at DF00, TPA ends DEFF
+SW80OFF       EQU       0E000H
+RDMAIN        EQU       0E002H
+RDAUX         EQU       0E003H
+WRMAIN        EQU       0E004H
+WRAUX         EQU       0E005H
+ZPMAIN        EQU       0E008H
+ZPAUX         EQU       0E009H
+LCB2RW        EQU       0E083H
+LCB1RO        EQU       0E088H
 
 ; Read records using an ordinary MAIN buffer, copy them to AUX.
 ; F_READ owns the file handle/FCB and is called BEFORE LC installation:
 ; ProDOS MLI must run with its normal language-card mapping.
-AUXRUN      LD      DE,PATHBUF2
-            LD      HL,PATHBUF2
-            LD      (DMAADDR),HL
-            CALL    _F_OPEN
-            OR      A
-            JR      Z,AUXFOUND
-            LD      A,(CURDRV)
-            AND     0F0H        ; current user already 0?
-            JP      Z,RCOERR
-            LD      A,(CURDRV)
-            LD      (UC_SAVE),A
-            AND     00FH        ; retry only executable lookup in user 0
-            LD      (CURDRV),A
-            LD      DE,PATHBUF2
-            CALL    _F_OPEN
-            PUSH    AF
-            LD      A,(UC_SAVE)
-            LD      (CURDRV),A
-            POP     AF
-            OR      A
-            JP      NZ,RCOERR
-AUXFOUND    ; A newly launched program invalidates only its own tab's
-            ; previous SAVE image. The other tabs retain theirs.
-            CALL    SVFLPTR
-            LD      (HL),0
-            ; The transient's RAM can now be in AUX bank 1 instead of
-            ; the system/video bank 0. 6502 HANDLR temporarily uses bank
-            ; zero for ALL MLI, keyboard and video requests.
-            LD      A,(TABMODE)
-            CALL    TABPHYS
-            CALL    AXBANK
-            ; Protect ProDOS MAIN LC only; AUX LC is application-owned.
-            CALL    AXSNAP
-            LD      HL,0100H
-            LD      (AUXDEST),HL
-AUXLOAD     LD      HL,AUXSTAGE
-            LD      (DMAADDR),HL
-            LD      DE,PATHBUF2
-            CALL    F_READ
-            OR      A
-            JR      Z,AUXREC
-            CP      1
-            JR      Z,AUXLDONE
-            JP      AUXRERR
-AUXREC      LD      HL,(AUXDEST)
-            LD      DE,LCBASE
-            OR      A
-            SBC     HL,DE
-            JP      NC,AUX2BIG
-            LD      HL,(AUXDEST)
-            LD      DE,0B000H
-            OR      A
-            SBC     HL,DE
-            JR      NC,AUXLCREC  ; destination in AUX LC bank2
-            LD      HL,AUXSTAGE
-            LD      DE,(AUXDEST)
-            LD      BC,0080H
-            XOR     A
-            LD      (WRAUX),A
-            LDIR
-            LD      (WRMAIN),A
-            JR      AUXADV
-AUXLCREC    LD      A,(LCB2RW)
-            LD      A,(LCB2RW)
-            XOR     A
-            LD      (ZPAUX),A
-            LD      HL,AUXSTAGE
-            LD      DE,(AUXDEST)
-            LD      BC,0080H
-            LDIR              ; MAIN src -> AUX LC destination
-            LD      (ZPMAIN),A
-            LD      A,(LCB1RO)
-AUXADV      LD      HL,(AUXDEST)
-            LD      DE,0080H
-            ADD     HL,DE
-            LD      (AUXDEST),HL
-            JP      AUXLOAD
-AUXRERR     LD      DE,PATHBUF2
-            CALL    F_CLOSE
-            CALL    AXREST
-            XOR     A
-            CALL    AXBANK
-            JP      RCLERR
-AUX2BIG     LD      DE,PATHBUF2
-            CALL    F_CLOSE
-            CALL    AXREST
-            XOR     A
-            CALL    AXBANK
-            JP      AUXSIZEERR
-AUXLDONE    LD      DE,PATHBUF2
-            CALL    F_CLOSE
-            OR      A
-            JP      NZ,AUXRERR0
-            LD      HL,FILEBUF
-            LD      (DMAADDR),HL
-            LD      HL,0080H
-            LD      (AXDMAP),HL
-            ; Replace top 256 bytes of AUX LC with the new LC gateway.
-            LD      A,(LCB2RW)
-            LD      A,(LCB2RW)
-            XOR     A
-            LD      (ZPAUX),A
-            LD      HL,LCIMG
-            LD      DE,LCBASE
-            LD      BC,LCLEN
-            LDIR
-            LD      (ZPMAIN),A
-            LD      A,(LCB1RO)
-            ; The helper can now fetch AUX RAM safely from AUX LC.
-            LD      A,1
-            LD      (AXMODE),A
-            LD      HL,IOBYTE      ; CP/M applications also see IOBYTE at 0003
-            LD      DE,IOBYTE
-            LD      BC,1
-            CALL    AXM2A
-            LD      HL,0F800H
-            LD      DE,02000H
-            LD      BC,0800H
-            CALL    LCA2M
-            LD      HL,0F300H
-            LD      DE,02800H
-            LD      BC,16
-            CALL    LCA2M
-            ; Restore the known-working page-zero copy. The SoftCard
-            ; translates these Z80 addresses into Apple II $1000..$10FF,
-            ; where RAMWRT=AUX selects the current RamWorks bank.
-            LD      HL,0000H
-            LD      DE,0000H
-            LD      BC,0100H
-            XOR     A
-            LD      (WRAUX),A
-            LDIR
-            LD      HL,AUXPZERO
-            LD      DE,0000H
-            LD      BC,3
-            LDIR
-            LD      HL,AUXPZERO+5
-            LD      DE,0005H
-            LD      BC,3
-            LDIR
-            LD      (WRMAIN),A
-            ; Refresh Apple CP/M BASIC's terminal table in AUX $0396.
-            LD      HL,0F396H
-            LD      DE,0F396H
-            LD      BC,9
-            CALL    AXM2A
-            CALL    TBEXE       ; remember the launched .COM name
-            LD      A,(CURDRV)
-            PUSH    AF
-            CALL    AXSTART
-            POP     AF
-            LD      (CURDRV),A
-            LD      A,(AXQUIT)
-            CP      3
-            JP      Z,AUXSUSP      ; do NOT destroy the parked AUX LC image
-            CALL    CACHEALL        ; AUX termination also closes/flushed files
-            LD      A,(AXQUIT)
-            LD      (AUXEXCD),A
-            ; Restore AUX low metadata (virtual DPB/ALV are not persistent).
-            LD      HL,02000H
-            LD      DE,0F800H
-            LD      BC,0800H
-            CALL    AXM2A
-            LD      HL,02800H
-            LD      DE,0F300H
-            LD      BC,16
-            CALL    AXM2A
-            ; Retain this tab's completed AUX LC (and ordinary AUX TPA).
-            ; Only ProDOS's MAIN LC needs restoring.
-            CALL    AXMAINLC
-            CALL    SVFLPTR
-            LD      (HL),1
-            XOR     A
-            CALL    AXBANK          ; CCP/ProDOS return to bank 0
-            LD      HL,FILEBUF
-            LD      (DMAADDR),HL
-            LD      A,(AUXEXCD)
-            CP      2
-            JR      NZ,AUXEXOK
-            LD      DE,AUXBADMSG
-            CALL    C_WRITESTR
-            LD      A,(AXBADFN)
-            LD      C,A
-            CALL    PRHEX         ; original call in [XX] format
-AUXEXOK     LD      E,13
-            CALL    C_WRITE
-            LD      A,(AUXEXCD)
-            CP      1              ; AUX BDOS 0 -> true CP/M warm boot
-            JP      Z,BDOSWARM
-            RET
+AUXRUN        LD        DE,PATHBUF2
+              LD        HL,PATHBUF2
+              LD        (DMAADDR),HL
+              CALL      _F_OPEN
+              OR        A
+              JR        Z,AUXFOUND
+              LD        A,(CURDRV)
+              AND       0F0H                           ; current user already 0?
+              JP        Z,RCOERR
+              LD        A,(CURDRV)
+              LD        (UC_SAVE),A
+              AND       00FH                           ; retry only executable lookup in user 0
+              LD        (CURDRV),A
+              LD        DE,PATHBUF2
+              CALL      _F_OPEN
+              PUSH      AF
+              LD        A,(UC_SAVE)
+              LD        (CURDRV),A
+              POP       AF
+              OR        A
+              JP        NZ,RCOERR
+AUXFOUND                    ; A newly launched program invalidates only its own tab's
+              ; previous SAVE image. The other tabs retain theirs.
+              CALL      SVFLPTR
+              LD        (HL),0
+              ; The transient's RAM can now be in AUX bank 1 instead of
+              ; the system/video bank 0. 6502 HANDLR temporarily uses bank
+              ; zero for ALL MLI, keyboard and video requests.
+              LD        A,(TABMODE)
+              CALL      TABPHYS
+              CALL      AXBANK
+              ; Protect ProDOS MAIN LC only; AUX LC is application-owned.
+              CALL      AXSNAP
+              LD        HL,0100H
+              LD        (AUXDEST),HL
+AUXLOAD       LD        HL,AUXSTAGE
+              LD        (DMAADDR),HL
+              LD        DE,PATHBUF2
+              CALL      F_READ
+              OR        A
+              JR        Z,AUXREC
+              CP        1
+              JR        Z,AUXLDONE
+              JP        AUXRERR
+AUXREC        LD        HL,(AUXDEST)
+              LD        DE,LCBASE
+              OR        A
+              SBC       HL,DE
+              JP        NC,AUX2BIG
+              LD        HL,(AUXDEST)
+              LD        DE,0B000H
+              OR        A
+              SBC       HL,DE
+              JR        NC,AUXLCREC                    ; destination in AUX LC bank2
+              LD        HL,AUXSTAGE
+              LD        DE,(AUXDEST)
+              LD        BC,0080H
+              XOR       A
+              LD        (WRAUX),A
+              LDIR
+              LD        (WRMAIN),A
+              JR        AUXADV
+AUXLCREC      LD        A,(LCB2RW)
+              LD        A,(LCB2RW)
+              XOR       A
+              LD        (ZPAUX),A
+              LD        HL,AUXSTAGE
+              LD        DE,(AUXDEST)
+              LD        BC,0080H
+              LDIR                                     ; MAIN src -> AUX LC destination
+              LD        (ZPMAIN),A
+              LD        A,(LCB1RO)
+AUXADV        LD        HL,(AUXDEST)
+              LD        DE,0080H
+              ADD       HL,DE
+              LD        (AUXDEST),HL
+              JP        AUXLOAD
+AUXRERR       LD        DE,PATHBUF2
+              CALL      F_CLOSE
+              CALL      AXREST
+              XOR       A
+              CALL      AXBANK
+              JP        RCLERR
+AUX2BIG       LD        DE,PATHBUF2
+              CALL      F_CLOSE
+              CALL      AXREST
+              XOR       A
+              CALL      AXBANK
+              JP        AUXSIZEERR
+AUXLDONE      LD        DE,PATHBUF2
+              CALL      F_CLOSE
+              OR        A
+              JP        NZ,AUXRERR0
+              LD        HL,FILEBUF
+              LD        (DMAADDR),HL
+              LD        HL,0080H
+              LD        (AXDMAP),HL
+              ; Replace top 256 bytes of AUX LC with the new LC gateway.
+              LD        A,(LCB2RW)
+              LD        A,(LCB2RW)
+              XOR       A
+              LD        (ZPAUX),A
+              LD        HL,LCIMG
+              LD        DE,LCBASE
+              LD        BC,LCLEN
+              LDIR
+              LD        (ZPMAIN),A
+              LD        A,(LCB1RO)
+              ; The helper can now fetch AUX RAM safely from AUX LC.
+              LD        A,1
+              LD        (AXMODE),A
+              LD        HL,IOBYTE                      ; CP/M applications also see IOBYTE at 0003
+              LD        DE,IOBYTE
+              LD        BC,1
+              CALL      AXM2A
+              LD        HL,0F800H
+              LD        DE,02000H
+              LD        BC,0800H
+              CALL      LCA2M
+              LD        HL,0F300H
+              LD        DE,02800H
+              LD        BC,16
+              CALL      LCA2M
+              ; Restore the known-working page-zero copy. The SoftCard
+              ; translates these Z80 addresses into Apple II $1000..$10FF,
+              ; where RAMWRT=AUX selects the current RamWorks bank.
+              LD        HL,0000H
+              LD        DE,0000H
+              LD        BC,0100H
+              XOR       A
+              LD        (WRAUX),A
+              LDIR
+              LD        HL,AUXPZERO
+              LD        DE,0000H
+              LD        BC,3
+              LDIR
+              LD        HL,AUXPZERO+5
+              LD        DE,0005H
+              LD        BC,3
+              LDIR
+              LD        (WRMAIN),A
+              ; Refresh Apple CP/M BASIC's terminal table in AUX $0396.
+              LD        HL,0F396H
+              LD        DE,0F396H
+              LD        BC,9
+              CALL      AXM2A
+              CALL      TBEXE                          ; remember the launched .COM name
+              LD        A,(CURDRV)
+              PUSH      AF
+              CALL      AXSTART
+              POP       AF
+              LD        (CURDRV),A
+              LD        A,(AXQUIT)
+              CP        3
+              JP        Z,AUXSUSP                      ; do NOT destroy the parked AUX LC image
+              CALL      CACHEALL                       ; AUX termination also closes/flushed files
+              LD        A,(AXQUIT)
+              LD        (AUXEXCD),A
+              ; Restore AUX low metadata (virtual DPB/ALV are not persistent).
+              LD        HL,02000H
+              LD        DE,0F800H
+              LD        BC,0800H
+              CALL      AXM2A
+              LD        HL,02800H
+              LD        DE,0F300H
+              LD        BC,16
+              CALL      AXM2A
+              ; Retain this tab's completed AUX LC (and ordinary AUX TPA).
+              ; Only ProDOS's MAIN LC needs restoring.
+              CALL      AXMAINLC
+              CALL      SVFLPTR
+              LD        (HL),1
+              XOR       A
+              CALL      AXBANK                         ; CCP/ProDOS return to bank 0
+              LD        HL,FILEBUF
+              LD        (DMAADDR),HL
+              LD        A,(AUXEXCD)
+              CP        2
+              JR        NZ,AUXEXOK
+              LD        DE,AUXBADMSG
+              CALL      C_WRITESTR
+              LD        A,(AXBADFN)
+              LD        C,A
+              CALL      PRHEX                          ; original call in [XX] format
+AUXEXOK       LD        E,13
+              CALL      C_WRITE
+              LD        A,(AUXEXCD)
+              CP        1                              ; AUX BDOS 0 -> true CP/M warm boot
+              JP        Z,BDOSWARM
+              RET
 ; Returning to the CCP after Ctrl-] must not restore the old AUX LC:
 ; the parked transient, including its LC gateway, lives in that bank.
-AUXSUSP     CALL    CACHEALL
-            CALL    AXMAINLC        ; restore ProDOS MAIN LC, keep AUX LC
-            XOR     A
-            CALL    AXBANK          ; 6502/video service bank 0
-            ; Backing display is live; no snapshot at suspension.
-            LD      HL,FILEBUF
-            LD      (DMAADDR),HL
-            LD      HL,0080H
-            LD      (AXDMAP),HL
-            RET
-AUXRERR0    CALL    AXREST
-            XOR     A
-            CALL    AXBANK
-            JP      RCLERR
+AUXSUSP       CALL      CACHEALL
+              CALL      AXMAINLC                       ; restore ProDOS MAIN LC, keep AUX LC
+              XOR       A
+              CALL      AXBANK                         ; 6502/video service bank 0
+              ; Backing display is live; no snapshot at suspension.
+              LD        HL,FILEBUF
+              LD        (DMAADDR),HL
+              LD        HL,0080H
+              LD        (AXDMAP),HL
+              RET
+AUXRERR0      CALL      AXREST
+              XOR       A
+              CALL      AXBANK
+              JP        RCLERR
 
 ; Protect ProDOS's MAIN LC bank2 at $B000-$BFFF only.  AUX LC is
 ; owned by the currently selected RamWorks tab and remains untouched.
-AXSNAP      DI
-            XOR     A
-            LD      (SW80OFF),A
-            LD      (ZPMAIN),A
-            LD      (RDMAIN),A
-            LD      (WRMAIN),A
-            LD      A,(LCB2RW)
-            LD      A,(LCB2RW)
-            LD      HL,0B000H
-            LD      DE,LCBACK
-            LD      BC,01000H
-            LDIR
-            LD      A,(LCB1RO)
-            RET
+AXSNAP        DI
+              XOR       A
+              LD        (SW80OFF),A
+              LD        (ZPMAIN),A
+              LD        (RDMAIN),A
+              LD        (WRMAIN),A
+              LD        A,(LCB2RW)
+              LD        A,(LCB2RW)
+              LD        HL,0B000H
+              LD        DE,LCBACK
+              LD        BC,01000H
+              LDIR
+              LD        A,(LCB1RO)
+              RET
 ; Error paths must still restore ProDOS's MAIN LC.
-AXREST      JP      AXMAINLC
+AXREST        JP        AXMAINLC
 
 ; Restore original 4K MAIN LC bank2 after AUX exit or suspension.
-AXMAINLC    LD      A,(LCB2RW)
-            LD      A,(LCB2RW)
-            LD      HL,LCBACK
-            LD      DE,0B000H
-            LD      BC,01000H
-            LDIR
-            LD      A,(LCB1RO)
-            RET
+AXMAINLC      LD        A,(LCB2RW)
+              LD        A,(LCB2RW)
+              LD        HL,LCBACK
+              LD        DE,0B000H
+              LD        BC,01000H
+              LDIR
+              LD        A,(LCB1RO)
+              RET
 
-AUXBDOS     JP      AXBDOS
-AUXBDOS0    LD      A,1
-            LD      (AXQUIT),A
-            XOR     A
-            LD      L,A
-            RET
-ABDVER      LD      HL,0022H
-            LD      A,L
-            LD      B,H
-            RET
-AUXBDOS2    PUSH    DE
-            CALL    C_WRITE
-            POP     DE
-            LD      A,E
-            LD      L,A
-            RET
-AUXBDOS6    LD      A,E
-            CP      0FFH
-            JR      NZ,AB6OUT     ; control-character output is not input
-AB6IN       CALL    SCHISFG
-            JR      Z,AB6KEY
-            XOR     A
-            LD      L,A
-            RET
-AB6KEY      CALL    C_RAWIO
-            CALL    TSKKEY
-            RET     NC           ; no shortcut: return raw character/0
-            LD      A,0F6H        ; deferred BDOS 6 poll
-            LD      L,A
-            RET
-AB6OUT      JP      C_RAWIO
-ABDSTAT     LD      A,(IOBYTE)
-            AND     3
-            CP      1
-            JP      NZ,IOZERO
-            JP      TSKSTAT     ; CRT: Open Apple aware
-AUXBDOS9    PUSH    BC
-            PUSH    DE
-            PUSH    HL
-            EX      DE,HL
-AB9NEXT     CALL    LCPEEK
-            CP      '$'
-            JR      Z,AB9DONE
-            PUSH    HL
-            LD      E,A
-            CALL    C_WRITE
-            POP     HL
-            INC     HL
-            JR      AB9NEXT
-AB9DONE     POP     HL
-            POP     DE
-            POP     BC
-            XOR     A
-            LD      L,A
-            RET
+AUXBDOS       JP        AXBDOS
+AUXBDOS0      LD        A,1
+              LD        (AXQUIT),A
+              XOR       A
+              LD        L,A
+              RET
+ABDVER        LD        HL,0022H
+              LD        A,L
+              LD        B,H
+              RET
+AUXBDOS2      PUSH      DE
+              CALL      C_WRITE
+              POP       DE
+              LD        A,E
+              LD        L,A
+              RET
+AUXBDOS6      LD        A,E
+              CP        0FFH
+              JR        NZ,AB6OUT                      ; control-character output is not input
+AB6IN         CALL      SCHISFG
+              JR        Z,AB6KEY
+              XOR       A
+              LD        L,A
+              RET
+AB6KEY        CALL      C_RAWIO
+              CALL      TSKKEY
+              RET       NC                             ; no shortcut: return raw character/0
+              LD        A,0F6H                         ; deferred BDOS 6 poll
+              LD        L,A
+              RET
+AB6OUT        JP        C_RAWIO
+ABDSTAT       LD        A,(IOBYTE)
+              AND       3
+              CP        1
+              JP        NZ,IOZERO
+              JP        TSKSTAT                        ; CRT: Open Apple aware
+AUXBDOS9      PUSH      BC
+              PUSH      DE
+              PUSH      HL
+              EX        DE,HL
+AB9NEXT       CALL      LCPEEK
+              CP        '$'
+              JR        Z,AB9DONE
+              PUSH      HL
+              LD        E,A
+              CALL      C_WRITE
+              POP       HL
+              INC       HL
+              JR        AB9NEXT
+AB9DONE       POP       HL
+              POP       DE
+              POP       BC
+              XOR       A
+              LD        L,A
+              RET
 
 
-TL_BLOCK    DEFM    ' [Blocked]$'
+TL_BLOCK      DEFM      ' [Blocked]$'
 
-            ORG     07EC0H
+              ORG       07EC0H
 ; Stage 1 scheduler helpers in unused MAIN $7EC0-$7FFF.
 ; Keep clear of the resident BDOS, which now reaches roughly $9760.
 ; Foreground runs original VSETMODE; background remembers the mode.
-SCHTMCHK    LD      A,E
-            CP      2
-            JP      NC,AXTMERR
-            JP      AXTMRUN        ; per-task 6502 mode is now virtual
+SCHTMCHK      LD        A,E
+              CP        2
+              JP        NC,AXTMERR
+              JP        AXTMRUN                        ; per-task 6502 mode is now virtual
 
 ; Basic six-byte per-session BDOS state without touching 6502 VMODE.
 ; TASKSAVE/TASKLOAD already handle each program's DMA and register state.
-SCHSAVE     CALL    TABPICK
-            LD      A,(CURDRV)
-            LD      (IX+0),A
-            LD      A,(IOBYTE)
-            LD      (IX+1),A
-            LD      HL,(LOGVEC)
-            LD      (IX+2),L
-            LD      (IX+3),H
-            LD      HL,(ROVEC)
-            LD      (IX+4),L
-            LD      (IX+5),H
-            RET
-SCHLOAD     CALL    TABPICK
-            LD      A,(IX+0)
-            LD      (CURDRV),A
-            LD      A,(IX+1)
-            LD      (IOBYTE),A
-            LD      L,(IX+2)
-            LD      H,(IX+3)
-            LD      (LOGVEC),HL
-            LD      L,(IX+4)
-            LD      H,(IX+5)
-            LD      (ROVEC),HL
-            RET
+SCHSAVE       CALL      TABPICK
+              LD        A,(CURDRV)
+              LD        (IX+0),A
+              LD        A,(IOBYTE)
+              LD        (IX+1),A
+              LD        HL,(LOGVEC)
+              LD        (IX+2),L
+              LD        (IX+3),H
+              LD        HL,(ROVEC)
+              LD        (IX+4),L
+              LD        (IX+5),H
+              RET
+SCHLOAD       CALL      TABPICK
+              LD        A,(IX+0)
+              LD        (CURDRV),A
+              LD        A,(IX+1)
+              LD        (IOBYTE),A
+              LD        L,(IX+2)
+              LD        H,(IX+3)
+              LD        (LOGVEC),HL
+              LD        L,(IX+4)
+              LD        H,(IX+5)
+              LD        (ROVEC),HL
+              RET
 
 ; Save a background terminal personality without changing the visible
 ; application's 6502 terminal parser state.
-SCHTERM     PUSH    AF
-            CALL    SCHISFG
-            JR      NZ,STBG
-            POP     AF
-            OR      A
-            RET
-STBG        POP     AF
-            PUSH    BC
-            PUSH    DE
-            PUSH    IX
-            PUSH    AF
-            CALL    TABPICK
-            POP     AF
-            LD      (IX+6),A
-            POP     IX
-            POP     DE
-            POP     BC
-            XOR     A
-            LD      L,A
-            SCF
-            RET
+SCHTERM       PUSH      AF
+              CALL      SCHISFG
+              JR        NZ,STBG
+              POP       AF
+              OR        A
+              RET
+STBG          POP       AF
+              PUSH      BC
+              PUSH      DE
+              PUSH      IX
+              PUSH      AF
+              CALL      TABPICK
+              POP       AF
+              LD        (IX+6),A
+              POP       IX
+              POP       DE
+              POP       BC
+              XOR       A
+              LD        L,A
+              SCF
+              RET
 
 ; Z flag: this task owns foreground screen/keyboard.
-SCHISFG     PUSH    BC
-            LD      A,(TABMODE)
-            LD      B,A
-            LD      A,(SCHFG)
-            CP      B
-            POP     BC
-            RET
+SCHISFG       PUSH      BC
+              LD        A,(TABMODE)
+              LD        B,A
+              LD        A,(SCHFG)
+              CP        B
+              POP       BC
+              RET
 
 ; Mark current session as blocked on input. Both original foreground
 ; hotkey deferrals and new background input deferrals use this state.
-SCHBLCK     LD      A,(TABMODE)
-            LD      E,A
-            LD      D,0
-            LD      HL,SCHWAIT
-            ADD     HL,DE
-            LD      (HL),1
-            RET
+SCHBLCK       LD        A,(TABMODE)
+              LD        E,A
+              LD        D,0
+              LD        HL,SCHWAIT
+              ADD       HL,DE
+              LD        (HL),1
+              RET
 
 ; Reactivate a task blocked on background console input when selected.
-SCHWAKE     LD      A,(TABMODE)
-            LD      E,A
-            LD      D,0
-            LD      HL,SCHWAIT
-            ADD     HL,DE
-            LD      (HL),0
-            RET
+SCHWAKE       LD        A,(TABMODE)
+              LD        E,A
+              LD        D,0
+              LD        HL,SCHWAIT
+              ADD       HL,DE
+              LD        (HL),0
+              RET
 
 ; The virtual display is live, so no physical screen snapshot is needed
 ; when an application yields or a manual tab change is requested.
-SCHSNAP     RET                 ; live screen always up-to-date
+SCHSNAP       RET                                      ; live screen always up-to-date
 
 ; Stage 3: defer blocking console reads if this task is in the
 ; background, OR if this is the foreground and another task can run
@@ -4268,141 +4270,140 @@ SCHSNAP     RET                 ; live screen always up-to-date
 ; be consumed normally. With no other runnable task use VGET, which
 ; preserves the ordinary visible cursor behaviour.
 ; The existing AXRETRY markers re-enter the original read on resume.
-SCHPRE      LD      A,(IOBYTE)
-            AND     3
-            CP      1
-            JR      NZ,SPNO       ; serial firmware input cannot keyboard-defer
-            LD      A,C
-            CP      1             ; BDOS 1 cooked input
-            JR      Z,SPREAD
-            CP      10            ; BDOS 10 line input (at line start)
-            JR      Z,SPREAD
-            CP      0F2H         ; BIOS CONIN via LC gateway
-            JR      NZ,SPNO
-SPREAD      CALL    SCHISFG
-            JR      NZ,SPPARKCODE ; background: always defer input
-            PUSH    BC
-            CALL    SCHHAVE
-            OR      A
-            JR      Z,SPALLOW     ; no runnable background work
-            CALL    BIOSCONST    ; $C000 peek; never consumes keyboard
-            OR      A
-            JR      NZ,SPALLOW    ; a character is already waiting
-            POP     BC
-SPPARKCODE  LD      A,C
-            CP      1
-            JR      Z,SPCOOK
-            CP      10
-            JR      Z,SPLINE
-            JR      SPBIOS        ; validated only 1/10/F2 above
-SPALLOW     POP     BC
-SPNO        OR      A             ; clear carry
-            RET
-SPCOOK      LD      A,0F1H
-            JR      SPPARK
-SPBIOS      LD      A,0F2H
-            JR      SPPARK
-SPLINE      LD      (AXLIP),DE
-            LD      A,0FAH
-SPPARK      PUSH    AF
-            PUSH    DE
-            CALL    SCHBLCK
-            LD      A,3
-            LD      (AXQUIT),A
-            POP     DE
-            POP     AF
-            LD      L,A
-            SCF
-            RET
+SCHPRE        LD        A,(IOBYTE)
+              AND       3
+              CP        1
+              JR        NZ,SPNO                        ; serial firmware input cannot keyboard-defer
+              LD        A,C
+              CP        1                              ; BDOS 1 cooked input
+              JR        Z,SPREAD
+              CP        10                             ; BDOS 10 line input (at line start)
+              JR        Z,SPREAD
+              CP        0F2H                           ; BIOS CONIN via LC gateway
+              JR        NZ,SPNO
+SPREAD        CALL      SCHISFG
+              JR        NZ,SPPARKCODE                  ; background: always defer input
+              PUSH      BC
+              CALL      SCHHAVE
+              OR        A
+              JR        Z,SPALLOW                      ; no runnable background work
+              CALL      BIOSCONST                      ; $C000 peek; never consumes keyboard
+              OR        A
+              JR        NZ,SPALLOW                     ; a character is already waiting
+              POP       BC
+SPPARKCODE    LD        A,C
+              CP        1
+              JR        Z,SPCOOK
+              CP        10
+              JR        Z,SPLINE
+              JR        SPBIOS                         ; validated only 1/10/F2 above
+SPALLOW       POP       BC
+SPNO          OR        A                              ; clear carry
+              RET
+SPCOOK        LD        A,0F1H
+              JR        SPPARK
+SPBIOS        LD        A,0F2H
+              JR        SPPARK
+SPLINE        LD        (AXLIP),DE
+              LD        A,0FAH
+SPPARK        PUSH      AF
+              PUSH      DE
+              CALL      SCHBLCK
+              LD        A,3
+              LD        (AXQUIT),A
+              POP       DE
+              POP       AF
+              LD        L,A
+              SCF
+              RET
 
 ; Trigger only at an outer AUX BDOS/BIOS completion in AXGATE.
 ; AXQUIT=3 follows the preexisting TASKSAVE -> AUXSUSP/TABRESUM route.
-SCHTICK     LD      A,(AXQUIT)
-            OR      A
-            RET     NZ
-            LD      A,(SCHEN)
-            OR      A
-            RET     Z
-            LD      A,(SCHQLEFT)
-            DEC     A
-            LD      (SCHQLEFT),A
-            RET     NZ
-            LD      A,SCHFGQ
-            LD      (SCHQLEFT),A
-            CALL    SCHISFG
-            JR      NZ,STYIELD    ; background must release CPU
-            CALL    SCHHAVE
-            OR      A
-            RET     Z             ; no background work: stay in .COM
-STYIELD     LD      A,3
-            LD      (AXQUIT),A
-            RET
+SCHTICK       LD        A,(AXQUIT)
+              OR        A
+              RET       NZ
+              LD        A,(SCHEN)
+              OR        A
+              RET       Z
+              LD        A,(SCHQLEFT)
+              DEC       A
+              LD        (SCHQLEFT),A
+              RET       NZ
+              LD        A,SCHFGQ
+              LD        (SCHQLEFT),A
+              CALL      SCHISFG
+              JR        NZ,STYIELD                     ; background must release CPU
+              CALL      SCHHAVE
+              OR        A
+              RET       Z                              ; no background work: stay in .COM
+STYIELD       LD        A,3
+              LD        (AXQUIT),A
+              RET
 
 
 ; Stage 2: keep 6502 parser/cursor state coherent across scheduler
 ; and manual TAB switches. VSMETAS retains the nine original bytes.
 ; This helper block lives in MAIN $8000-$80FF before BIOS $8100.
 ; Remaining built-ins and CCP command syntax.
+              ORG       08000H
+VSSTSAVE      LD        A,(VSOK)
+              OR        A
+              RET       Z
+              CALL      VSMETA
+              LD        (HL),1                         ; initialized backing display
+              INC       HL
+              EX        DE,HL
+              LD        HL,(VSPTR)
+              LD        BC,VSTLEN
+              LDIR
+              RET
 
-            ORG     08000H
-VSSTSAVE    LD      A,(VSOK)
-            OR      A
-            RET     Z
-            CALL    VSMETA
-            LD      (HL),1         ; initialized backing display
-            INC     HL
-            EX      DE,HL
-            LD      HL,(VSPTR)
-            LD      BC,VSTLEN
-            LDIR
-            RET
-
-VSSTLOAD    LD      A,(VSOK)
-            OR      A
-            RET     Z
-            CALL    VSMETA
-            LD      A,(HL)
-            INC     HL
-            OR      A
-            JR      Z,VSTNEW
-            LD      DE,(VSPTR)
-            LD      BC,VSTLEN
-            LDIR
-            RET
-VSTNEW      LD      DE,(VSPTR)
-            LD      HL,VSDEFAULT
-            LD      BC,VSTLEN
-            LDIR
-            RET
-VSDEFAULT   DEFB    0,0,0,0,1,0,0,0,0 ; cursor 0,0 and Soroc
+VSSTLOAD      LD        A,(VSOK)
+              OR        A
+              RET       Z
+              CALL      VSMETA
+              LD        A,(HL)
+              INC       HL
+              OR        A
+              JR        Z,VSTNEW
+              LD        DE,(VSPTR)
+              LD        BC,VSTLEN
+              LDIR
+              RET
+VSTNEW        LD        DE,(VSPTR)
+              LD        HL,VSDEFAULT
+              LD        BC,VSTLEN
+              LDIR
+              RET
+VSDEFAULT     DEFB      0,0,0,0,1,0,0,0,0              ; cursor 0,0 and Soroc
 
 ; B821: A=snapshot bank, X=physical flag, Y=offset. 6502 updates routing
 ; and Microsoft BASIC's current terminal control-byte table.
-VSSELECT    PUSH    BC
-            CALL    VSSBANK         ; bank 2 / 5 / 10 / 15
-            LD      (AREG),A
-            CALL    SCHISFG
-            LD      A,0
-            JR      NZ,VSSEBG
-            INC     A
-VSSEBG      LD      (XREG),A       ; physical output enabled when fg
-            LD      A,(TABMODE)
-            AND     3
-            ADD     A,A
-            ADD     A,A
-            ADD     A,A
-            ADD     A,01CH        ; high-byte delta from $0400
-            LD      (YREG),A
-            LD      HL,VTASK
-            LD      (ADDR),HL
-            LD      A,1
-            LD      (CMD),A
-            LD      (SOFTCARD),A
-            POP     BC
-            RET
+VSSELECT      PUSH      BC
+              CALL      VSSBANK                        ; bank 2 / 5 / 10 / 15
+              LD        (AREG),A
+              CALL      SCHISFG
+              LD        A,0
+              JR        NZ,VSSEBG
+              INC       A
+VSSEBG        LD        (XREG),A                       ; physical output enabled when fg
+              LD        A,(TABMODE)
+              AND       3
+              ADD       A,A
+              ADD       A,A
+              ADD       A,A
+              ADD       A,01CH                         ; high-byte delta from $0400
+              LD        (YREG),A
+              LD        HL,VTASK
+              LD        (ADDR),HL
+              LD        A,1
+              LD        (CMD),A
+              LD        (SOFTCARD),A
+              POP       BC
+              RET
 
 
-            ORG     BDOSADDR
+              ORG       BDOSADDR
 
 ; CP/M 2.2 BIOS jump table (17 entries, three bytes each).
 ; Applications discover the BIOS WBOOT entry from the 16-bit operand
@@ -4410,441 +4411,441 @@ VSSEBG      LD      (XREG),A       ; physical output enabled when fg
 ; CONOUT in that order; TE_APPLE.COM copies exactly those nine bytes.
 ; Keep this table contiguous. The disk-sector entries are safe stubs,
 ; NOT a ProDOS block/sector BIOS (BP/M files continue through BDOS).
-BIOS        JP        BDOSINIT        ; BOOT    +00H
-BIOSWBOOT    JP        BDOSWARM        ; WBOOT   +03H
-BIOSCSTAT    JP        BIOSCONST        ; CONST   +06H
-BIOSCKBD    JP        BIOSCONIN        ; CONIN   +09H
-BIOSCTTY    JP        BIOSCONOUT        ; CONOUT  +0CH
-            JP        BIOSLIST        ; LIST    +0FH
-            JP        BIOSPUNCH        ; PUNCH   +12H
-            JP        BIOSRDR            ; READER  +15H
-            JP        BIOSHOME        ; HOME    +18H
-            JP        BIOSSELDSK        ; SELDSK  +1BH
-            JP        BIOSSETTRK        ; SETTRK  +1EH
-            JP        BIOSSETSEC        ; SETSEC  +21H
-            JP        BIOSSETDMA        ; SETDMA  +24H
-            JP        BIOSREAD        ; READ    +27H
-            JP        BIOSWRITE        ; WRITE   +2AH
-            JP        BIOSLSTST        ; LISTST  +2DH
-            JP        BIOSSECTRAN    ; SECTRAN +30H
+BIOS          JP        BDOSINIT                       ; BOOT    +00H
+BIOSWBOOT     JP        BDOSWARM                       ; WBOOT   +03H
+BIOSCSTAT     JP        BIOSCONST                      ; CONST   +06H
+BIOSCKBD      JP        BIOSCONIN                      ; CONIN   +09H
+BIOSCTTY      JP        BIOSCONOUT                     ; CONOUT  +0CH
+              JP        BIOSLIST                       ; LIST    +0FH
+              JP        BIOSPUNCH                      ; PUNCH   +12H
+              JP        BIOSRDR                        ; READER  +15H
+              JP        BIOSHOME                       ; HOME    +18H
+              JP        BIOSSELDSK                     ; SELDSK  +1BH
+              JP        BIOSSETTRK                     ; SETTRK  +1EH
+              JP        BIOSSETSEC                     ; SETSEC  +21H
+              JP        BIOSSETDMA                     ; SETDMA  +24H
+              JP        BIOSREAD                       ; READ    +27H
+              JP        BIOSWRITE                      ; WRITE   +2AH
+              JP        BIOSLSTST                      ; LISTST  +2DH
+              JP        BIOSSECTRAN                    ; SECTRAN +30H
 
 ; Public BDOS entry must be in the FIRST page of resident memory.
 ; MESCC-based .COM programs (including TE_APPLE.COM) calculate their
 ; stack top by rounding down the address at CP/M $0006 to a page
 ; boundary. An address in $82xx would place SP at $8200 INSIDE BP/M!
 ; 17 BIOS JP vectors = 51 bytes, so this is $8100 + $33 = $8133.
-BDOSENTRY    JP        BDOSIMP
+BDOSENTRY     JP        BDOSIMP
 
 ; Fixed exit/resume point at $8136, immediately after the $8133 BDOS JP.
 ; The Z80 is *suspended*, not reset, when CMD=0 switches to the 6502.
 ; On a later ProDOS launch the new image resumes at the instruction after
 ; LD (SOFTCARD),A. Jump via the freshly reloaded cold vector at $0000.
 ; Keep this stub at $8136 in future releases (BIOS ABI + 3-byte BDOS JP).
-BYERESUME    LD        (SOFTCARD),A    ; CCPBYE already set CMD=0 and A=0
-            JP        0000H            ; Execute only after ProDOS relaunch
+BYERESUME     LD        (SOFTCARD),A                   ; CCPBYE already set CMD=0 and A=0
+              JP        0000H                          ; Execute only after ProDOS relaunch
 
 ; CP/M BIOS console: unlike the cooked BDOS C_READ, CONIN does not
 ; echo or treat Ctrl-C specially. CONOUT takes its byte in C, and
 ; must not suppress LF at the Z80 layer (C_WRITE deliberately does).
 ; Neither routine touches the alternate Z80 register set.
-BIOSCONST  LD      A,(IOBYTE)
-            AND     3
-            CP      1             ; CRT uses physical keyboard latch
-            JP      NZ,IOSTAT    ; ROM input has no portable nonblock status
-            LD      A,3            ; 6502 keyboard peek
-            LD        (CMD),A
-            LD        (SOFTCARD),A
-            LD        A,(AREG)
-            OR        A
-            RET        Z
-            LD        A,0FFH        ; CP/M CONST: FF=ready, 00=not
-            RET
+BIOSCONST     LD        A,(IOBYTE)
+              AND       3
+              CP        1                              ; CRT uses physical keyboard latch
+              JP        NZ,IOSTAT                      ; ROM input has no portable nonblock status
+              LD        A,3                            ; 6502 keyboard peek
+              LD        (CMD),A
+              LD        (SOFTCARD),A
+              LD        A,(AREG)
+              OR        A
+              RET       Z
+              LD        A,0FFH                         ; CP/M CONST: FF=ready, 00=not
+              RET
 
-BIOSCONIN LD      A,(IOBYTE)
-            AND     3
-            CP      1
-            JP      NZ,IOCONIN   ; BAT uses selected RDR:, TTY/UC1 serial
-            PUSH    HL
-            LD        HL,RDKEY        ; VGET waits but doesn't echo
-            LD        (ADDR),HL
-            LD        A,1
-            LD        (CMD),A
-            LD        (SOFTCARD),A
-            LD        A,(AREG)
-            AND        7FH            ; 6502 keyboard sets bit 7
-            POP        HL
-            RET
+BIOSCONIN     LD        A,(IOBYTE)
+              AND       3
+              CP        1
+              JP        NZ,IOCONIN                     ; BAT uses selected RDR:, TTY/UC1 serial
+              PUSH      HL
+              LD        HL,RDKEY                       ; VGET waits but doesn't echo
+              LD        (ADDR),HL
+              LD        A,1
+              LD        (CMD),A
+              LD        (SOFTCARD),A
+              LD        A,(AREG)
+              AND       7FH                            ; 6502 keyboard sets bit 7
+              POP       HL
+              RET
 
-BIOSCONOUT    PUSH    DE            ; C contains character
-            PUSH    HL
-            LD        E,C
-            CALL    C_RAWPUT    ; Uncooked output to VRAWPUT
-            POP        HL
-            POP        DE
-            RET
+BIOSCONOUT    PUSH      DE                             ; C contains character
+              PUSH      HL
+              LD        E,C
+              CALL      C_RAWPUT                       ; Uncooked output to VRAWPUT
+              POP       HL
+              POP       DE
+              RET
 
 ; Physical CP/M BIOS device entry points (also called through AUX LC).
-BIOSLIST    LD      E,C
-            JP      IOLIST
-BIOSPUNCH   LD      E,C
-            JP      IOPUNCH
-BIOSRDR     JP      IOREADER
+BIOSLIST      LD        E,C
+              JP        IOLIST
+BIOSPUNCH     LD        E,C
+              JP        IOPUNCH
+BIOSRDR       JP        IOREADER
 ; Firmware has no standardized ready query. Blocking writes assumed ready.
-BIOSLSTST   LD      A,0FFH
-            RET
+BIOSLSTST     LD        A,0FFH
+              RET
 
 ; Sector BIOS is deliberately unimplemented: don't tell applications
 ; that reads or writes succeeded when no data was transferred.
 ; BDOS's existing ProDOS file-based interface remains unchanged.
-BIOSHOME    RET
-BIOSSELDSK    LD        HL,0000H    ; no sector-level DPH available
-            RET
+BIOSHOME      RET
+BIOSSELDSK    LD        HL,0000H                       ; no sector-level DPH available
+              RET
 BIOSSETTRK    RET
 BIOSSETSEC    RET
 BIOSSETDMA    LD        (DMAADDR),BC
-            RET
-BIOSREAD    LD        A,1            ; error, not success
-            RET
-BIOSWRITE    LD        A,1            ; error, not success
-            RET
-BIOSSECTRAN    LD        H,B            ; identity mapping
-            LD        L,C
-            RET
+              RET
+BIOSREAD      LD        A,1                            ; error, not success
+              RET
+BIOSWRITE     LD        A,1                            ; error, not success
+              RET
+BIOSSECTRAN   LD        H,B                            ; identity mapping
+              LD        L,C
+              RET
 
 ; Entry at 0000H is a COLD start only until the first initialization.
 ; Repoint its JP operand to the real BIOS WBOOT jump (BIOS+3),
 ; so CP/M applications can discover CONST/CONIN/CONOUT via (0001H).
 ; Subsequent RST 0 / JP 0000H runs an ordinary warm boot.
-BDOSINIT    DI
-            LD        SP,STCKTOP        ; Valid stack for BPMSIGN
-            ; Set CON=CRT before BPMSIGN/RWREPORT print anything.
-            ; Otherwise reset value 00H routes the boot banner to S2.
-            LD      A,095H
-            LD      (IOBYTE),A
-            ; Cold start: the backing ProDOS unit has not been resolved yet.
-            ; WBOOT deliberately preserves the cached unit.
-            XOR        A
-            LD        (VUCVALID),A
-            LD      (CURDRV),A     ; cold boot only: drive A:, user 0
-            LD      HL,0001H
-            LD      (LOGVEC),HL    ; cold boot: A: initially logged in
-            CALL    SVCLEAR        ; reset all 16 tab-specific SAVE flags
-            LD      HL,SBWARM
-            LD      DE,SBWARM+1
-            LD      BC,15
-            XOR     A
-            LD      (HL),A
-            LDIR                     ; clear per-tab pending WBOOT flags
-            LD      (TABMODE),A       ; cold boot starts in session 0
-            LD      (XSFLAG),A      ; cold boot clears native XSUB
-            LD      (XSLEFT),A
-            LD      (SBFROM),A
-            CALL    TABINIT         ; reset both CCP session descriptors
-            CALL    TSKINIT         ; discard suspended programs on cold boot
-            CALL    CACHERST        ; zero cache counters on cold start only
-            LD        HL,BIOSWBOOT
-            LD        (0001H),HL        ; 0000H -> BIOS WBOOT JP (CP/M ABI)
-            CALL    BPMSIGN
-            CALL    RWREPORT       ; physical bank count and supported tabs
+BDOSINIT      DI
+              LD        SP,STCKTOP                     ; Valid stack for BPMSIGN
+              ; Set CON=CRT before BPMSIGN/RWREPORT print anything.
+              ; Otherwise reset value 00H routes the boot banner to S2.
+              LD        A,095H
+              LD        (IOBYTE),A
+              ; Cold start: the backing ProDOS unit has not been resolved yet.
+              ; WBOOT deliberately preserves the cached unit.
+              XOR       A
+              LD        (VUCVALID),A
+              LD        (CURDRV),A                     ; cold boot only: drive A:, user 0
+              LD        HL,0001H
+              LD        (LOGVEC),HL                    ; cold boot: A: initially logged in
+              CALL      SVCLEAR                        ; reset all 16 tab-specific SAVE flags
+              LD        HL,SBWARM
+              LD        DE,SBWARM+1
+              LD        BC,15
+              XOR       A
+              LD        (HL),A
+              LDIR                                     ; clear per-tab pending WBOOT flags
+              LD        (TABMODE),A                    ; cold boot starts in session 0
+              LD        (XSFLAG),A                     ; cold boot clears native XSUB
+              LD        (XSLEFT),A
+              LD        (SBFROM),A
+              CALL      TABINIT                        ; reset both CCP session descriptors
+              CALL      TSKINIT                        ; discard suspended programs on cold boot
+              CALL      CACHERST                       ; zero cache counters on cold start only
+              LD        HL,BIOSWBOOT
+              LD        (0001H),HL                     ; 0000H -> BIOS WBOOT JP (CP/M ABI)
+              CALL      BPMSIGN
+              CALL      RWREPORT                       ; physical bank count and supported tabs
 
 ; Warm-boot path for BDOS 0, RST 0, JP 0000H and Ctrl-C.
 ; Keep the existing BDOS reset semantics, but do not print BPMSIGN.
-BDOSWARM    DI                    ; Make sure interrupts are off
-            LD        SP,STCKTOP        ; Discard transient's stack
-            XOR     A
-            LD      (SBHALT),A       ; recheck $$$.SUB on a new warm boot
-            CALL    SBWCLR          ; consume current tab's WBOOT request
+BDOSWARM      DI                                       ; Make sure interrupts are off
+              LD        SP,STCKTOP                     ; Discard transient's stack
+              XOR       A
+              LD        (SBHALT),A                     ; recheck $$$.SUB on a new warm boot
+              CALL      SBWCLR                         ; consume current tab's WBOOT request
 
-            ; Applications such as Apple CP/M MBASIC 5.2 replace the
-            ; warm-start address at $0001 with an address in the TPA.
-            ; CP/M WBOOT must restore the page-zero system jump vectors.
-            ; $0000: JP BIOSWBOOT, $0005: JP BDOSENTRY.
-            LD        A,0C3H            ; Opcode for JP absolute
-            LD        (0000H),A
-            LD        (0005H),A
-            LD        HL,BIOSWBOOT
-            LD        (0001H),HL
-            LD        HL,BDOSENTRY
-            LD        (0006H),HL
+              ; Applications such as Apple CP/M MBASIC 5.2 replace the
+              ; warm-start address at $0001 with an address in the TPA.
+              ; CP/M WBOOT must restore the page-zero system jump vectors.
+              ; $0000: JP BIOSWBOOT, $0005: JP BDOSENTRY.
+              LD        A,0C3H                         ; Opcode for JP absolute
+              LD        (0000H),A
+              LD        (0005H),A
+              LD        HL,BIOSWBOOT
+              LD        (0001H),HL
+              LD        HL,BDOSENTRY
+              LD        (0006H),HL
 
-            ; WBOOT preserves IOBYTE, current drive/user, and LOGVEC.
-            ; Only a cold boot initializes these session-owned values.
-            XOR     A
-            LD        (FILEBUF),A        ; Zero chars in command tail
-            CALL    CACHEALL        ; CLOSE ALL, invalidate cache and all FRN slots
-            LD        HL,FILEBUF        ; Initialize DMAADDR to 0080H
-            LD        (DMAADDR),HL        ; ...
-            LD        HL,0000H        ; No drives write protected
-            LD        (ROVEC),HL        ; ...
-            JP        CCP                ; Start the CCP
+              ; WBOOT preserves IOBYTE, current drive/user, and LOGVEC.
+              ; Only a cold boot initializes these session-owned values.
+              XOR       A
+              LD        (FILEBUF),A                    ; Zero chars in command tail
+              CALL      CACHEALL                       ; CLOSE ALL, invalidate cache and all FRN slots
+              LD        HL,FILEBUF                     ; Initialize DMAADDR to 0080H
+              LD        (DMAADDR),HL                   ; ...
+              LD        HL,0000H                       ; No drives write protected
+              LD        (ROVEC),HL                     ; ...
+              JP        CCP                            ; Start the CCP
 
 ; The TPA is AUX 0100H..DEFFH. Derive KiB from its top at
 ; assembly time, then turn it into decimal at run time. 10 right shifts
 ; convert a byte count to KiB; valid for any sensible BDOS placement.
 ; We print two digits (CP/M's TPA cannot exceed 63 KiB).
-BPMSIGN        LD        DE,BPMSG
-            CALL    C_WRITESTR
-            LD        HL,0DF00H
-            LD        B,10
-BPMSHIFT    SRL        H
-            RR        L
-            DJNZ    BPMSHIFT
-            LD        A,L
-            LD        B,'0'
-BPMTENS        CP        10
-            JR        C,BPMDIGITS
-            SUB        10
-            INC        B
-            JR        BPMTENS
-BPMDIGITS    PUSH    AF
-            LD        E,B
-            CALL    C_WRITE
-            POP        AF
-            ADD        A,'0'
-            LD        E,A
-            CALL    C_WRITE
-            LD        DE,BPMSUFF
-            JP        C_WRITESTR
+BPMSIGN       LD        DE,BPMSG
+              CALL      C_WRITESTR
+              LD        HL,0DF00H
+              LD        B,10
+BPMSHIFT      SRL       H
+              RR        L
+              DJNZ      BPMSHIFT
+              LD        A,L
+              LD        B,'0'
+BPMTENS       CP        10
+              JR        C,BPMDIGITS
+              SUB       10
+              INC       B
+              JR        BPMTENS
+BPMDIGITS     PUSH      AF
+              LD        E,B
+              CALL      C_WRITE
+              POP       AF
+              ADD       A,'0'
+              LD        E,A
+              CALL      C_WRITE
+              LD        DE,BPMSUFF
+              JP        C_WRITESTR
 
-BPMSG        DEFB    13
-            DEFM    'BP/M AUX TPA '
-            DEFB    '$'
-BPMSUFF        DEFM    'K'
-            DEFB    13,'$'
+BPMSG         DEFB      13
+              DEFM      'BP/M AUX TPA '
+              DEFB      '$'
+BPMSUFF       DEFM      'K'
+              DEFB      13,'$'
 
 BDOSIMP
-;;            CALL    PRHEX            ; Print sys call number
+;;          CALL    PRHEX           ; Print sys call number
 
-            LD        A,C                ; Prepare to check C is in range
-            LD      (BDOSFN),A    ; preserve function before SLA C / vector lookup
-            CP        41                ; Max syscall# for CP/M 2.2 is 40
-            JP      NC,BDOSUNSP   ; unsupported function; report it
-            LD        HL,BDOSVEC        ; Start of vector table
-            SLA        C                ; Multiply C by 2
-            LD        B,0                ; MSB of BC is zero
-            ADD        HL,BC            ; Address of vector in HL
-            LD        C,(HL)            ; Read LSB of address to jump to
-            INC        HL                ; Read MSB of address to jump to
-            LD        H,(HL)            ; ...
-            LD        L,C                ; Address needs to be in HL
-            JP        (HL)            ; Jump to it!
+              LD        A,C                            ; Prepare to check C is in range
+              LD        (BDOSFN),A                     ; preserve function before SLA C / vector lookup
+              CP        41                             ; Max syscall# for CP/M 2.2 is 40
+              JP        NC,BDOSUNSP                    ; unsupported function; report it
+              LD        HL,BDOSVEC                     ; Start of vector table
+              SLA       C                              ; Multiply C by 2
+              LD        B,0                            ; MSB of BC is zero
+              ADD       HL,BC                          ; Address of vector in HL
+              LD        C,(HL)                         ; Read LSB of address to jump to
+              INC       HL                             ; Read MSB of address to jump to
+              LD        H,(HL)                         ; ...
+              LD        L,C                            ; Address needs to be in HL
+              JP        (HL)                           ; Jump to it!
 
 ; Vector table
-BDOSVEC        DEFW    C_TERMCPM        ; C=00H
-            DEFW    C_READ            ; C=01H
-            DEFW    C_WRITE            ; C=02H
-            DEFW    IOREADER         ; C=03H  RDR:
-            DEFW    IOPUNCH          ; C=04H  PUN:
-            DEFW    IOLIST           ; C=05H  LST:
-            DEFW    C_RAWIO            ; C=06H
-            DEFW    GET_IOB            ; C=07H
-            DEFW    SET_IOB            ; C=08H
-            DEFW    C_WRITESTR        ; C=09H
-            DEFW    C_READSTR        ; C=0AH
-            DEFW    C_STAT            ; C=0BH
-            DEFW    S_BDOSVER        ; C=0CH
-            DEFW    DRV_ALLRST        ; C=0DH
-            DEFW    DRV_SET            ; C=0EH
-            DEFW    F_OPEN            ; C=0FH
-            DEFW    F_CLOSE            ; C=10H
-            DEFW    F_SFIRST        ; C=11H
-            DEFW    F_SNEXT            ; C=12H
-            DEFW    F_DELETE        ; C=13H
-            DEFW    F_READ            ; C=14H
-            DEFW    F_WRITE            ; C=15H
-            DEFW    F_MAKE            ; C=16H
-            DEFW    F_RENAME        ; C=17H
-            DEFW    DRV_LOGVEC        ; C=18H
-            DEFW    DRV_GET            ; C=19H
-            DEFW    F_DMAOFF        ; C=1AH
-            DEFW    DRV_AVEC        ; C=1BH
-            DEFW    DRV_SETRO        ; C=1CH
-            DEFW    DRV_ROVEC        ; C=1DH
-            DEFW    F_ATTRIB        ; C=1EH  (F_ATTRIB)
-            DEFW    DRV_DPB            ; C=1FH
-            DEFW    F_USERNUM        ; C=20H
-            DEFW    F_READRAND        ; C=21H
-            DEFW    F_WRITERAND        ; C=22H
-            DEFW    F_SIZE            ; C=23H
-            DEFW    F_RANDREC        ; C=24H
-            DEFW    DRV_RESET        ; C=25H
-            DEFW    BDOSUNSP            ; C=26H  (*nothing* in CP/M 2.2)
-            DEFW    BDOSUNSP            ; C=27H  (*nothing* in CP/M 2.2)
-            DEFW    F_WRITERAND        ; C=28H  (F_WRITEZF)
+BDOSVEC       DEFW      C_TERMCPM                      ; C=00H
+              DEFW      C_READ                         ; C=01H
+              DEFW      C_WRITE                        ; C=02H
+              DEFW      IOREADER                       ; C=03H  RDR:
+              DEFW      IOPUNCH                        ; C=04H  PUN:
+              DEFW      IOLIST                         ; C=05H  LST:
+              DEFW      C_RAWIO                        ; C=06H
+              DEFW      GET_IOB                        ; C=07H
+              DEFW      SET_IOB                        ; C=08H
+              DEFW      C_WRITESTR                     ; C=09H
+              DEFW      C_READSTR                      ; C=0AH
+              DEFW      C_STAT                         ; C=0BH
+              DEFW      S_BDOSVER                      ; C=0CH
+              DEFW      DRV_ALLRST                     ; C=0DH
+              DEFW      DRV_SET                        ; C=0EH
+              DEFW      F_OPEN                         ; C=0FH
+              DEFW      F_CLOSE                        ; C=10H
+              DEFW      F_SFIRST                       ; C=11H
+              DEFW      F_SNEXT                        ; C=12H
+              DEFW      F_DELETE                       ; C=13H
+              DEFW      F_READ                         ; C=14H
+              DEFW      F_WRITE                        ; C=15H
+              DEFW      F_MAKE                         ; C=16H
+              DEFW      F_RENAME                       ; C=17H
+              DEFW      DRV_LOGVEC                     ; C=18H
+              DEFW      DRV_GET                        ; C=19H
+              DEFW      F_DMAOFF                       ; C=1AH
+              DEFW      DRV_AVEC                       ; C=1BH
+              DEFW      DRV_SETRO                      ; C=1CH
+              DEFW      DRV_ROVEC                      ; C=1DH
+              DEFW      F_ATTRIB                       ; C=1EH  (F_ATTRIB)
+              DEFW      DRV_DPB                        ; C=1FH
+              DEFW      F_USERNUM                      ; C=20H
+              DEFW      F_READRAND                     ; C=21H
+              DEFW      F_WRITERAND                    ; C=22H
+              DEFW      F_SIZE                         ; C=23H
+              DEFW      F_RANDREC                      ; C=24H
+              DEFW      DRV_RESET                      ; C=25H
+              DEFW      BDOSUNSP                       ; C=26H  (*nothing* in CP/M 2.2)
+              DEFW      BDOSUNSP                       ; C=27H  (*nothing* in CP/M 2.2)
+              DEFW      F_WRITERAND                    ; C=28H  (F_WRITEZF)
 
 ; Diagnose unknown MAIN BDOS calls; retain old UNIMP bell afterwards.
-BDOSUNSP    LD      DE,BDOSMSG
-            CALL    C_WRITESTR
-            LD      A,(BDOSFN)
-            LD      C,A
-            CALL    PRHEX
-            LD      E,13
-            CALL    C_WRITE
-            JP      UNIMP
+BDOSUNSP      LD        DE,BDOSMSG
+              CALL      C_WRITESTR
+              LD        A,(BDOSFN)
+              LD        C,A
+              CALL      PRHEX
+              LD        E,13
+              CALL      C_WRITE
+              JP        UNIMP
 
 ; Unimplemented BDOS call, just ring the bell
-UNIMP        LD        HL,BELL            ; We are going to call BELL
-            LD        (ADDR),HL        ; ...
-            LD        A,1                ; CMD=1 means call 6502 sub
-            LD        (CMD),A            ; ...
-            LD         (SOFTCARD),A    ; Do it!
-            RET                        ; Return to calling program
+UNIMP         LD        HL,BELL                        ; We are going to call BELL
+              LD        (ADDR),HL                      ; ...
+              LD        A,1                            ; CMD=1 means call 6502 sub
+              LD        (CMD),A                        ; ...
+              LD        (SOFTCARD),A                   ; Do it!
+              RET                                      ; Return to calling program
 
 ; System reset.  Jump to $0000 - doesn't return
-C_TERMCPM    RST        0                ; Quick jump to zero
+C_TERMCPM     RST       0                              ; Quick jump to zero
 
 ; Wait for a character from the console, return it in A and L
 ; Also echoes the char to the console
-C_READ      LD      A,(IOBYTE)
-            AND     3
-            CP      1
-            JP      NZ,IOCCOOK   ; redirected console, serial firmware
-            LD      HL,RDKEY        ; We are going to call RDKEY
-            LD        (ADDR),HL        ; ...
-            LD        A,1                ; CMD=1 means call 6502 sub
-            LD        (CMD),A            ; ...
-            LD        (SOFTCARD),A    ; Do it!
-            LD        A,(AREG)        ; Grab the return value
-            CP        83H                ; See if it is Ctrl-C
-            JP        Z,BDOSWARM        ; Ctrl-C is a warm boot (no banner)
-            PUSH    AF                ; Preserve A (and F)
-            LD        HL,COUT            ; Echo the character using COUT
-            LD        (ADDR),HL        ; ...
-            LD        A,1                ; CMD=1 means call 6502 sub
-            LD        (CMD),A            ; ...
-            LD        (SOFTCARD),A    ; Do it!
-            POP        AF                ; Restore A (and F)
-            AND        7FH                ; Mask high bit
-            LD        L,A                ; Copy A to L
-            RET                        ; Return to calling program
+C_READ        LD        A,(IOBYTE)
+              AND       3
+              CP        1
+              JP        NZ,IOCCOOK                     ; redirected console, serial firmware
+              LD        HL,RDKEY                       ; We are going to call RDKEY
+              LD        (ADDR),HL                      ; ...
+              LD        A,1                            ; CMD=1 means call 6502 sub
+              LD        (CMD),A                        ; ...
+              LD        (SOFTCARD),A                   ; Do it!
+              LD        A,(AREG)                       ; Grab the return value
+              CP        83H                            ; See if it is Ctrl-C
+              JP        Z,BDOSWARM                     ; Ctrl-C is a warm boot (no banner)
+              PUSH      AF                             ; Preserve A (and F)
+              LD        HL,COUT                        ; Echo the character using COUT
+              LD        (ADDR),HL                      ; ...
+              LD        A,1                            ; CMD=1 means call 6502 sub
+              LD        (CMD),A                        ; ...
+              LD        (SOFTCARD),A                   ; Do it!
+              POP       AF                             ; Restore A (and F)
+              AND       7FH                            ; Mask high bit
+              LD        L,A                            ; Copy A to L
+              RET                                      ; Return to calling program
 
 ; BDOS console output.  The 6502 driver handles tabs, CR, backspace,
 ; clear-screen and the other minimal console controls.  Ignore LF because
 ; the direct video driver's CR already moves to the next line.
-C_WRITE     LD      A,(IOBYTE)
-            AND     3
-            CP      1
-            JR      NZ,C_RAWPUT  ; serial/BAT must retain LF
-            LD      A,E
-            CP      0AH
-            RET        Z
-            JR        C_PUT
+C_WRITE       LD        A,(IOBYTE)
+              AND       3
+              CP        1
+              JR        NZ,C_RAWPUT                    ; serial/BAT must retain LF
+              LD        A,E
+              CP        0AH
+              RET       Z
+              JR        C_PUT
 
 ; Shared low-level output path for cooked and direct console writes.
 ; E = ASCII character; 6502 console driver accepts bit 7 set or clear.
-C_RAWPUT    LD      A,(IOBYTE)
-            AND     3
-            CP      1
-            JP      NZ,IOCONOUT ; redirected console bypasses screen driver
-            LD      A,E          ; raw output also updates virtual display
-            LD        HL,RAWOUT    ; B80F raw 6502 vector
-            JR        C_SENDA
-C_PUT       LD      A,80H       ; cooked output, both background/foreground
-            OR        E
-            LD        HL,COUT        ; B803 cooked 6502 vector
+C_RAWPUT      LD        A,(IOBYTE)
+              AND       3
+              CP        1
+              JP        NZ,IOCONOUT                    ; redirected console bypasses screen driver
+              LD        A,E                            ; raw output also updates virtual display
+              LD        HL,RAWOUT                      ; B80F raw 6502 vector
+              JR        C_SENDA
+C_PUT         LD        A,80H                          ; cooked output, both background/foreground
+              OR        E
+              LD        HL,COUT                        ; B803 cooked 6502 vector
 ; Step 3: CP/M terminal ^S/^Q output flow control.  All BDOS and
 ; BIOS console output passes through C_SENDA (cooked and raw).
 ; Only foreground output polls the keyboard.  Preserve a pending
 ; ordinary key; consume ^S/^Q, which applications must not see.
-C_SENDA     PUSH    AF            ; A is the character being sent
-            PUSH    HL            ; HL is the 6502 output vector
-            CALL    CFO_CHECK
-            POP     HL
-            POP     AF
-            LD      (AREG),A
-            LD      (ADDR),HL
-            LD      A,1
-            LD      (CMD),A
-            LD      (SOFTCARD),A
-            RET
+C_SENDA       PUSH      AF                             ; A is the character being sent
+              PUSH      HL                             ; HL is the 6502 output vector
+              CALL      CFO_CHECK
+              POP       HL
+              POP       AF
+              LD        (AREG),A
+              LD        (ADDR),HL
+              LD        A,1
+              LD        (CMD),A
+              LD        (SOFTCARD),A
+              RET
 
 ; Read Apple II $C000 keyboard latch from SoftCard Z80 $E000.
 ; Reading $C010 ($E010 to Z80) clears the keyboard strobe.
 ; Do not consume any other waiting key while output is running.
-CFO_CHECK   CALL    SCHISFG       ; background tasks must not take input
-            RET     NZ
-CFO_POLL    LD      A,(0E000H)    ; physical $C000 (key + strobe)
-            OR      A
-            RET     P             ; bit 7 clear: no key pending
-            AND     07FH
-            CP      013H          ; ^S: stop output
-            JR      Z,CFO_STOP
-            CP      011H          ; ^Q without ^S: discard quietly
-            RET     NZ            ; other keys belong to the application
-            LD      A,(0E010H)    ; consume ^Q
-            RET
-CFO_STOP    LD      A,(0E010H)    ; consume ^S
-CFO_WAIT    LD      A,(0E000H)
-            OR      A
-            JP      P,CFO_WAIT    ; no key: remain paused
-            AND     07FH
-            CP      011H
-            JR      Z,CFO_GO
-            LD      A,(0E010H)    ; discard other keys while paused
-            JR      CFO_WAIT
-CFO_GO      LD      A,(0E010H)    ; consume ^Q and resume this output
-            RET
+CFO_CHECK     CALL      SCHISFG                        ; background tasks must not take input
+              RET       NZ
+CFO_POLL      LD        A,(0E000H)                     ; physical $C000 (key + strobe)
+              OR        A
+              RET       P                              ; bit 7 clear: no key pending
+              AND       07FH
+              CP        013H                           ; ^S: stop output
+              JR        Z,CFO_STOP
+              CP        011H                           ; ^Q without ^S: discard quietly
+              RET       NZ                             ; other keys belong to the application
+              LD        A,(0E010H)                     ; consume ^Q
+              RET
+CFO_STOP      LD        A,(0E010H)                     ; consume ^S
+CFO_WAIT      LD        A,(0E000H)
+              OR        A
+              JP        P,CFO_WAIT                     ; no key: remain paused
+              AND       07FH
+              CP        011H
+              JR        Z,CFO_GO
+              LD        A,(0E010H)                     ; discard other keys while paused
+              JR        CFO_WAIT
+CFO_GO        LD        A,(0E010H)                     ; consume ^Q and resume this output
+              RET
 
 ; CP/M BDOS function 6: E=FF nonblocking read, else raw output.
 ; This route uses the raw 6502 entry (CR and LF independent).
-C_RAWIO     LD      A,E
-            CP      0FFH
-            JR        Z,RIS1
-            JR        C_RAWPUT
+C_RAWIO       LD        A,E
+              CP        0FFH
+              JR        Z,RIS1
+              JR        C_RAWPUT
 
-            ; If character is waiting, read from console & return in A
-            ; Otherwise, return 00H in A
-RIS1        LD      A,(IOBYTE)
-            AND     3
-            CP      1
-            JP      NZ,IOZERO   ; no portable slot-2 nonblocking read
-            LD      A,3                ; CMD=3 means peek at keyboard
-            LD        (CMD),A            ; ...
-            LD        (SOFTCARD),A    ; Do it
-            LD        A,(AREG)        ; Grab the return value
-            CP        0                ; If zero, no chars are waiting
-            JR        Z,RIS2            ; ...
-            LD        HL,RDKEY        ; We are going to call RDKEY
-            LD        (ADDR),HL        ; ...
-            LD        A,1                ; CMD=1 means call 6502 sub
-            LD        (CMD),A            ; ...
-            LD        (SOFTCARD),A    ; Do it!
-            LD        A,(AREG)        ; Grab the return value
-            AND        7FH                ; Mask high bit
-            LD        L,A                ; Copy A to L
-            RET                        ; 
-RIS2        XOR        A                ; No chars waiting, A=0
-            LD        L,A                ; Return in L also
-            RET
+              ; If character is waiting, read from console & return in A
+              ; Otherwise, return 00H in A
+RIS1          LD        A,(IOBYTE)
+              AND       3
+              CP        1
+              JP        NZ,IOZERO                      ; no portable slot-2 nonblocking read
+              LD        A,3                            ; CMD=3 means peek at keyboard
+              LD        (CMD),A                        ; ...
+              LD        (SOFTCARD),A                   ; Do it
+              LD        A,(AREG)                       ; Grab the return value
+              CP        0                              ; If zero, no chars are waiting
+              JR        Z,RIS2                         ; ...
+              LD        HL,RDKEY                       ; We are going to call RDKEY
+              LD        (ADDR),HL                      ; ...
+              LD        A,1                            ; CMD=1 means call 6502 sub
+              LD        (CMD),A                        ; ...
+              LD        (SOFTCARD),A                   ; Do it!
+              LD        A,(AREG)                       ; Grab the return value
+              AND       7FH                            ; Mask high bit
+              LD        L,A                            ; Copy A to L
+              RET                                      ;
+RIS2          XOR       A                              ; No chars waiting, A=0
+              LD        L,A                            ; Return in L also
+              RET
 
 ; Get the IOBYTE in A and L
-GET_IOB        LD        A,(IOBYTE)        ;
-            LD        L,A                ; Copy to L
-            RET
+GET_IOB       LD        A,(IOBYTE)                     ;
+              LD        L,A                            ; Copy to L
+              RET
 
 ; Set the IOBYTE
 ; E contains the IOBYTE value to set
-SET_IOB     LD      A,E
-            LD      (IOBYTE),A
-            LD      A,(AXMODE)    ; CP/M $0003 is in AUX for AUX apps
-            OR      A
-            RET     Z
-            LD      HL,IOBYTE
-            LD      DE,IOBYTE
-            LD      BC,1
-            JP      AXM2A
+SET_IOB       LD        A,E
+              LD        (IOBYTE),A
+              LD        A,(AXMODE)                     ; CP/M $0003 is in AUX for AUX apps
+              OR        A
+              RET       Z
+              LD        HL,IOBYTE
+              LD        DE,IOBYTE
+              LD        BC,1
+              JP        AXM2A
 
 ; Write ASCII string to console. '$' is the terminator
 ; DE contains the address of the string
-C_WRITESTR    LD        A,(DE)            ; Fetch character from string
-            CP        '$'                ; Is it '$'?
-            RET        Z                ; If so, we are done
-            PUSH    DE                ; We are gonna need E
-            LD        E,A                ; For C_WRITE
-            CALL    C_WRITE            ; Sent char to console
-            POP        DE                ; Recover the pointer
-            INC        DE                ; Advance pointer
-            JR        C_WRITESTR        ; Handle the next char
+C_WRITESTR    LD        A,(DE)                         ; Fetch character from string
+              CP        '$'                            ; Is it '$'?
+              RET       Z                              ; If so, we are done
+              PUSH      DE                             ; We are gonna need E
+              LD        E,A                            ; For C_WRITE
+              CALL      C_WRITE                        ; Sent char to console
+              POP       DE                             ; Recover the pointer
+              INC       DE                             ; Advance pointer
+              JR        C_WRITESTR                     ; Handle the next char
 
 ; Read console string
 ; DE points to the string buffer. First byte of the buffer is the capacity
@@ -4852,137 +4853,137 @@ C_WRITESTR    LD        A,(DE)            ; Fetch character from string
 ; byte.  Entry finishes on CR or when the buffer is filled up.
 ; Supports ^H, DEL for deleting a character
 ; Supports ^Z for deleting entire line (since ^X doesn't work with RDKEY
-C_READSTR    LD        H,D                ; HL will be the working pointer
-            LD        L,E                ; ...
-            INC        HL                ; Advance to first character ...
-            INC        HL                ; ... 3rd byte of the buffer
-            PUSH    DE                ; Put DE into IX
-            POP        IX                ; ...
-            XOR        A                ; Set number of chars read to zero
-            LD        (IX+1),A        ; ...
+C_READSTR     LD        H,D                            ; HL will be the working pointer
+              LD        L,E                            ; ...
+              INC       HL                             ; Advance to first character ...
+              INC       HL                             ; ... 3rd byte of the buffer
+              PUSH      DE                             ; Put DE into IX
+              POP       IX                             ; ...
+              XOR       A                              ; Set number of chars read to zero
+              LD        (IX+1),A                       ; ...
 ; The console input routine must NOT echo before we know whether
 ; editing is legal. In particular, backspace on an empty line must not
 ; move the cursor into the CCP's A> prompt.  Both ^H and DEL erase one.
-CRSL1       PUSH    HL
-            CALL    SCHIDLE       ; allow background jobs while CCP idle
-            CALL    BIOSCONIN        ; Raw key, no premature echo
-            POP        HL
-            CALL    TSKKEY         ; includes Open Apple+arrows
-            JP      C,CR_SELCMD
-            OR      A
-            JP      Z,CRSL1       ; OA-current beep: no CCP input
-            CP        3                ; Preserve CP/M Ctrl-C abort
-            JP        Z,BDOSWARM
-            CP      13
-            JR      Z,CRSEND
-            CP        10
-            JR        Z,CRSEND
-            CP        8
-            JR        Z,CRSS2
-            CP        7FH
-            JR        Z,CRSS2
-            CP        26
-            JR        Z,CRSS3
-            LD        B,A
-            LD        A,(IX+0)        ; Buffer capacity
-            SUB        (IX+1)
-            RET        Z                ; Full: accept/echo nothing else
-            LD        (HL),B
-            INC        HL
-            INC        (IX+1)
-            LD        E,B
-            PUSH    HL
-            CALL    C_WRITE            ; Echo accepted character
-            POP        HL
-            JR        CRSL1
-CRSEND        LD        E,A                ; Echo line terminator
-            CALL    C_WRITE
-            RET
-CRSS2        LD        A,(IX+1)        ; Nothing to erase?
-            OR        A
-            JP        Z,CRSL1            ; Do not touch prompt or cursor
-            DEC        HL
-            DEC        (IX+1)
-            PUSH    HL
-            LD        E,8                ; Back up, erase, back up
-            CALL    C_WRITE
-            LD        E,' '
-            CALL    C_WRITE
-            LD        E,8
-            CALL    C_WRITE
-            POP        HL
-            JP        CRSL1
-CRSS3        LD        A,0                ; Set character count to zero to ...
-            LD        (IX+1),A        ; ... cancel the entire entry
-            LD        E,13            ; Print a carriage return
-            CALL     C_WRITE            ; ...
-            RET                        ; Done
+CRSL1         PUSH      HL
+              CALL      SCHIDLE                        ; allow background jobs while CCP idle
+              CALL      BIOSCONIN                      ; Raw key, no premature echo
+              POP       HL
+              CALL      TSKKEY                         ; includes Open Apple+arrows
+              JP        C,CR_SELCMD
+              OR        A
+              JP        Z,CRSL1                        ; OA-current beep: no CCP input
+              CP        3                              ; Preserve CP/M Ctrl-C abort
+              JP        Z,BDOSWARM
+              CP        13
+              JR        Z,CRSEND
+              CP        10
+              JR        Z,CRSEND
+              CP        8
+              JR        Z,CRSS2
+              CP        7FH
+              JR        Z,CRSS2
+              CP        26
+              JR        Z,CRSS3
+              LD        B,A
+              LD        A,(IX+0)                       ; Buffer capacity
+              SUB       (IX+1)
+              RET       Z                              ; Full: accept/echo nothing else
+              LD        (HL),B
+              INC       HL
+              INC       (IX+1)
+              LD        E,B
+              PUSH      HL
+              CALL      C_WRITE                        ; Echo accepted character
+              POP       HL
+              JR        CRSL1
+CRSEND        LD        E,A                            ; Echo line terminator
+              CALL      C_WRITE
+              RET
+CRSS2         LD        A,(IX+1)                       ; Nothing to erase?
+              OR        A
+              JP        Z,CRSL1                        ; Do not touch prompt or cursor
+              DEC       HL
+              DEC       (IX+1)
+              PUSH      HL
+              LD        E,8                            ; Back up, erase, back up
+              CALL      C_WRITE
+              LD        E,' '
+              CALL      C_WRITE
+              LD        E,8
+              CALL      C_WRITE
+              POP       HL
+              JP        CRSL1
+CRSS3         LD        A,0                            ; Set character count to zero to ...
+              LD        (IX+1),A                       ; ... cancel the entire entry
+              LD        E,13                           ; Print a carriage return
+              CALL      C_WRITE                        ; ...
+              RET                                      ; Done
 
 ; Returns 0 in A and L if no chars waiting, non zero otherwise
-C_STAT      LD      A,(IOBYTE)
-            AND     3
-            CP      1
-            JP      NZ,IOZERO
-            LD      A,3                ; CMD=3 means peek at keyboard
-            LD        (CMD),A            ; ...
-            LD        (SOFTCARD),A    ; Do it
-            LD        A,(AREG)        ; Grab the return value
-            LD        L,A                ; Copy A to L
-            RET
+C_STAT        LD        A,(IOBYTE)
+              AND       3
+              CP        1
+              JP        NZ,IOZERO
+              LD        A,3                            ; CMD=3 means peek at keyboard
+              LD        (CMD),A                        ; ...
+              LD        (SOFTCARD),A                   ; Do it
+              LD        A,(AREG)                       ; Grab the return value
+              LD        L,A                            ; Copy A to L
+              RET
 
 ; Returns system type in B and H, BDOS version in A and L
-S_BDOSVER    LD        B,0                ; System is 8080 CP/M
-            LD        H,B                ; Also in H
-            LD        A,22H            ; Pretend to v2.2
-            LD        L,A                ; Also in A
-            RET
+S_BDOSVER     LD        B,0                            ; System is 8080 CP/M
+              LD        H,B                            ; Also in H
+              LD        A,22H                          ; Pretend to v2.2
+              LD        L,A                            ; Also in A
+              RET
 
 ; Reset disks
 ; Makes A: drive the default
-DRV_ALLRST    LD        HL,0000H        ; Reset clears the software R/O vector
-            LD        (ROVEC),HL
-            LD        A,(CURDRV)        ; Contains both user & current drive
-            AND        0F0H            ; Set drive to 0, meaning A:
-            LD        (CURDRV),A        ; Store in CURDRV
-            LD        BC,FILEBUF        ; FILEBUF is at 0080H
-            LD        (DMAADDR),BC    ; Reset DMA address
-            LD        HL,FLMLI        ; Pass address of 6502 JSR instruction
-            CALL    PRODOS            ; Invoke ProDOS MLI to flush all files
-            RET
+DRV_ALLRST    LD        HL,0000H                       ; Reset clears the software R/O vector
+              LD        (ROVEC),HL
+              LD        A,(CURDRV)                     ; Contains both user & current drive
+              AND       0F0H                           ; Set drive to 0, meaning A:
+              LD        (CURDRV),A                     ; Store in CURDRV
+              LD        BC,FILEBUF                     ; FILEBUF is at 0080H
+              LD        (DMAADDR),BC                   ; Reset DMA address
+              LD        HL,FLMLI                       ; Pass address of 6502 JSR instruction
+              CALL      PRODOS                         ; Invoke ProDOS MLI to flush all files
+              RET
 
 ; Select disk
 ; Disk to select is passed in E (A: is 0, B: is 1 etc.)
 ; Return 00 for success, 0FFH for error in A and L
-DRV_SET        LD        A,E                ; Prepare to compare disk number
-            CP        16                ; Support 16 'drives' A: - P:
-            JR        NC,DSERR        ; If A>15 ... error
-            LD        B,A                ; Stash in B for now
-            LD        A,(CURDRV)        ; Has both user number & current drive
-            AND        0F0H            ; Mask out old drive number
-            OR        B                ; Replace with new drive number
-            LD        (CURDRV),A        ; Store the requested drive number
+DRV_SET       LD        A,E                            ; Prepare to compare disk number
+              CP        16                             ; Support 16 'drives' A: - P:
+              JR        NC,DSERR                       ; If A>15 ... error
+              LD        B,A                            ; Stash in B for now
+              LD        A,(CURDRV)                     ; Has both user number & current drive
+              AND       0F0H                           ; Mask out old drive number
+              OR        B                              ; Replace with new drive number
+              LD        (CURDRV),A                     ; Store the requested drive number
 
-            ; Mark this drive in the 16-bit BDOS login vector.
-            ; B is drive number 0..15 (A:..P:).
-            LD        HL,0001H        ; Bit 0 means drive A:
-            LD        A,B
-            OR        A
-            JR        Z,DSMARK
-DSMSHIFT    ADD        HL,HL            ; Shift mask left one drive
-            DEC        A
-            JR        NZ,DSMSHIFT
+              ; Mark this drive in the 16-bit BDOS login vector.
+              ; B is drive number 0..15 (A:..P:).
+              LD        HL,0001H                       ; Bit 0 means drive A:
+              LD        A,B
+              OR        A
+              JR        Z,DSMARK
+DSMSHIFT      ADD       HL,HL                          ; Shift mask left one drive
+              DEC       A
+              JR        NZ,DSMSHIFT
 DSMARK        LD        A,(LOGVEC)
-            OR        L
-            LD        (LOGVEC),A
-            LD        A,(LOGVEC+1)
-            OR        H
-            LD        (LOGVEC+1),A
+              OR        L
+              LD        (LOGVEC),A
+              LD        A,(LOGVEC+1)
+              OR        H
+              LD        (LOGVEC+1),A
 
-            XOR        A                ; A=0: Return code meaning success
-            JR        DSRET            ; 
-DSERR        LD        A,0FFH            ; Return code for error
-DSRET        LD        L,A                ; Return code in L too
-            RET
+              XOR       A                              ; A=0: Return code meaning success
+              JR        DSRET                          ;
+DSERR         LD        A,0FFH                         ; Return code for error
+DSRET         LD        L,A                            ; Return code in L too
+              RET
 
 ; Open file
 ; DE is the address of the FCB describing the file to open
@@ -4991,529 +4992,529 @@ DSRET        LD        L,A                ; Return code in L too
 ; Returns 0FFH if file not found
 ; Opening a file must NOT replace an ongoing BDOS wildcard directory search.
 ; ProDOS OPEN already checks existence; F_SFIRST is not needed here.
-F_OPEN        ; Explicit CP/M OPEN replaces any cached handle for this name.
-            ; This also initializes RC/CR from a fresh ProDOS GET_EOF.
-            PUSH    DE
-            LD        IX,PATHBUF
-            CALL    FCB2PATH
-            CALL    CACHECLS
-            POP        DE
-            OR        A
-            JP        NZ,FOERR
-            ; This is a new OPEN, even if the caller reused an old FCB.
-            ; Close old cached name first; then discard its user binding.
-            PUSH    DE
-            POP     IX
-            LD      (IX+0DH),0
-            LD      (IX+0EH),0
-            CALL    _F_OPEN
-            OR        A
-            RET        NZ
-            LD        A,(IY+0EH)    ; New physical ProDOS reference
-            CALL    GETIOADDR    ; Find its newly allocated slot
-            CALL    CACHEPUT    ; Cache the pathname in PATHBUF
-            ; Reserve S1 ($0D) for the USER at OPEN time. PIP [Gn]
-            ; switches USER again before reading this very same FCB.
-            LD      A,(CURDRV)
-            RRCA
-            RRCA
-            RRCA
-            RRCA
-            AND     00FH
-            OR      0A0H
-            LD      (IY+0DH),A
-            LD        (IY+0EH),07EH    ; Logical CP/M open marker (dBASE-safe)
-            XOR        A
-            LD        L,A
-            RET
+F_OPEN                      ; Explicit CP/M OPEN replaces any cached handle for this name.
+              ; This also initializes RC/CR from a fresh ProDOS GET_EOF.
+              PUSH      DE
+              LD        IX,PATHBUF
+              CALL      FCB2PATH
+              CALL      CACHECLS
+              POP       DE
+              OR        A
+              JP        NZ,FOERR
+              ; This is a new OPEN, even if the caller reused an old FCB.
+              ; Close old cached name first; then discard its user binding.
+              PUSH      DE
+              POP       IX
+              LD        (IX+0DH),0
+              LD        (IX+0EH),0
+              CALL      _F_OPEN
+              OR        A
+              RET       NZ
+              LD        A,(IY+0EH)                     ; New physical ProDOS reference
+              CALL      GETIOADDR                      ; Find its newly allocated slot
+              CALL      CACHEPUT                       ; Cache the pathname in PATHBUF
+              ; Reserve S1 ($0D) for the USER at OPEN time. PIP [Gn]
+              ; switches USER again before reading this very same FCB.
+              LD        A,(CURDRV)
+              RRCA
+              RRCA
+              RRCA
+              RRCA
+              AND       00FH
+              OR        0A0H
+              LD        (IY+0DH),A
+              LD        (IY+0EH),07EH                  ; Logical CP/M open marker (dBASE-safe)
+              XOR       A
+              LD        L,A
+              RET
 
 ; Alternative entrypoint used for opening ProDOS directory files
 ; and used by the CCP to load .COM files.  No directory lookup.
-_F_OPEN        LD        IX,PATHBUF        ; Destination buffer
-            CALL    FCB2PATH        ; Populate PATHLEN and PATH
+_F_OPEN       LD        IX,PATHBUF                     ; Destination buffer
+              CALL      FCB2PATH                       ; Populate PATHLEN and PATH
 
-            PUSH    DE                ; Copy pointer to FCB ...
-            POP        IY                ; ... into IY
+              PUSH      DE                             ; Copy pointer to FCB ...
+              POP       IY                             ; ... into IY
 
-            ; Work out which IOBUF to allocate for this file
-            CALL    CACHEFREE        ; Free slot or evict LRU cached file
-            CP        0FFH            ; Check for error
-            JP        Z,FOFULL        ; If no slots available, diagnostic
+              ; Work out which IOBUF to allocate for this file
+              CALL      CACHEFREE                      ; Free slot or evict LRU cached file
+              CP        0FFH                           ; Check for error
+              JP        Z,FOFULL                       ; If no slots available, diagnostic
 
-            LD        (TEMPBYTE),A    ; Record the buffer index in local var
-            LD        BC,OFFSET        ; Add offset to convert to 6502 address
-            ADD        HL,BC            ; ...
-            LD        (FOMLII),HL        ; Store in parameter list
+              LD        (TEMPBYTE),A                   ; Record the buffer index in local var
+              LD        BC,OFFSET                      ; Add offset to convert to 6502 address
+              ADD       HL,BC                          ; ...
+              LD        (FOMLII),HL                    ; Store in parameter list
 
-            LD        HL,FOMLI        ; Pass address of 6502 JSR instruction
-            CALL    PRODOS            ; Invoke ProDOS MLI
-            CP        0                ; See if there was an error
-            JP        NZ,FOERR        ; Handle error
+              LD        HL,FOMLI                       ; Pass address of 6502 JSR instruction
+              CALL      PRODOS                         ; Invoke ProDOS MLI
+              CP        0                              ; See if there was an error
+              JP        NZ,FOERR                       ; Handle error
 
-            ; Do not publish S2/claim an FRN slot before GET_EOF succeeds.
-            ; On failure, OPEN has nevertheless allocated a ProDOS handle:
-            ; close it using the ref number from FOMLIN, then return error.
-            LD        A,(FOMLIN)
-            LD        (GEMLIN),A
-            LD        (FCMLIN),A        ; Prepare cleanup CLOSE (no slot yet)
-            LD        HL,GEMLI
-            CALL    PRODOS            ; GET_EOF (24-bit size)
-            OR        A
-            JR        Z,FO_EOF_OK
-            LD        HL,FCMLI
-            CALL    PRODOS            ; CLOSE even if GET_EOF failed
-            JP        FOERR            ; Do not trust GEMLIE1..3 or FCB S2
-FO_EOF_OK    LD        A,(FOMLIN)
-            LD        (IY+0EH),A        ; Publish physical reference only now
+              ; Do not publish S2/claim an FRN slot before GET_EOF succeeds.
+              ; On failure, OPEN has nevertheless allocated a ProDOS handle:
+              ; close it using the ref number from FOMLIN, then return error.
+              LD        A,(FOMLIN)
+              LD        (GEMLIN),A
+              LD        (FCMLIN),A                     ; Prepare cleanup CLOSE (no slot yet)
+              LD        HL,GEMLI
+              CALL      PRODOS                         ; GET_EOF (24-bit size)
+              OR        A
+              JR        Z,FO_EOF_OK
+              LD        HL,FCMLI
+              CALL      PRODOS                         ; CLOSE even if GET_EOF failed
+              JP        FOERR                          ; Do not trust GEMLIE1..3 or FCB S2
+FO_EOF_OK     LD        A,(FOMLIN)
+              LD        (IY+0EH),A                     ; Publish physical reference only now
 
-            ; CP/M RC counts records in extent zero (maximum 128).
-            ; Round partial 128-byte records up; honour ProDOS's 24-bit EOF.
-            LD        A,(GEMLIE3)
-            OR        A
-            JR        NZ,FO_RC_FULL
-            LD        A,(GEMLIE2)
-            CP        40H            ; >= $4000 bytes (16 KiB)?
-            JR        NC,FO_RC_FULL
-            ; ceil(EOF/128) for EOF < $4000, with no 16-bit wrap.
-            LD        HL,(GEMLIE1)
-            LD        BC,127
-            ADD        HL,BC
-            LD        A,L
-            RLCA
-            AND        1
-            LD        B,A
-            LD        A,H
-            ADD        A,A
-            OR        B
-            JR        FO_RC_STORE
+              ; CP/M RC counts records in extent zero (maximum 128).
+              ; Round partial 128-byte records up; honour ProDOS's 24-bit EOF.
+              LD        A,(GEMLIE3)
+              OR        A
+              JR        NZ,FO_RC_FULL
+              LD        A,(GEMLIE2)
+              CP        40H                            ; >= $4000 bytes (16 KiB)?
+              JR        NC,FO_RC_FULL
+              ; ceil(EOF/128) for EOF < $4000, with no 16-bit wrap.
+              LD        HL,(GEMLIE1)
+              LD        BC,127
+              ADD       HL,BC
+              LD        A,L
+              RLCA
+              AND       1
+              LD        B,A
+              LD        A,H
+              ADD       A,A
+              OR        B
+              JR        FO_RC_STORE
 FO_RC_FULL    LD        A,80H
-FO_RC_STORE    LD        (IY+0FH),A
+FO_RC_STORE   LD        (IY+0FH),A
 
-            ; Set sequential record number to zero
-            XOR        A                ; Zero the sequential record number
-            LD        (IY+20H),A        ; ...
+              ; Set sequential record number to zero
+              XOR       A                              ; Zero the sequential record number
+              LD        (IY+20H),A                     ; ...
 
-            ; Store ProDOS FRN in slot FRN1 or FRN2
-            LD        A,(TEMPBYTE)    ; Obtain IOBUF idx (1,2)
-            LD        HL,FRN1-1        ; Compute address of FRN slot to use
-            LD        B,0                ; ...
-            LD        C,A                ; ...
-            ADD        HL,BC            ; ...
-            LD        A,(FOMLIN)        ; Get ProDOS file reference number
-            LD        (HL),A            ; Store in FRN slot
+              ; Store ProDOS FRN in slot FRN1 or FRN2
+              LD        A,(TEMPBYTE)                   ; Obtain IOBUF idx (1,2)
+              LD        HL,FRN1-1                      ; Compute address of FRN slot to use
+              LD        B,0                            ; ...
+              LD        C,A                            ; ...
+              ADD       HL,BC                          ; ...
+              LD        A,(FOMLIN)                     ; Get ProDOS file reference number
+              LD        (HL),A                         ; Store in FRN slot
 
-            XOR        A                ; Success
-            LD        L,A                ; Copy to L
-            RET                        ; Done
+              XOR       A                              ; Success
+              LD        L,A                            ; Copy to L
+              RET                                      ; Done
 
 ; Retain diagnostic on genuine buffer exhaustion while testing.
-FOFULL        PUSH    DE
-            LD        DE,FOFULLMSG
-            CALL    C_WRITESTR
-            POP        DE
-            JR        FOERR
-FOFULLMSG    DEFM    'NO IOBUF'
-            DEFB    13,'$'
+FOFULL        PUSH      DE
+              LD        DE,FOFULLMSG
+              CALL      C_WRITESTR
+              POP       DE
+              JR        FOERR
+FOFULLMSG     DEFM      'NO IOBUF'
+              DEFB      13,'$'
 
-FOERR        LD        A,0FFH            ; Error return status
-            LD        L,A                ; Copy to L
-            RET                        ; Done (error)
+FOERR         LD        A,0FFH                         ; Error return status
+              LD        L,A                            ; Copy to L
+              RET                                      ; Done (error)
 
 ; Close file
 ; DE is the address of the FCB describing the file to close
 ; Returns error codes in A and L:
-F_CLOSE        LD        H,D                ; Pointer to FCB ...
-            LD        L,E                ; ... into HL
-            LD        BC,0EH            ; Offset to S2 field (reserved field)
-            ADD        HL,BC            ; Compute address
-            LD        A,(HL)            ; Obtain file reference num from FCB S2
-            CP        07EH            ; Virtual CP/M open marker
-            JR        Z,FCVIRT
-            CP        0FEH            ; Accept old high-bit-set marker too
-            JR        NZ,FCPHYS
-FCVIRT        ; A virtual-close request must close the matching cache entry.
-            ; Names, not FCB addresses, identify cache entries (AUX staging).
-            PUSH    HL
-            PUSH    DE
-            PUSH    IX
-            LD        IX,PATHBUF
-            CALL    FCB2PATH
-            CALL    CACHECLS
-            POP        IX
-            POP        DE
-            POP        HL
-            OR        A
-            JP        NZ,FCERR
-            LD        (HL),0
-            JP        FCSUCC
-FCPHYS        CP        0                ; If file reference number is zero ...
-            JR        Z,FCSUCC        ; ... Nothing to do, just return
-            LD        (FCMLIN),A        ; Store in parameter list
-            LD        HL,FCMLI        ; Pass address of 6502 JSR instruction
-            CALL    PRODOS            ; Invoke ProDOS MLI
-            CP        0                ; See if there was an error
-            JR        NZ,FCERR        ; Handle error
+F_CLOSE       LD        H,D                            ; Pointer to FCB ...
+              LD        L,E                            ; ... into HL
+              LD        BC,0EH                         ; Offset to S2 field (reserved field)
+              ADD       HL,BC                          ; Compute address
+              LD        A,(HL)                         ; Obtain file reference num from FCB S2
+              CP        07EH                           ; Virtual CP/M open marker
+              JR        Z,FCVIRT
+              CP        0FEH                           ; Accept old high-bit-set marker too
+              JR        NZ,FCPHYS
+FCVIRT                      ; A virtual-close request must close the matching cache entry.
+              ; Names, not FCB addresses, identify cache entries (AUX staging).
+              PUSH      HL
+              PUSH      DE
+              PUSH      IX
+              LD        IX,PATHBUF
+              CALL      FCB2PATH
+              CALL      CACHECLS
+              POP       IX
+              POP       DE
+              POP       HL
+              OR        A
+              JP        NZ,FCERR
+              LD        (HL),0
+              JP        FCSUCC
+FCPHYS        CP        0                              ; If file reference number is zero ...
+              JR        Z,FCSUCC                       ; ... Nothing to do, just return
+              LD        (FCMLIN),A                     ; Store in parameter list
+              LD        HL,FCMLI                       ; Pass address of 6502 JSR instruction
+              CALL      PRODOS                         ; Invoke ProDOS MLI
+              CP        0                              ; See if there was an error
+              JR        NZ,FCERR                       ; Handle error
 
-            LD        A,(FCMLIN)        ; Obtain file reference number again
-            CALL    GETIOADDR        ; Returns FRN slot in A, IOBUF in HL
-            CP        0FFH            ; Check for error
-            JR        Z,FCERR            ; If FRN not found, error out
+              LD        A,(FCMLIN)                     ; Obtain file reference number again
+              CALL      GETIOADDR                      ; Returns FRN slot in A, IOBUF in HL
+              CP        0FFH                           ; Check for error
+              JR        Z,FCERR                        ; If FRN not found, error out
 
-            LD        HL,FRN1-1        ; Compute addr of FRN slot to set to zero
-            LD        B,0                ; ...
-            LD        C,A                ; ...
-            ADD        HL,BC            ; ...
-            XOR        A                ; And zero it
-            LD        (HL),A            ; ...
+              LD        HL,FRN1-1                      ; Compute addr of FRN slot to set to zero
+              LD        B,0                            ; ...
+              LD        C,A                            ; ...
+              ADD       HL,BC                          ; ...
+              XOR       A                              ; And zero it
+              LD        (HL),A                         ; ...
 
-            PUSH    DE                ; Copy pointer to FCB ...
-            POP        IX                ; ... into IX
-            XOR        A                ; Zero out the S2 field
-            LD        (IX+0EH),A        ; ...
+              PUSH      DE                             ; Copy pointer to FCB ...
+              POP       IX                             ; ... into IX
+              XOR       A                              ; Zero out the S2 field
+              LD        (IX+0EH),A                     ; ...
 
-FCSUCC        XOR        A                ; Return zero for error
-            LD        L,A                ; Return in L also
-            RET
+FCSUCC        XOR       A                              ; Return zero for error
+              LD        L,A                            ; Return in L also
+              RET
 
-FCERR        LD        A,0FFH            ; 0FFH for error
-            LD        L,A                ; Return code in L also
-            RET
+FCERR         LD        A,0FFH                         ; 0FFH for error
+              LD        L,A                            ; Return code in L also
+              RET
 
-DIRHDSZ        EQU        2BH                ; Size of ProDOS directory header
-FILEENTSZ    EQU        27H                ; Size of ProDOS file entry
-ENTPERBLK    EQU        0DH                ; Number of file entries per block
+DIRHDSZ       EQU       2BH                            ; Size of ProDOS directory header
+FILEENTSZ     EQU       27H                            ; Size of ProDOS file entry
+ENTPERBLK     EQU       0DH                            ; Number of file entries per block
 
 ; Search for first match of filename in directory
 ; DE is the address of the FCB describing the file to look for
 ; Returns error codes in A and L: 0 for success, 0FFH for not found
 ; The matching FCB is always in slot 0, so success return code always 0
-F_SFIRST     LD        (TEMPWORD),DE    ; Store pointer to search FCB
-            LD        A,(DE)            ; Obtain drive number
-            LD        (DFCBDRV),A        ; Copy to directory FCB
-            LD        DE,DFCB            ; Use this FCB to open the directory
-            CALL    F_CLOSE            ; Close the directory, if open
-            LD        DE,DFCB            ; Use this FCB to open the directory
-            CALL    _F_OPEN            ; Open the directory (avoiding recursion!)
-            OR        A            ; _F_OPEN returns status in A, not flags
-            JR        NZ,FSFS2        ; OPEN failed: return no match, no stale DFCB read
+F_SFIRST      LD        (TEMPWORD),DE                  ; Store pointer to search FCB
+              LD        A,(DE)                         ; Obtain drive number
+              LD        (DFCBDRV),A                    ; Copy to directory FCB
+              LD        DE,DFCB                        ; Use this FCB to open the directory
+              CALL      F_CLOSE                        ; Close the directory, if open
+              LD        DE,DFCB                        ; Use this FCB to open the directory
+              CALL      _F_OPEN                        ; Open the directory (avoiding recursion!)
+              OR        A                              ; _F_OPEN returns status in A, not flags
+              JR        NZ,FSFS2                       ; OPEN failed: return no match, no stale DFCB read
 
-FSFL1        LD        A,0FFH            ; Init CDBEXT to 0FFH (see CHKDIRBLK)
-            LD        (CDBEXT),A        ; ...
-            CALL    RDDIRBLK        ; Read first 512 byte block
-            CP        0                ; See if it was an error
-            JR        NZ,FSFS2        ; If error, assume EOF & just return
+FSFL1         LD        A,0FFH                         ; Init CDBEXT to 0FFH (see CHKDIRBLK)
+              LD        (CDBEXT),A                     ; ...
+              CALL      RDDIRBLK                       ; Read first 512 byte block
+              CP        0                              ; See if it was an error
+              JR        NZ,FSFS2                       ; If error, assume EOF & just return
 
-            ; RDDIRBLK sets CDBPTR/CDBCOUNT based on the link pointer.
-            LD        DE,(TEMPWORD)    ; Get ptr to search FCB back
-            CALL    CHKDIRBLK        ; Search directory block
-            CP        0                ; See if it was a match
-            JR        Z,FSFS1            ; If so, return
-            JR        FSFL1            ; Loop
+              ; RDDIRBLK sets CDBPTR/CDBCOUNT based on the link pointer.
+              LD        DE,(TEMPWORD)                  ; Get ptr to search FCB back
+              CALL      CHKDIRBLK                      ; Search directory block
+              CP        0                              ; See if it was a match
+              JR        Z,FSFS1                        ; If so, return
+              JR        FSFL1                          ; Loop
 
-FSFS1        LD        DE,(TEMPWORD)    ; Get ptr to search FCB back
-            LD        A,(DE)            ; Obtain drive number
-            LD        HL,(DMAADDR)    ; Pointer to FCB we are returning
-            LD        (HL),A            ; Copy drive number to FCB
-            XOR        A                ; Match
-            RET                        ;
-FSFS2        JR        FSNS2            ; Shared EOF cleanup (also OPEN failure)
+FSFS1         LD        DE,(TEMPWORD)                  ; Get ptr to search FCB back
+              LD        A,(DE)                         ; Obtain drive number
+              LD        HL,(DMAADDR)                   ; Pointer to FCB we are returning
+              LD        (HL),A                         ; Copy drive number to FCB
+              XOR       A                              ; Match
+              RET                                      ;
+FSFS2         JR        FSNS2                          ; Shared EOF cleanup (also OPEN failure)
 
 ; Search for next match of filename in directory
 ; The address of the FCB describing the file to look for is in TEMPWORD
 ; Returns error codes in A and L: 0 for success, 0FFH for not found
 ; The matching FCB is always in slot 0, so success return code always 0
-F_SNEXT        LD        A,(CDBCOUNT)    ; Entries already consumed
-            CP        ENTPERBLK        ; Last entry returned on previous search?
-            JR        NC,FSNNEW        ; Advance block before dereferencing
-FSNL1        LD        DE,(TEMPWORD)    ; Get ptr to search FCB back
-            CALL    CHKDIRBLK        ; Search directory block
-            CP        0                ; See if it was a match
-            JR        Z,FSNS1            ; If so, return
+F_SNEXT       LD        A,(CDBCOUNT)                   ; Entries already consumed
+              CP        ENTPERBLK                      ; Last entry returned on previous search?
+              JR        NC,FSNNEW                      ; Advance block before dereferencing
+FSNL1         LD        DE,(TEMPWORD)                  ; Get ptr to search FCB back
+              CALL      CHKDIRBLK                      ; Search directory block
+              CP        0                              ; See if it was a match
+              JR        Z,FSNS1                        ; If so, return
 
-FSNNEW        LD        A,0FFH            ; Init CDBEXT to 0FFH (see CHKDIRBLK)
-            LD        (CDBEXT),A        ; ...
-            CALL    RDDIRBLK        ; Read next 512 byte block
-            CP        0                ; See if it was an error
-            JR        NZ,FSNS2        ; If error, assume EOF & just return
+FSNNEW        LD        A,0FFH                         ; Init CDBEXT to 0FFH (see CHKDIRBLK)
+              LD        (CDBEXT),A                     ; ...
+              CALL      RDDIRBLK                       ; Read next 512 byte block
+              CP        0                              ; See if it was an error
+              JR        NZ,FSNS2                       ; If error, assume EOF & just return
 
-            ; RDDIRBLK sets CDBPTR/CDBCOUNT based on the link pointer.
-            JR        FSNL1            ; Loop
+              ; RDDIRBLK sets CDBPTR/CDBCOUNT based on the link pointer.
+              JR        FSNL1                          ; Loop
 
-FSNS1        LD        DE,(TEMPWORD)    ; Get ptr to search FCB back
-            LD        A,(DE)            ; Obtain drive number
-            LD        HL,(DMAADDR)    ; Pointer to FCB we are returning
-            LD        (HL),A            ; Copy drive number to FCB
-            XOR        A                ; Match
-            RET                        ;
-FSNS2        JP        SEARCH_EOF        ; Release directory FRN on end-of-search
+FSNS1         LD        DE,(TEMPWORD)                  ; Get ptr to search FCB back
+              LD        A,(DE)                         ; Obtain drive number
+              LD        HL,(DMAADDR)                   ; Pointer to FCB we are returning
+              LD        (HL),A                         ; Copy drive number to FCB
+              XOR       A                              ; Match
+              RET                                      ;
+FSNS2         JP        SEARCH_EOF                     ; Release directory FRN on end-of-search
 
 ; Delete file
 ; DE is the address of the FCB describing the file to delete
 ; Returns error codes in A and L:
 ; For an exact name, destroy directly; don't clobber the caller's
 ; F_SFIRST/F_SNEXT enumeration.  Preserve old logic for wildcards.
-F_DELETE    CALL    DCHKRO
-            JP        NZ,RODENY
-            LD        H,D
-            LD        L,E
-            INC        HL                ; Skip FCB drive byte
-            LD        B,11            ; 8 + 3 filename characters
-FD_CHKWILD    LD    A,(HL)
-            CP        '?'
-            JR        Z,FD_WILD
-            INC        HL
-            DJNZ    FD_CHKWILD
-            LD        IX,PATHBUF
-            CALL    FCB2PATH
-            CALL    CACHECLS        ; ProDOS DESTROY requires no cached OPEN
-            OR        A
-            JR        NZ,FD_ERR
-            LD        HL,FDMLI
-            CALL    PRODOS
-            CP        04EH            ; ProDOS access denied, not missing
-            JP        Z,ROFILE
-            OR        A
-            JR        Z,FD_OK
+F_DELETE      CALL      DCHKRO
+              JP        NZ,RODENY
+              LD        H,D
+              LD        L,E
+              INC       HL                             ; Skip FCB drive byte
+              LD        B,11                           ; 8 + 3 filename characters
+FD_CHKWILD    LD        A,(HL)
+              CP        '?'
+              JR        Z,FD_WILD
+              INC       HL
+              DJNZ      FD_CHKWILD
+              LD        IX,PATHBUF
+              CALL      FCB2PATH
+              CALL      CACHECLS                       ; ProDOS DESTROY requires no cached OPEN
+              OR        A
+              JR        NZ,FD_ERR
+              LD        HL,FDMLI
+              CALL      PRODOS
+              CP        04EH                           ; ProDOS access denied, not missing
+              JP        Z,ROFILE
+              OR        A
+              JR        Z,FD_OK
 FD_ERR        LD        A,0FFH
-FD_OK        LD        L,A
-            RET
+FD_OK         LD        L,A
+              RET
 ; Wildcard delete: never mutate an open ProDOS directory while using
 ; its cached search state.  Delete ONE match, close the directory before
 ; DESTROY, then restart F_SFIRST against the updated directory.
 ; The first search distinguishes "no matches" from "all matches deleted".
-FD_WILD        PUSH    DE                ; Save original wildcard FCB
-            CALL    F_SFIRST        ; Find the first matching file
-            CP        0FFH
-            JR        Z,FDS2            ; Nothing matched initially
-FDL1        LD        DE,DFCB
-            CALL    F_CLOSE            ; Release directory before DESTROY
-            OR        A
-            JR        NZ,FDS2
-            LD        DE,FILEBUF        ; Matching FCB from F_SFIRST
-            LD        IX,PATHBUF
-            CALL    FCB2PATH
-            CALL    CACHECLS        ; Close cached match before DESTROY
-            OR        A
-            JR        NZ,FDS2
-            LD        HL,FDMLI
-            CALL    PRODOS            ; ProDOS DESTROY
-            CP        04EH
-            JR        NZ,FDWCHK
-            LD        A,1
-            LD        (ROERROR),A    ; Delay report until search is closed
-            JR        FDS2
+FD_WILD       PUSH      DE                             ; Save original wildcard FCB
+              CALL      F_SFIRST                       ; Find the first matching file
+              CP        0FFH
+              JR        Z,FDS2                         ; Nothing matched initially
+FDL1          LD        DE,DFCB
+              CALL      F_CLOSE                        ; Release directory before DESTROY
+              OR        A
+              JR        NZ,FDS2
+              LD        DE,FILEBUF                     ; Matching FCB from F_SFIRST
+              LD        IX,PATHBUF
+              CALL      FCB2PATH
+              CALL      CACHECLS                       ; Close cached match before DESTROY
+              OR        A
+              JR        NZ,FDS2
+              LD        HL,FDMLI
+              CALL      PRODOS                         ; ProDOS DESTROY
+              CP        04EH
+              JR        NZ,FDWCHK
+              LD        A,1
+              LD        (ROERROR),A                    ; Delay report until search is closed
+              JR        FDS2
 FDWCHK        OR        A
-            JR        NZ,FDS2
-            POP        DE                ; Restore original wildcard
-            PUSH    DE
-            CALL    F_SFIRST        ; Re-read directory after deletion
-            CP        0FFH
-            JR        NZ,FDL1        ; Another match
-FDS1        XOR        A                ; Success: at least one file deleted
-            JR        FDSDONE
-FDS2        LD        A,0FFH            ; No match / ProDOS error
-FDSDONE        PUSH    AF                ; Preserve deletion status
-            LD        DE,DFCB
-            CALL    F_CLOSE            ; Release directory on every exit
-            POP        AF
-            POP        DE                ; Balance saved wildcard FCB
-            LD        L,A
-            PUSH    AF
-            LD        A,(ROERROR)
-            OR        A
-            JR        Z,FDWRET
-            POP        AF
-            JP        ROFILE
-FDWRET        POP        AF
-            RET
+              JR        NZ,FDS2
+              POP       DE                             ; Restore original wildcard
+              PUSH      DE
+              CALL      F_SFIRST                       ; Re-read directory after deletion
+              CP        0FFH
+              JR        NZ,FDL1                        ; Another match
+FDS1          XOR       A                              ; Success: at least one file deleted
+              JR        FDSDONE
+FDS2          LD        A,0FFH                         ; No match / ProDOS error
+FDSDONE       PUSH      AF                             ; Preserve deletion status
+              LD        DE,DFCB
+              CALL      F_CLOSE                        ; Release directory on every exit
+              POP       AF
+              POP       DE                             ; Balance saved wildcard FCB
+              LD        L,A
+              PUSH      AF
+              LD        A,(ROERROR)
+              OR        A
+              JR        Z,FDWRET
+              POP       AF
+              JP        ROFILE
+FDWRET        POP       AF
+              RET
 
 ; Read next record
 ; DE is the address of the FCB describing the file from which to read
 ; Returns error codes in A and L:
 ; 0 OK, 1 EOF, 9 invalid FCB, 10 media changed, 0FFH h/w error
-F_READ        PUSH    DE                ; Copy pointer to FCB ...
-            POP        IX                ; ... into IX
-            CALL    IO_BEGIN        ; Reopen logical CP/M FCB if needed
-            OR        A
-            JR        Z,F_READ_GO
-            LD        L,A                ; Invalid/open-error FCB
-            JP        IO_END            ; IO_END relocated to $A200 (out of JR range)
+F_READ        PUSH      DE                             ; Copy pointer to FCB ...
+              POP       IX                             ; ... into IX
+              CALL      IO_BEGIN                       ; Reopen logical CP/M FCB if needed
+              OR        A
+              JR        Z,F_READ_GO
+              LD        L,A                            ; Invalid/open-error FCB
+              JP        IO_END                         ; IO_END relocated to $A200 (out of JR range)
 F_READ_GO
-            LD        A,(IX+0EH)        ; Obtain file reference num from FCB S2
-            LD        (SMMLIN),A        ; Store in parameter list for SET_MARK
-            LD        (FRMLIN),A        ; Store in parameter list for READ
+              LD        A,(IX+0EH)                     ; Obtain file reference num from FCB S2
+              LD        (SMMLIN),A                     ; Store in parameter list for SET_MARK
+              LD        (FRMLIN),A                     ; Store in parameter list for READ
 
-            LD        A,(IX+20H)        ; Obtain sequential record number
-            LD        B,(IX+0CH)        ; Obtain extent from FCB
-            CALL    EXRC2MARK        ; Set all three ProDOS position bytes
-            LD        HL,SMMLI        ; Pass address of 6502 JSR instruction
-            CALL    PRODOS            ; Invoke ProDOS MLI - SET_MARK
-            CP        4DH                ; See if position was out of range
-            JP        Z,FREOF            ; If so, return EOF (1)
-            CP        43H                ; See if it was a bad file ref number
-            JP        Z,FRBFCB        ; If so, return invalid FCB code (9)
-            CP        0                ; See if there was some other error
-            JP        NZ,FRERR        ; If so, return code 0FFH (h/w error)
+              LD        A,(IX+20H)                     ; Obtain sequential record number
+              LD        B,(IX+0CH)                     ; Obtain extent from FCB
+              CALL      EXRC2MARK                      ; Set all three ProDOS position bytes
+              LD        HL,SMMLI                       ; Pass address of 6502 JSR instruction
+              CALL      PRODOS                         ; Invoke ProDOS MLI - SET_MARK
+              CP        4DH                            ; See if position was out of range
+              JP        Z,FREOF                        ; If so, return EOF (1)
+              CP        43H                            ; See if it was a bad file ref number
+              JP        Z,FRBFCB                       ; If so, return invalid FCB code (9)
+              CP        0                              ; See if there was some other error
+              JP        NZ,FRERR                       ; If so, return code 0FFH (h/w error)
 
-            LD        HL,(DMAADDR)    ; Write data starting at DMA buffer addr
-            LD        BC,OFFSET        ; Convert to 6502 address
-            ADD        HL,BC            ; ...
-            LD        (FRMLIDB),HL    ; Store I/O buffer address in parm list
+              LD        HL,(DMAADDR)                   ; Write data starting at DMA buffer addr
+              LD        BC,OFFSET                      ; Convert to 6502 address
+              ADD       HL,BC                          ; ...
+              LD        (FRMLIDB),HL                   ; Store I/O buffer address in parm list
 
-            CALL    READ128        ; READ and pad a short record with ^Z
-            CP        4CH                ; See if it was EOF
-            JR        Z,FREOF            ; If so, return EOF code (1)
-            CP        43H                ; See if it was a bad file ref number
-            JR        Z,FRBFCB        ; If so, return invalid FCB code (9)
-            CP        0                ; See if there was some other error
-            JR        NZ,FRERR        ; If so, return code 0FFH (h/w error)
+              CALL      READ128                        ; READ and pad a short record with ^Z
+              CP        4CH                            ; See if it was EOF
+              JR        Z,FREOF                        ; If so, return EOF code (1)
+              CP        43H                            ; See if it was a bad file ref number
+              JR        Z,FRBFCB                       ; If so, return invalid FCB code (9)
+              CP        0                              ; See if there was some other error
+              JR        NZ,FRERR                       ; If so, return code 0FFH (h/w error)
 
-            LD        A,(IX+20H)        ; Get sequential rec num from FCB
-            INC        (IX+20H)        ; Increment sequential record number
-            CP        127                ; Accumulator before increment
-            JR        NZ,FRS1            ; If not, then nothing else to do
-            XOR        A                ; Set sequential rec num to zero
-            LD        (IX+20H),A        ; ...
-            INC        (IX+0CH)        ; Increment the extent
+              LD        A,(IX+20H)                     ; Get sequential rec num from FCB
+              INC       (IX+20H)                       ; Increment sequential record number
+              CP        127                            ; Accumulator before increment
+              JR        NZ,FRS1                        ; If not, then nothing else to do
+              XOR       A                              ; Set sequential rec num to zero
+              LD        (IX+20H),A                     ; ...
+              INC       (IX+0CH)                       ; Increment the extent
 
-FRS1        XOR        A                ; Zero for success
-            JP        IO_END            ; Close transient handle
-FREOF        LD        A,1                ; EOF return code
-            JP        IO_END            ; Close transient handle
-FRBFCB        LD        A,9                ; Invalid FCB return code
-            JP        IO_END            ; Close transient handle
-FRERR        LD        A,0FFH            ; All other errors are 0FFH
-            JP        IO_END            ; Close transient handle
+FRS1          XOR       A                              ; Zero for success
+              JP        IO_END                         ; Close transient handle
+FREOF         LD        A,1                            ; EOF return code
+              JP        IO_END                         ; Close transient handle
+FRBFCB        LD        A,9                            ; Invalid FCB return code
+              JP        IO_END                         ; Close transient handle
+FRERR         LD        A,0FFH                         ; All other errors are 0FFH
+              JP        IO_END                         ; Close transient handle
 
 ; Write next record
 ; DE is the address of the FCB describing the file to which to write
 ; Returns error codes in A and L:
 ; 0 OK, 1 dir full, 2 disk full, 9 invalid FCB, 10 media changed, 0FFH h/w error
-F_WRITE        CALL    DCHKRO
-            JP        NZ,RODENY
-            PUSH    DE                ; Copy pointer to FCB ...
-            POP        IX                ; ... into IX
-            CALL    IO_BEGIN        ; Reopen logical CP/M FCB if needed
-            OR        A
-            JR        Z,F_WRITE_GO
-            JP        IO_END            ; Close transient handle
+F_WRITE       CALL      DCHKRO
+              JP        NZ,RODENY
+              PUSH      DE                             ; Copy pointer to FCB ...
+              POP       IX                             ; ... into IX
+              CALL      IO_BEGIN                       ; Reopen logical CP/M FCB if needed
+              OR        A
+              JR        Z,F_WRITE_GO
+              JP        IO_END                         ; Close transient handle
 F_WRITE_GO
-            LD        A,(IX+0EH)        ; Obtain file reference num from FCB S2
-            LD        (SMMLIN),A        ; Store in parameter list for SET_MARK
-            LD        (FWMLIN),A        ; Store in parameter list for WRITE
+              LD        A,(IX+0EH)                     ; Obtain file reference num from FCB S2
+              LD        (SMMLIN),A                     ; Store in parameter list for SET_MARK
+              LD        (FWMLIN),A                     ; Store in parameter list for WRITE
 
-            LD        A,(IX+20H)        ; Obtain sequential record number
-            LD        B,(IX+0CH)        ; Obtain extent from FCB
-            CALL    EXRC2MARK        ; Set full 24-bit ProDOS position
+              LD        A,(IX+20H)                     ; Obtain sequential record number
+              LD        B,(IX+0CH)                     ; Obtain extent from FCB
+              CALL      EXRC2MARK                      ; Set full 24-bit ProDOS position
 
-;;            ; DEBUG
-;;            PUSH    HL
-;;            LD        DE,HEXBUF        ; (obsolete diagnostic)
-;;            CALL    NUM2HEX            ; (obsolete diagnostic)
-;;            LD        DE,HEXBUF        ; Write hex value to console
-;;            CALL    C_WRITESTR        ;
-;;            POP        HL
-;;            ; END DEBUG
+;;          ; DEBUG
+;;          PUSH    HL
+;;          LD      DE,HEXBUF       ; (obsolete diagnostic)
+;;          CALL    NUM2HEX         ; (obsolete diagnostic)
+;;          LD      DE,HEXBUF       ; Write hex value to console
+;;          CALL    C_WRITESTR      ;
+;;          POP     HL
+;;          ; END DEBUG
 
-            LD        HL,SMMLI        ; Pass address of 6502 JSR instruction
-            CALL    PRODOS            ; Invoke ProDOS MLI - SET_MARK
-            CP        4DH                ; See if position was out of range
-            JP        Z,FWBFCB        ; If so, return invalid FCB code (9)
-            CP        43H                ; See if it was a bad file ref number
-            JP        Z,FWBFCB        ; If so, return invalid FCB code (9)
-            CP        0                ; See if there was some other error
-            JP        NZ,FWERR        ; If so, return code 0FFH (h/w error)
+              LD        HL,SMMLI                       ; Pass address of 6502 JSR instruction
+              CALL      PRODOS                         ; Invoke ProDOS MLI - SET_MARK
+              CP        4DH                            ; See if position was out of range
+              JP        Z,FWBFCB                       ; If so, return invalid FCB code (9)
+              CP        43H                            ; See if it was a bad file ref number
+              JP        Z,FWBFCB                       ; If so, return invalid FCB code (9)
+              CP        0                              ; See if there was some other error
+              JP        NZ,FWERR                       ; If so, return code 0FFH (h/w error)
 
-            LD        HL,(DMAADDR)    ; Write data at DMA address
-            LD        BC,OFFSET        ; Convert to 6502 address
-            ADD        HL,BC            ; ...
-            LD        (FWMLIDB),HL    ; Store I/O buffer address in parm list
+              LD        HL,(DMAADDR)                   ; Write data at DMA address
+              LD        BC,OFFSET                      ; Convert to 6502 address
+              ADD       HL,BC                          ; ...
+              LD        (FWMLIDB),HL                   ; Store I/O buffer address in parm list
 
-            LD        HL,FWMLI        ; Pass address of 6502 JSR instruction
-            CALL    PRODOS            ; Invoke ProDOS MLI - WRITE
-            CP        04EH            ; No write permission
-            JP        Z,FWRO
-            CP        43H                ; See if it is a bad reference number
-            JR        Z,FWBFCB        ; If so, return invalid FCB code (9)
-            CP        48H                ; See if it was an overrun error
-            JR        Z,FWDF            ; If so, return disk full code (2)
-            CP        0                ; See if there was some other error
-            JR        NZ,FWERR        ; If so, return code 0FFH (h/w error)
+              LD        HL,FWMLI                       ; Pass address of 6502 JSR instruction
+              CALL      PRODOS                         ; Invoke ProDOS MLI - WRITE
+              CP        04EH                           ; No write permission
+              JP        Z,FWRO
+              CP        43H                            ; See if it is a bad reference number
+              JR        Z,FWBFCB                       ; If so, return invalid FCB code (9)
+              CP        48H                            ; See if it was an overrun error
+              JR        Z,FWDF                         ; If so, return disk full code (2)
+              CP        0                              ; See if there was some other error
+              JR        NZ,FWERR                       ; If so, return code 0FFH (h/w error)
 
-            LD        A,(IX+20H)        ; Get sequential rec num from FCB
-            INC        (IX+20H)        ; Increment sequential record number
-            CP        127                ; Accumulator before increment
-            JR        NZ,FWS1            ; If not, then nothing else to do
-            XOR        A                ; Set sequential rec num to zero
-            LD        (IX+20H),A        ; ...
-            INC        (IX+0CH)        ; Increment the extent
+              LD        A,(IX+20H)                     ; Get sequential rec num from FCB
+              INC       (IX+20H)                       ; Increment sequential record number
+              CP        127                            ; Accumulator before increment
+              JR        NZ,FWS1                        ; If not, then nothing else to do
+              XOR       A                              ; Set sequential rec num to zero
+              LD        (IX+20H),A                     ; ...
+              INC       (IX+0CH)                       ; Increment the extent
 
-FWS1        XOR        A                ; Zero for success
-            JP        IO_END            ; Close transient handle
-FWBFCB        LD        A,9                ; Invalid FCB return code
-            JP        IO_END            ; Close transient handle
-FWDF        LD        A,2                ; Disk full return code
-            JP        IO_END            ; Close transient handle
-FWERR        LD        A,0FFH            ; All other errors are 0FFH
-            JP        IO_END            ; Close transient handle
-FWRO        LD        A,0FFH
-            CALL    IO_END            ; Release ProDOS handle first
-            JP        ROFILE
+FWS1          XOR       A                              ; Zero for success
+              JP        IO_END                         ; Close transient handle
+FWBFCB        LD        A,9                            ; Invalid FCB return code
+              JP        IO_END                         ; Close transient handle
+FWDF          LD        A,2                            ; Disk full return code
+              JP        IO_END                         ; Close transient handle
+FWERR         LD        A,0FFH                         ; All other errors are 0FFH
+              JP        IO_END                         ; Close transient handle
+FWRO          LD        A,0FFH
+              CALL      IO_END                         ; Release ProDOS handle first
+              JP        ROFILE
 
 ; Create (and open) file
 ; DE is the address of the FCB describing the file to create
 ; Returns error codes in A and L:
 ; 0 for success, 0FFH if file could not be created
-F_MAKE        CALL    DCHKRO
-            JP        NZ,RODENY
-            LD        IX,PATHBUF        ; Destination buffer
-            CALL    FCB2PATH        ; Populate PATHLEN and PATH
-            LD        HL,FMMLI        ; Pass address of 6502 JSR instruction
-            CALL    PRODOS            ; Invoke ProDOS MLI
-            CP      044H        ; ProDOS: parent directory not found?
-            JR      NZ,FM_CHECK
-            PUSH    DE
-            CALL    UD_MKDIR    ; create A1..A15 etc on first write
-            POP     DE
-            OR      A
-            JP      NZ,FMERR
-            LD      HL,FMMLI
-            CALL    PRODOS       ; retry the original file creation
-FM_CHECK    CP        0                ; See if there was an error
-            JR        NZ,FMERR        ; Handle error
-            CALL    F_OPEN            ; Open same FCB without touching search state
-            OR        A
-            RET        Z
-            PUSH    AF                ; Diagnostic for post-CREATE OPEN failure
-            PUSH    BC
-            PUSH    DE
-            LD        C,A
-            LD        DE,FMOPENMSG
-            CALL    C_WRITESTR
-            CALL    PRHEX            ; Underlying Zapple-II error code
-            POP        DE
-            POP        BC
-            POP        AF
-            RET
-FMERR        CP        04EH
-            JP        Z,ROFILE
-            PUSH    AF
-            PUSH    BC
-            PUSH    DE
-            LD        C,A
-            LD        DE,FMCRMSG
-            CALL    C_WRITESTR
-            CALL    PRHEX            ; Show true ProDOS CREATE error
-            POP        DE
-            POP        BC
-            POP        AF
-            LD        A,0FFH            ; 0FFH for error
-            LD        L,A                ; Return code in L also
-            RET
-FMCRMSG        DEFM    'Zapple-II CREATE error: '
-            DEFB    '$'
-FMOPENMSG    DEFM    'Zapple-II OPEN-after-CREATE error: '
-            DEFB    '$'
+F_MAKE        CALL      DCHKRO
+              JP        NZ,RODENY
+              LD        IX,PATHBUF                     ; Destination buffer
+              CALL      FCB2PATH                       ; Populate PATHLEN and PATH
+              LD        HL,FMMLI                       ; Pass address of 6502 JSR instruction
+              CALL      PRODOS                         ; Invoke ProDOS MLI
+              CP        044H                           ; ProDOS: parent directory not found?
+              JR        NZ,FM_CHECK
+              PUSH      DE
+              CALL      UD_MKDIR                       ; create A1..A15 etc on first write
+              POP       DE
+              OR        A
+              JP        NZ,FMERR
+              LD        HL,FMMLI
+              CALL      PRODOS                         ; retry the original file creation
+FM_CHECK      CP        0                              ; See if there was an error
+              JR        NZ,FMERR                       ; Handle error
+              CALL      F_OPEN                         ; Open same FCB without touching search state
+              OR        A
+              RET       Z
+              PUSH      AF                             ; Diagnostic for post-CREATE OPEN failure
+              PUSH      BC
+              PUSH      DE
+              LD        C,A
+              LD        DE,FMOPENMSG
+              CALL      C_WRITESTR
+              CALL      PRHEX                          ; Underlying Zapple-II error code
+              POP       DE
+              POP       BC
+              POP       AF
+              RET
+FMERR         CP        04EH
+              JP        Z,ROFILE
+              PUSH      AF
+              PUSH      BC
+              PUSH      DE
+              LD        C,A
+              LD        DE,FMCRMSG
+              CALL      C_WRITESTR
+              CALL      PRHEX                          ; Show true ProDOS CREATE error
+              POP       DE
+              POP       BC
+              POP       AF
+              LD        A,0FFH                         ; 0FFH for error
+              LD        L,A                            ; Return code in L also
+              RET
+FMCRMSG       DEFM      'Zapple-II CREATE error: '
+              DEFB      '$'
+FMOPENMSG     DEFM      'Zapple-II OPEN-after-CREATE error: '
+              DEFB      '$'
 
 ; Rename file
 ; DE is the address of the FCB describing the file to be renamed. The new name
@@ -5521,61 +5522,61 @@ FMOPENMSG    DEFM    'Zapple-II OPEN-after-CREATE error: '
 ; Returns error codes in A and L - 0 for success, 0FFH for file not found
 ; ProDOS RENAME checks that the old file exists.  Doing F_SFIRST here
 ; would clobber a wildcard enumeration in progress (notably PIP).
-F_RENAME    CALL    DCHKRO        ; Check source FCB drive
-            JP        NZ,RODENY
-            PUSH    DE
-            LD        HL,16
-            ADD        HL,DE
-            EX        DE,HL
-            CALL    DCHKRO        ; Check destination FCB drive
-            POP        DE
-            JP        NZ,RODENY
-            LD        IX,PATHBUF        ; Destination buffer 1
-            CALL    FCB2PATH        ; Populate PATHLEN and PATH for first file
-            PUSH    DE
-            CALL    CACHECLS        ; Close source cached handle before RENAME
-            POP        DE
-            OR        A
-            JP        NZ,FRNERR
-            LD        IX,PATHBUF2        ; Destination buffer 2
-            LD        H,D                ; DE -> HL for addition
-            LD        L,E                ; ...
-            LD        BC,16            ; Increment by 16 bytes to 2nd part of FCB
-            ADD        HL,BC            ; ...
-            LD        D,H                ; HL back to DE
-            LD        E,L                ; ...
-            CALL    FCB2PATH        ; Populate PATHLEN and PATH for second file
-            LD        HL,FRNMLI        ; Pass address of 6502 JSR instruction
-            CALL    PRODOS            ; Invoke ProDOS MLI
-            CP        0                ; See if there was an error
-            JR        NZ,FRNERR        ; Handle error
-            XOR        A                ; Success
-            LD        L,A                ; Return code in L also
-            RET
+F_RENAME      CALL      DCHKRO                         ; Check source FCB drive
+              JP        NZ,RODENY
+              PUSH      DE
+              LD        HL,16
+              ADD       HL,DE
+              EX        DE,HL
+              CALL      DCHKRO                         ; Check destination FCB drive
+              POP       DE
+              JP        NZ,RODENY
+              LD        IX,PATHBUF                     ; Destination buffer 1
+              CALL      FCB2PATH                       ; Populate PATHLEN and PATH for first file
+              PUSH      DE
+              CALL      CACHECLS                       ; Close source cached handle before RENAME
+              POP       DE
+              OR        A
+              JP        NZ,FRNERR
+              LD        IX,PATHBUF2                    ; Destination buffer 2
+              LD        H,D                            ; DE -> HL for addition
+              LD        L,E                            ; ...
+              LD        BC,16                          ; Increment by 16 bytes to 2nd part of FCB
+              ADD       HL,BC                          ; ...
+              LD        D,H                            ; HL back to DE
+              LD        E,L                            ; ...
+              CALL      FCB2PATH                       ; Populate PATHLEN and PATH for second file
+              LD        HL,FRNMLI                      ; Pass address of 6502 JSR instruction
+              CALL      PRODOS                         ; Invoke ProDOS MLI
+              CP        0                              ; See if there was an error
+              JR        NZ,FRNERR                      ; Handle error
+              XOR       A                              ; Success
+              LD        L,A                            ; Return code in L also
+              RET
 FRNERR        CP        04EH
-            JP        Z,ROFILE
-            LD        A,0FFH            ; 0FFH for error
-            LD        L,A                ; Return code in L also
-            RET
+              JP        Z,ROFILE
+              LD        A,0FFH                         ; 0FFH for error
+              LD        L,A                            ; Return code in L also
+              RET
 
 ; Return bitmap of logged-in drives in HL
-DRV_LOGVEC    LD        HL,(LOGVEC)        ;
-            RET
+DRV_LOGVEC    LD        HL,(LOGVEC)                    ;
+              RET
 
 ; Return current drive in A
-DRV_GET        LD        A,(CURDRV)        ; Contains user number & current drive
-            AND        0FH                ; Mask out user number
-            RET
+DRV_GET       LD        A,(CURDRV)                     ; Contains user number & current drive
+              AND       0FH                            ; Mask out user number
+              RET
 
 ; Set DMA address
 ; DMA address is passed in DE
-F_DMAOFF    LD        (DMAADDR),DE    ;
-            RET
+F_DMAOFF      LD        (DMAADDR),DE                   ;
+              RET
 
 ; Return CP/M allocation map. Build it from the actual ProDOS volume bitmap.
-DRV_AVEC    CALL    V_GETFREE
-            LD        HL,ALLOCVEC
-            RET
+DRV_AVEC      CALL      V_GETFREE
+              LD        HL,ALLOCVEC
+              RET
 
 ; Scan every ProDOS bitmap block, up to the full 65535-block (~32 MiB)
 ; volume limit. Set DSM to the actual volume capacity in 2 KiB CP/M blocks.
@@ -5593,200 +5594,200 @@ DRV_AVEC    CALL    V_GETFREE
 ; On errors, leave a fully allocated map, i.e. report zero free space.
 ; Last ProDOS READ_BLOCK error is recorded in VERR (for MAME debugger).
 ; ProDOS unit discovered from current prefix or drive directory by V_FINDUNIT.
-V_GETFREE    XOR        A
-            LD        (VERR),A
+V_GETFREE     XOR       A
+              LD        (VERR),A
 
-            ; Discover the physical unit containing the CP/M directories.
-            ; This must precede READ_BLOCK of the volume header.
-            CALL    V_FINDUNIT
-            JP        NZ,V_ERROR
+              ; Discover the physical unit containing the CP/M directories.
+              ; This must precede READ_BLOCK of the volume header.
+              CALL      V_FINDUNIT
+              JP        NZ,V_ERROR
 
-            LD        HL,2
-            LD        (VRBLK),HL
-            CALL    V_READ
-            JP        NZ,V_ERROR
+              LD        HL,2
+              LD        (VRBLK),HL
+              CALL      V_READ
+              JP        NZ,V_ERROR
 
-            ; Validate that READ_BLOCK returned a volume header.
-            LD        A,(VOLBUF+04H)
-            AND        0F0H
-            CP        0F0H
-            JP        NZ,V_BADHDR
-            LD        A,(VOLBUF+23H)
-            CP        027H
-            JP        NZ,V_BADHDR
-            LD        A,(VOLBUF+24H)
-            CP        00DH
-            JP        NZ,V_BADHDR
+              ; Validate that READ_BLOCK returned a volume header.
+              LD        A,(VOLBUF+04H)
+              AND       0F0H
+              CP        0F0H
+              JP        NZ,V_BADHDR
+              LD        A,(VOLBUF+23H)
+              CP        027H
+              JP        NZ,V_BADHDR
+              LD        A,(VOLBUF+24H)
+              CP        00DH
+              JP        NZ,V_BADHDR
 
-            ; How big is the actual volume? Retain this for debugging.
-            LD        HL,(VOLBUF+29H)
-            LD        (VTOTAL),HL
-            LD        A,H
-            OR        L
-            JP        Z,V_BADHDR
+              ; How big is the actual volume? Retain this for debugging.
+              LD        HL,(VOLBUF+29H)
+              LD        (VTOTAL),HL
+              LD        A,H
+              OR        L
+              JP        Z,V_BADHDR
 
-            ; All 16-bit ProDOS block numbers are representable.
-            ; 65535 blocks require 16 consecutive bitmap blocks.
-            LD        (VLEFT),HL
+              ; All 16-bit ProDOS block numbers are representable.
+              ; 65535 blocks require 16 consecutive bitmap blocks.
+              LD        (VLEFT),HL
 
-            ; CP/M virtual capacity: floor(number_of_512B_blocks / 4).
-            SRL        H
-            RR        L
-            SRL        H
-            RR        L
-            LD        A,H
-            OR        L
-            JP        Z,V_BADHDR
-            LD        (VNBLOCKS),HL
-            DEC        HL
-            LD        (DPBDSM),HL    ; Correct DSM, e.g. 399 for 800 KiB
+              ; CP/M virtual capacity: floor(number_of_512B_blocks / 4).
+              SRL       H
+              RR        L
+              SRL       H
+              RR        L
+              LD        A,H
+              OR        L
+              JP        Z,V_BADHDR
+              LD        (VNBLOCKS),HL
+              DEC       HL
+              LD        (DPBDSM),HL                    ; Correct DSM, e.g. 399 for 800 KiB
 
-            ; Last CP/M block uses byte DSM/8 and mask $80 >> (DSM%8).
-            LD        A,L
-            AND        07H
-            LD        B,A
-            LD        A,080H
-V_SETMASK    LD        C,A
-            LD        A,B
-            OR        A
-            LD        A,C
-            JR        Z,V_MASKDONE
-            SRL        A
-            DEC        B
-            JR        V_SETMASK
+              ; Last CP/M block uses byte DSM/8 and mask $80 >> (DSM%8).
+              LD        A,L
+              AND       07H
+              LD        B,A
+              LD        A,080H
+V_SETMASK     LD        C,A
+              LD        A,B
+              OR        A
+              LD        A,C
+              JR        Z,V_MASKDONE
+              SRL       A
+              DEC       B
+              JR        V_SETMASK
 V_MASKDONE    LD        (VFMASK),A
-            LD        HL,(DPBDSM)
-            SRL        H
-            RR        L
-            SRL        H
-            RR        L
-            SRL        H
-            RR        L
-            LD        DE,ALLOCVEC
-            ADD        HL,DE
-            LD        (VFEND),HL
+              LD        HL,(DPBDSM)
+              SRL       H
+              RR        L
+              SRL       H
+              RR        L
+              SRL       H
+              RR        L
+              LD        DE,ALLOCVEC
+              ADD       HL,DE
+              LD        (VFEND),HL
 
-            ; Reserve blocks 0..8 for CP/M directory / synthetic IDs.
-            LD        HL,(VNBLOCKS)
-            LD        DE,9
-            OR        A
-            SBC        HL,DE
-            JR        NC,V_BUDGETOK
-            LD        HL,0
+              ; Reserve blocks 0..8 for CP/M directory / synthetic IDs.
+              LD        HL,(VNBLOCKS)
+              LD        DE,9
+              OR        A
+              SBC       HL,DE
+              JR        NC,V_BUDGETOK
+              LD        HL,0
 V_BUDGETOK    LD        (VBUDGET),HL
 
-            ; Bitmap pointer must be a real volume block.
-            LD        HL,(VOLBUF+27H)
-            LD        A,H
-            OR        L
-            JP        Z,V_BADHDR
-            LD        (VRBLK),HL
-            LD        DE,(VTOTAL)
-            OR        A
-            SBC        HL,DE
-            JP        NC,V_BADHDR
-            LD        HL,0
-            LD        (VFREE),HL
+              ; Bitmap pointer must be a real volume block.
+              LD        HL,(VOLBUF+27H)
+              LD        A,H
+              OR        L
+              JP        Z,V_BADHDR
+              LD        (VRBLK),HL
+              LD        DE,(VTOTAL)
+              OR        A
+              SBC       HL,DE
+              JP        NC,V_BADHDR
+              LD        HL,0
+              LD        (VFREE),HL
 
-V_NEXTMAP    LD        HL,(VLEFT)
-            LD        A,H
-            OR        L
-            JP        Z,V_READY
-            CALL    V_READ
-            JP        NZ,V_ERROR
-            LD        HL,VOLBUF
-            LD        BC,512
-V_MAPBYTE    LD        E,(HL)
-            LD        D,8
-V_MAPBIT    PUSH    HL
-            LD        HL,(VLEFT)
-            LD        A,H
-            OR        L
-            JR        Z,V_DONEPOP
-            DEC        HL
-            LD        (VLEFT),HL
-            POP        HL
-            LD        A,E
-            ADD        A,A
-            LD        E,A
-            JR        NC,V_USED
-            PUSH    HL
-            LD        HL,(VFREE)
-            INC        HL
-            LD        (VFREE),HL
-            POP        HL
-V_USED        DEC        D
-            JR        NZ,V_MAPBIT
-            INC        HL
-            DEC        BC
-            LD        A,B
-            OR        C
-            JR        NZ,V_MAPBYTE
-            LD        HL,(VRBLK)
-            INC        HL
-            LD        (VRBLK),HL
-            JP        V_NEXTMAP
+V_NEXTMAP     LD        HL,(VLEFT)
+              LD        A,H
+              OR        L
+              JP        Z,V_READY
+              CALL      V_READ
+              JP        NZ,V_ERROR
+              LD        HL,VOLBUF
+              LD        BC,512
+V_MAPBYTE     LD        E,(HL)
+              LD        D,8
+V_MAPBIT      PUSH      HL
+              LD        HL,(VLEFT)
+              LD        A,H
+              OR        L
+              JR        Z,V_DONEPOP
+              DEC       HL
+              LD        (VLEFT),HL
+              POP       HL
+              LD        A,E
+              ADD       A,A
+              LD        E,A
+              JR        NC,V_USED
+              PUSH      HL
+              LD        HL,(VFREE)
+              INC       HL
+              LD        (VFREE),HL
+              POP       HL
+V_USED        DEC       D
+              JR        NZ,V_MAPBIT
+              INC       HL
+              DEC       BC
+              LD        A,B
+              OR        C
+              JR        NZ,V_MAPBYTE
+              LD        HL,(VRBLK)
+              INC       HL
+              LD        (VRBLK),HL
+              JP        V_NEXTMAP
 
-V_DONEPOP    POP        HL
-            JR        V_READY
+V_DONEPOP     POP       HL
+              JR        V_READY
 
 ; All input READ_BLOCK calls have finished. Reuse the $0800-$0FFF
 ; main-memory scratch area as the complete 2048-byte CP/M allocation map.
 ; 65535 ProDOS blocks / 4 = 16383 virtual 2K allocation blocks.
 ; Fill with $FF (occupied), then clear the free bits from the high end.
-V_READY        CALL    V_CLEARVEC
-            LD        HL,(VFREE)
-            SRL        H
-            RR        L
-            SRL        H
-            RR        L
-            LD        B,H
-            LD        C,L
+V_READY       CALL      V_CLEARVEC
+              LD        HL,(VFREE)
+              SRL       H
+              RR        L
+              SRL       H
+              RR        L
+              LD        B,H
+              LD        C,L
 
 V_MARK        LD        A,B
-            OR        C
-            RET        Z
-            LD        HL,(VBUDGET)
-            LD        A,H
-            OR        L
-            RET        Z        ; Cannot exceed actual disk capacity
-            DEC        HL
-            LD        (VBUDGET),HL
-            LD        HL,(VFEND)
-            LD        A,(VFMASK)
-            CPL
-            AND        (HL)
-            LD        (HL),A
-            LD        A,(VFMASK)
-            SRL        A
-            JR        NZ,V_NEXTBIT
-            LD        A,080H
-            DEC        HL
-V_NEXTBIT    LD        (VFMASK),A
-            LD        (VFEND),HL
-            DEC        BC
-            JR        V_MARK
+              OR        C
+              RET       Z
+              LD        HL,(VBUDGET)
+              LD        A,H
+              OR        L
+              RET       Z                              ; Cannot exceed actual disk capacity
+              DEC       HL
+              LD        (VBUDGET),HL
+              LD        HL,(VFEND)
+              LD        A,(VFMASK)
+              CPL
+              AND       (HL)
+              LD        (HL),A
+              LD        A,(VFMASK)
+              SRL       A
+              JR        NZ,V_NEXTBIT
+              LD        A,080H
+              DEC       HL
+V_NEXTBIT     LD        (VFMASK),A
+              LD        (VFEND),HL
+              DEC       BC
+              JR        V_MARK
 
-V_BADHDR    LD        A,0FEH        ; Invalid/misread volume header
-V_ERROR    LD        (VERR),A    ; Capture MLI status for MAME debug
-            ; On failure advertise zero free blocks.
-            CALL    V_CLEARVEC
-            RET
+V_BADHDR      LD        A,0FEH                         ; Invalid/misread volume header
+V_ERROR       LD        (VERR),A                       ; Capture MLI status for MAME debug
+              ; On failure advertise zero free blocks.
+              CALL      V_CLEARVEC
+              RET
 
 ; Fill the full 2K vector with $FF, not just 64 bytes. A $FF in the
 ; CP/M allocation bitmap means all blocks are used. LDIR copies the first
 ; $FF forward into each following location, taking 2047 transfers.
 V_CLEARVEC    LD        HL,ALLOCVEC
-            LD        (HL),0FFH
-            LD        DE,ALLOCVEC+1
-            LD        BC,2047
-            LDIR
-            RET
+              LD        (HL),0FFH
+              LD        DE,ALLOCVEC+1
+              LD        BC,2047
+              LDIR
+              RET
 
 V_READ        LD        HL,VRMLI
-            CALL    PRODOS
-            OR        A
-            RET
+              CALL      PRODOS
+              OR        A
+              RET
 
 ; Find and cache the one physical ProDOS unit hosting Zapple-II.
 ; CP/M A:..P: are subdirectories of the SAME ProDOS volume, so changing
@@ -5799,348 +5800,348 @@ V_READ        LD        HL,VRMLI
 ; All MLI scratch space is in 6502 main $0800-$097F; the direct console
 ; uses text page 1, and READ_BLOCK overwrites this scratch area later.
 ; Returns A=0 on success, else an MLI error or $FD (no matching volume).
-V_FINDUNIT  LD      A,(VUCVALID)
-            OR      A
-            JR      Z,VUCDISC
-            XOR     A               ; VRUNIT still holds our ProDOS unit
-            RET
-VUCDISC    XOR     A
-            LD        (VRUNIT),A    ; Invalidate stale unit on failure
-            LD        HL,VPMLI        ; GET_PREFIX -> $0800
-            CALL    PRODOS
-            OR        A
-            RET        NZ
-            LD        A,(VOLBUF)    ; Pascal prefix length
-            OR        A
-            JP        Z,V_NOPREFIX
-            LD        B,A
-            LD        HL,VOLBUF+1
-            LD        A,(HL)
-            CP        '/'
-            JP        NZ,V_NOMATCH
-            INC        HL
-            DEC        B
-            LD        C,0
-V_PFXNAME    LD        A,B
-            OR        A
-            JP        Z,V_NOMATCH
-            LD        A,(HL)
-            CP        '/'
-            JR        Z,V_PFXDONE
-            INC        C
-            LD        A,C
-            CP        16        ; ProDOS volume name is <= 15 chars
-            JP        NC,V_NOMATCH
-            INC        HL
-            DEC        B
-            JR        V_PFXNAME
-V_PFXDONE    LD        A,C
-            OR        A
-            JP        Z,V_NOMATCH
-            LD        (V_NAMELEN),A
-            LD        A,1
-            LD        (V_HASPFX),A
-            JR        V_ENUM
-V_NOPREFIX    XOR        A
-            LD        (V_HASPFX),A
+V_FINDUNIT    LD        A,(VUCVALID)
+              OR        A
+              JR        Z,VUCDISC
+              XOR       A                              ; VRUNIT still holds our ProDOS unit
+              RET
+VUCDISC       XOR       A
+              LD        (VRUNIT),A                     ; Invalidate stale unit on failure
+              LD        HL,VPMLI                       ; GET_PREFIX -> $0800
+              CALL      PRODOS
+              OR        A
+              RET       NZ
+              LD        A,(VOLBUF)                     ; Pascal prefix length
+              OR        A
+              JP        Z,V_NOPREFIX
+              LD        B,A
+              LD        HL,VOLBUF+1
+              LD        A,(HL)
+              CP        '/'
+              JP        NZ,V_NOMATCH
+              INC       HL
+              DEC       B
+              LD        C,0
+V_PFXNAME     LD        A,B
+              OR        A
+              JP        Z,V_NOMATCH
+              LD        A,(HL)
+              CP        '/'
+              JR        Z,V_PFXDONE
+              INC       C
+              LD        A,C
+              CP        16                             ; ProDOS volume name is <= 15 chars
+              JP        NC,V_NOMATCH
+              INC       HL
+              DEC       B
+              JR        V_PFXNAME
+V_PFXDONE     LD        A,C
+              OR        A
+              JP        Z,V_NOMATCH
+              LD        (V_NAMELEN),A
+              LD        A,1
+              LD        (V_HASPFX),A
+              JR        V_ENUM
+V_NOPREFIX    XOR       A
+              LD        (V_HASPFX),A
 
-V_ENUM        LD        HL,VOMLI        ; ON_LINE all units -> $0880
-            CALL    PRODOS
-            OR        A
-            RET        NZ
-            LD        IX,VOLBUF+080H
-            LD        B,16        ; Up to sixteen 16-byte records
+V_ENUM        LD        HL,VOMLI                       ; ON_LINE all units -> $0880
+              CALL      PRODOS
+              OR        A
+              RET       NZ
+              LD        IX,VOLBUF+080H
+              LD        B,16                           ; Up to sixteen 16-byte records
 V_SCAN        LD        A,(IX+0)
-            OR        A        ; End of returned list
-            JP        Z,V_NOMATCH
-            AND        0FH
-            JP        Z,V_NEXT    ; Device error; no name
-            LD        C,A        ; Name length from ON_LINE
-            LD        A,(V_HASPFX)
-            OR        A
-            JR        Z,V_TRYDIR
-            LD        A,(V_NAMELEN)
-            CP        C
-            JP        NZ,V_NEXT
-            PUSH    BC
-            PUSH    IX
-            POP        DE
-            INC        DE        ; First character of ON_LINE name
-            LD        HL,VOLBUF+2 ; After leading '/' in prefix
-            LD        B,C
-V_CMPNAME    LD        A,(DE)
-            AND        0DFH        ; Case-insensitive ProDOS name
-            LD        C,A
-            LD        A,(HL)
-            AND        0DFH
-            CP        C
-            JR        NZ,V_DIFFER
-            INC        DE
-            INC        HL
-            DJNZ    V_CMPNAME
-            POP        BC
-            JP        V_FOUND
-V_DIFFER    POP        BC
-            JP        V_NEXT
+              OR        A                              ; End of returned list
+              JP        Z,V_NOMATCH
+              AND       0FH
+              JP        Z,V_NEXT                       ; Device error; no name
+              LD        C,A                            ; Name length from ON_LINE
+              LD        A,(V_HASPFX)
+              OR        A
+              JR        Z,V_TRYDIR
+              LD        A,(V_NAMELEN)
+              CP        C
+              JP        NZ,V_NEXT
+              PUSH      BC
+              PUSH      IX
+              POP       DE
+              INC       DE                             ; First character of ON_LINE name
+              LD        HL,VOLBUF+2                    ; After leading '/' in prefix
+              LD        B,C
+V_CMPNAME     LD        A,(DE)
+              AND       0DFH                           ; Case-insensitive ProDOS name
+              LD        C,A
+              LD        A,(HL)
+              AND       0DFH
+              CP        C
+              JR        NZ,V_DIFFER
+              INC       DE
+              INC       HL
+              DJNZ      V_CMPNAME
+              POP       BC
+              JP        V_FOUND
+V_DIFFER      POP       BC
+              JP        V_NEXT
 
 ; Null prefix: see whether /VOLUME/<driveletter> is a ProDOS directory.
 ; The volume search order from ON_LINE mirrors relative pathname search.
-V_TRYDIR    PUSH    BC
-            LD        A,C
-            ADD        A,3        ; '/' + volume + '/' + drive
-            LD        (VOLBUF),A
-            LD        HL,VOLBUF+1
-            LD        (HL),'/'
-            INC        HL
-            PUSH    IX
-            POP        DE
-            INC        DE
-            LD        B,C
-V_MKPATH    LD        A,(DE)
-            LD        (HL),A
-            INC        HL
-            INC        DE
-            DJNZ    V_MKPATH
-            LD        (HL),'/'
-            INC        HL
-            LD        A,(CURDRV)
-            AND        0FH
-            ADD        A,'A'
-            LD        (HL),A
-            LD        HL,VFMLI        ; GET_FILE_INFO on absolute path
-            CALL    PRODOS
-            OR        A
-            JR        NZ,V_TRYNEXT
-            LD        A,(VFTYPE)
-            CP        0FH        ; $0F is a ProDOS subdirectory
-            JR        NZ,V_TRYNEXT
-            POP        BC
-            JR        V_FOUND
-V_TRYNEXT    POP        BC
+V_TRYDIR      PUSH      BC
+              LD        A,C
+              ADD       A,3                            ; '/' + volume + '/' + drive
+              LD        (VOLBUF),A
+              LD        HL,VOLBUF+1
+              LD        (HL),'/'
+              INC       HL
+              PUSH      IX
+              POP       DE
+              INC       DE
+              LD        B,C
+V_MKPATH      LD        A,(DE)
+              LD        (HL),A
+              INC       HL
+              INC       DE
+              DJNZ      V_MKPATH
+              LD        (HL),'/'
+              INC       HL
+              LD        A,(CURDRV)
+              AND       0FH
+              ADD       A,'A'
+              LD        (HL),A
+              LD        HL,VFMLI                       ; GET_FILE_INFO on absolute path
+              CALL      PRODOS
+              OR        A
+              JR        NZ,V_TRYNEXT
+              LD        A,(VFTYPE)
+              CP        0FH                            ; $0F is a ProDOS subdirectory
+              JR        NZ,V_TRYNEXT
+              POP       BC
+              JR        V_FOUND
+V_TRYNEXT     POP       BC
 V_NEXT        LD        DE,16
-            ADD        IX,DE
-            DEC        B
-            JP        NZ,V_SCAN
-V_NOMATCH    LD        A,0FDH        ; Prefix volume / CP/M dir not found
-            RET
-V_FOUND     LD      A,(IX+0)
-            AND     0F0H            ; ProDOS unit DSSS0000
-            LD      (VRUNIT),A
-            LD      A,1
-            LD      (VUCVALID),A    ; Keep it for ALL logical drives
-            XOR     A
-            RET
+              ADD       IX,DE
+              DEC       B
+              JP        NZ,V_SCAN
+V_NOMATCH     LD        A,0FDH                         ; Prefix volume / CP/M dir not found
+              RET
+V_FOUND       LD        A,(IX+0)
+              AND       0F0H                           ; ProDOS unit DSSS0000
+              LD        (VRUNIT),A
+              LD        A,1
+              LD        (VUCVALID),A                   ; Keep it for ALL logical drives
+              XOR       A
+              RET
 
 ; Software R/O for current drive: BDOS 28, drive 0 -> bit 0, etc.
-DRV_SETRO    LD        A,(CURDRV)
-            AND        0FH
-            LD        B,A
-            LD        HL,0001H
-            LD        A,B
-            OR        A
-            JR        Z,DSR_SET
-DSR_LOOP    ADD        HL,HL
-            DEC        A
-            JR        NZ,DSR_LOOP
-DSR_SET        LD        A,(ROVEC)
-            OR        L
-            LD        (ROVEC),A
-            LD        A,(ROVEC+1)
-            OR        H
-            LD        (ROVEC+1),A
-            XOR        A
-            LD        L,A
-            RET
+DRV_SETRO     LD        A,(CURDRV)
+              AND       0FH
+              LD        B,A
+              LD        HL,0001H
+              LD        A,B
+              OR        A
+              JR        Z,DSR_SET
+DSR_LOOP      ADD       HL,HL
+              DEC       A
+              JR        NZ,DSR_LOOP
+DSR_SET       LD        A,(ROVEC)
+              OR        L
+              LD        (ROVEC),A
+              LD        A,(ROVEC+1)
+              OR        H
+              LD        (ROVEC+1),A
+              XOR       A
+              LD        L,A
+              RET
 
 ; Return Z iff the FCB's effective drive is writable. Preserve DE, HL, BC.
 ; FCB drive=0 means CURDRV; 1..16 mean explicitly A:..P:.
 
 ; Return bitmap of read-only drives in HL
-DRV_ROVEC    LD        HL,(ROVEC)        ; Bit 0 of L is A:, bit 7 of H is P:
-            RET
+DRV_ROVEC     LD        HL,(ROVEC)                     ; Bit 0 of L is A:, bit 7 of H is P:
+              RET
 
 ; Return pointer to Drive Parameter Block in HL
-DRV_DPB        CALL    V_GETFREE        ; Set DSM from real volume first
-            LD        HL,DPB            ; Pointer to drive parameter block
-            RET
+DRV_DPB       CALL      V_GETFREE                      ; Set DSM from real volume first
+              LD        HL,DPB                         ; Pointer to drive parameter block
+              RET
 
 ; Get/set user number
 ; E contains the user number to set, or 0FFH to get current user number
 ; If E is 0FFH then user number is returned in A
-F_USERNUM   LD      A,E
-            CP      0FFH
-            JR      Z,FUNS1
-            AND     00FH        ; CP/M USER numbers modulo 16
-            RLCA
-            RLCA
-            RLCA
-            RLCA
-            LD      B,A
-            LD      A,(CURDRV)
-            AND     00FH
-            OR      B
-            LD      (CURDRV),A
-            XOR     A           ; SET has no meaningful return value
-            LD      L,A
-            RET
-FUNS1       LD      A,(CURDRV)
-            RRCA
-            RRCA
-            RRCA
-            RRCA
-            AND     00FH        ; no sign extension for user 8..15
-            LD      L,A
-            RET
+F_USERNUM     LD        A,E
+              CP        0FFH
+              JR        Z,FUNS1
+              AND       00FH                           ; CP/M USER numbers modulo 16
+              RLCA
+              RLCA
+              RLCA
+              RLCA
+              LD        B,A
+              LD        A,(CURDRV)
+              AND       00FH
+              OR        B
+              LD        (CURDRV),A
+              XOR       A                              ; SET has no meaningful return value
+              LD        L,A
+              RET
+FUNS1         LD        A,(CURDRV)
+              RRCA
+              RRCA
+              RRCA
+              RRCA
+              AND       00FH                           ; no sign extension for user 8..15
+              LD        L,A
+              RET
 
 ; Random access read record
 ; DE contains address of FCB describing the file to read
 ; Return code in A and L:
 ; 0 success, 1 reading unwritten data, 4 reading unwritten extent,
 ; 6 rec number out of range, 9 invalid FCB, 10 media changed, 0FFH h/w err
-F_READRAND    PUSH    DE                ; Copy pointer to FCB ...
-            POP        IX                ; ...
-            CALL    IO_BEGIN        ; Reopen logical CP/M FCB if needed
-            OR        A
-            JR        Z,F_READR_GO
-            JP        IO_END            ; Close transient handle
+F_READRAND    PUSH      DE                             ; Copy pointer to FCB ...
+              POP       IX                             ; ...
+              CALL      IO_BEGIN                       ; Reopen logical CP/M FCB if needed
+              OR        A
+              JR        Z,F_READR_GO
+              JP        IO_END                         ; Close transient handle
 F_READR_GO
-            LD        A,(IX+0EH)        ; Obtain file reference num from FCB S2
-            LD        (SMMLIN),A        ; Store in parameter list for SET_MARK
-            LD        (FRMLIN),A        ; Store in parameter list for READ
+              LD        A,(IX+0EH)                     ; Obtain file reference num from FCB S2
+              LD        (SMMLIN),A                     ; Store in parameter list for SET_MARK
+              LD        (FRMLIN),A                     ; Store in parameter list for READ
 
-            CALL    RAND2MARK        ; Set full 24-bit ProDOS position
-            JR        NC,FRR_MARK_OK
-            LD        A,6                ; Record outside ProDOS's 24-bit range
-            JP        IO_END
+              CALL      RAND2MARK                      ; Set full 24-bit ProDOS position
+              JR        NC,FRR_MARK_OK
+              LD        A,6                            ; Record outside ProDOS's 24-bit range
+              JP        IO_END
 FRR_MARK_OK
-            LD        HL,SMMLI        ; Pass address of 6502 JSR instruction
-            CALL    PRODOS            ; Invoke ProDOS MLI - SET_MARK
-            CP        4DH                ; See if position was out of range
-            JP        Z,FRRRUD        ; If so, return reading unwritten data (1)
-            CP        43H                ; See if it was a bad file ref number
-            JP        Z,FRRBFCB        ; If so, return invalid FCB code (9)
-            CP        0                ; See if there was some other error
-            JP        NZ,FRRERR        ; If so, return code 0FFH (h/w error)
+              LD        HL,SMMLI                       ; Pass address of 6502 JSR instruction
+              CALL      PRODOS                         ; Invoke ProDOS MLI - SET_MARK
+              CP        4DH                            ; See if position was out of range
+              JP        Z,FRRRUD                       ; If so, return reading unwritten data (1)
+              CP        43H                            ; See if it was a bad file ref number
+              JP        Z,FRRBFCB                      ; If so, return invalid FCB code (9)
+              CP        0                              ; See if there was some other error
+              JP        NZ,FRRERR                      ; If so, return code 0FFH (h/w error)
 
-            LD        HL,(DMAADDR)    ; Write data starting at DMA buffer addr
-            LD        BC,OFFSET        ; Convert to 6502 address
-            ADD        HL,BC            ; ...
-            LD        (FRMLIDB),HL    ; Store I/O buffer address in parm list
-            CALL    READ128        ; READ and pad a short record with ^Z
-            CP        4CH                ; See if it was EOF
-            JR        Z,FRRRUD        ; If so, return EOF code (1)
-            CP        43H                ; See if it was a bad file ref number
-            JP        Z,FRBFCB        ; If so, return invalid FCB code (9)
-            CP        0                ; See if there was some other error
-            JR        NZ,FRRERR        ; If so, return code 0FFH (h/w error)
+              LD        HL,(DMAADDR)                   ; Write data starting at DMA buffer addr
+              LD        BC,OFFSET                      ; Convert to 6502 address
+              ADD       HL,BC                          ; ...
+              LD        (FRMLIDB),HL                   ; Store I/O buffer address in parm list
+              CALL      READ128                        ; READ and pad a short record with ^Z
+              CP        4CH                            ; See if it was EOF
+              JR        Z,FRRRUD                       ; If so, return EOF code (1)
+              CP        43H                            ; See if it was a bad file ref number
+              JP        Z,FRBFCB                       ; If so, return invalid FCB code (9)
+              CP        0                              ; See if there was some other error
+              JR        NZ,FRRERR                      ; If so, return code 0FFH (h/w error)
 
-            LD        L,(IX+21H)        ; Load random record number (LSB)
-            LD        H,(IX+22H)        ; Load random record number (MSB)
-            CALL    RECS2EXRC        ; Puts extent in B, recs in A
-            LD        (IX+20H),A        ; Update sequential record number
-            LD        (IX+0CH),B        ; Update sequential extent number
+              LD        L,(IX+21H)                     ; Load random record number (LSB)
+              LD        H,(IX+22H)                     ; Load random record number (MSB)
+              CALL      RECS2EXRC                      ; Puts extent in B, recs in A
+              LD        (IX+20H),A                     ; Update sequential record number
+              LD        (IX+0CH),B                     ; Update sequential extent number
 
-            XOR        A                ; Zero for success
-            JP        IO_END            ; Close transient handle
-FRRRUD        LD        A,1                ; Reading unwritten data return code
-            JP        IO_END            ; Close transient handle
-FRRBFCB        LD        A,9                ; Invalid FCB return code
-            JP        IO_END            ; Close transient handle
-FRRERR        LD        A,0FFH            ; All other errors are 0FFH
-            JP        IO_END            ; Close transient handle
+              XOR       A                              ; Zero for success
+              JP        IO_END                         ; Close transient handle
+FRRRUD        LD        A,1                            ; Reading unwritten data return code
+              JP        IO_END                         ; Close transient handle
+FRRBFCB       LD        A,9                            ; Invalid FCB return code
+              JP        IO_END                         ; Close transient handle
+FRRERR        LD        A,0FFH                         ; All other errors are 0FFH
+              JP        IO_END                         ; Close transient handle
 
 ; Random access write record
 ; DE contains address of FCB describing the file to write
 ; Return code in A and L:
 ; 0 success, 1 reading unwritten data, 4 reading unwritten extent,
 ; 6 rec number out of range, 9 invalid FCB, 10 media changed, 0FFH h/w err
-F_WRITERAND    CALL    DCHKRO
-            JP        NZ,RODENY
-            PUSH    DE                ; Copy pointer to FCB ...
-            POP        IX                ; ...
-            CALL    IO_BEGIN        ; Reopen logical CP/M FCB if needed
-            OR        A
-            JR        Z,F_WRTR_GO
-            JP        IO_END            ; Close transient handle
+F_WRITERAND   CALL      DCHKRO
+              JP        NZ,RODENY
+              PUSH      DE                             ; Copy pointer to FCB ...
+              POP       IX                             ; ...
+              CALL      IO_BEGIN                       ; Reopen logical CP/M FCB if needed
+              OR        A
+              JR        Z,F_WRTR_GO
+              JP        IO_END                         ; Close transient handle
 F_WRTR_GO
-            LD        A,(IX+0EH)        ; Obtain file reference num from FCB S2
-            LD        (GEMLIN),A        ; Store in parameter list for GET_EOF
-            LD        (SEMLIN),A        ; Store in parameter list for SET_EOF
-            LD        (SMMLIN),A        ; Store in parameter list for SET_MARK
-            LD        (FWMLIN),A        ; Store in parameter list for WRITE
+              LD        A,(IX+0EH)                     ; Obtain file reference num from FCB S2
+              LD        (GEMLIN),A                     ; Store in parameter list for GET_EOF
+              LD        (SEMLIN),A                     ; Store in parameter list for SET_EOF
+              LD        (SMMLIN),A                     ; Store in parameter list for SET_MARK
+              LD        (FWMLIN),A                     ; Store in parameter list for WRITE
 
-            LD        HL,GEMLI        ; Pass address of 6502 JSR instruction
-            CALL    PRODOS            ; Invoke ProDOS MLI - GET_EOF
-            OR        A            ; A nonzero means GEMLIE1..3 are invalid
-            JP        NZ,FWRERR        ; IO_END releases transient handle
+              LD        HL,GEMLI                       ; Pass address of 6502 JSR instruction
+              CALL      PRODOS                         ; Invoke ProDOS MLI - GET_EOF
+              OR        A                              ; A nonzero means GEMLIE1..3 are invalid
+              JP        NZ,FWRERR                      ; IO_END releases transient handle
 
-            CALL    RAND2MARK        ; Full 24-bit offset, carry if out of range
-            JR        NC,FWR_MARK_OK
-            LD        A,6
-            JP        IO_END
+              CALL      RAND2MARK                      ; Full 24-bit offset, carry if out of range
+              JR        NC,FWR_MARK_OK
+              LD        A,6
+              JP        IO_END
 FWR_MARK_OK
-            ; Compare 24-bit EOF against requested position.
-            LD        A,(GEMLIE1)
-            LD        HL,SMMLIP1
-            SUB        (HL)
-            INC        HL
-            LD        A,(GEMLIE2)
-            SBC        A,(HL)
-            INC        HL
-            LD        A,(GEMLIE3)
-            SBC        A,(HL)
-            JR        NC,FWRS1
+              ; Compare 24-bit EOF against requested position.
+              LD        A,(GEMLIE1)
+              LD        HL,SMMLIP1
+              SUB       (HL)
+              INC       HL
+              LD        A,(GEMLIE2)
+              SBC       A,(HL)
+              INC       HL
+              LD        A,(GEMLIE3)
+              SBC       A,(HL)
+              JR        NC,FWRS1
 
-            LD        HL,(SMMLIP1)
-            LD        (SEMLIE1),HL
-            LD        A,(SMMLIP3)
-            LD        (SEMLIE3),A
-            LD        HL,SEMLI        ; Pass address of 6502 JSR instruction
-            CALL    PRODOS            ; Invoke ProDOS MLI - SET_EOF
-            OR        A            ; On failure, do NOT attempt SET_MARK/WRITE
-            JP        NZ,FWRERR        ; IO_END releases transient handle
+              LD        HL,(SMMLIP1)
+              LD        (SEMLIE1),HL
+              LD        A,(SMMLIP3)
+              LD        (SEMLIE3),A
+              LD        HL,SEMLI                       ; Pass address of 6502 JSR instruction
+              CALL      PRODOS                         ; Invoke ProDOS MLI - SET_EOF
+              OR        A                              ; On failure, do NOT attempt SET_MARK/WRITE
+              JP        NZ,FWRERR                      ; IO_END releases transient handle
 
-FWRS1        LD        HL,SMMLI        ; Pass address of 6502 JSR instruction
-            CALL    PRODOS            ; Invoke ProDOS MLI - SET_MARK
-            CP        4DH                ; See if position was out of range
-            JP        Z,FWRBFCB        ; If so, return invalid FCB code (9)
-            CP        43H                ; See if it was a bad file ref number
-            JP        Z,FWRBFCB        ; If so, return invalid FCB code (9)
-            CP        0                ; See if there was some other error
-            JP        NZ,FWRERR        ; If so, return code 0FFH (h/w error)
+FWRS1         LD        HL,SMMLI                       ; Pass address of 6502 JSR instruction
+              CALL      PRODOS                         ; Invoke ProDOS MLI - SET_MARK
+              CP        4DH                            ; See if position was out of range
+              JP        Z,FWRBFCB                      ; If so, return invalid FCB code (9)
+              CP        43H                            ; See if it was a bad file ref number
+              JP        Z,FWRBFCB                      ; If so, return invalid FCB code (9)
+              CP        0                              ; See if there was some other error
+              JP        NZ,FWRERR                      ; If so, return code 0FFH (h/w error)
 
-            LD        HL,(DMAADDR)    ; Get DMA buffer address
-            LD        BC,OFFSET        ; Convert to 6502 address
-            ADD        HL,BC            ; ...
-            LD        (FWMLIDB),HL    ; Store I/O buffer address in parm list
-            LD        HL,FWMLI        ; Pass address of 6502 JSR instruction
-            CALL    PRODOS            ; Invoke ProDOS MLI - WRITE
-            CP        43H                ; See if it was a bad file ref number
-            JR        Z,FWRBFCB        ; If so, return invalid FCB code (9)
-            CP        48H                ; See if it was a bad file ref number
-            JR        Z,FWRDF            ; If so, return invalid FCB code (9)
-            CP        0                ; See if there was some other error
-            JR        NZ,FWRERR        ; If so, return code 0FFH (h/w error)
+              LD        HL,(DMAADDR)                   ; Get DMA buffer address
+              LD        BC,OFFSET                      ; Convert to 6502 address
+              ADD       HL,BC                          ; ...
+              LD        (FWMLIDB),HL                   ; Store I/O buffer address in parm list
+              LD        HL,FWMLI                       ; Pass address of 6502 JSR instruction
+              CALL      PRODOS                         ; Invoke ProDOS MLI - WRITE
+              CP        43H                            ; See if it was a bad file ref number
+              JR        Z,FWRBFCB                      ; If so, return invalid FCB code (9)
+              CP        48H                            ; See if it was a bad file ref number
+              JR        Z,FWRDF                        ; If so, return invalid FCB code (9)
+              CP        0                              ; See if there was some other error
+              JR        NZ,FWRERR                      ; If so, return code 0FFH (h/w error)
 
-            LD        L,(IX+21H)        ; Load random record number (LSB)
-            LD        H,(IX+22H)        ; Load random record number (MSB)
-            CALL    RECS2EXRC        ; Puts extent in B, recs in A
-            LD        (IX+20H),A        ; Update sequential record number
-            LD        (IX+0CH),B        ; Update sequential extent number
+              LD        L,(IX+21H)                     ; Load random record number (LSB)
+              LD        H,(IX+22H)                     ; Load random record number (MSB)
+              CALL      RECS2EXRC                      ; Puts extent in B, recs in A
+              LD        (IX+20H),A                     ; Update sequential record number
+              LD        (IX+0CH),B                     ; Update sequential extent number
 
-            XOR        A                ; Zero for success
-            JP        IO_END            ; Close transient handle
-FWRBFCB        LD        A,9                ; Invalid FCB return code
-            JP        IO_END            ; Close transient handle
-FWRDF        LD        A,2                ; Disk fill return code
-            JP        IO_END            ; Close transient handle
+              XOR       A                              ; Zero for success
+              JP        IO_END                         ; Close transient handle
+FWRBFCB       LD        A,9                            ; Invalid FCB return code
+              JP        IO_END                         ; Close transient handle
+FWRDF         LD        A,2                            ; Disk fill return code
+              JP        IO_END                         ; Close transient handle
 FWRERR        CP        04EH
-            JR        Z,FWRRO
-            LD        A,0FFH            ; All other errors are 0FFH
-            JP        IO_END            ; Close transient handle
-FWRRO        LD        A,0FFH
-            CALL    IO_END
-            JP        ROFILE
+              JR        Z,FWRRO
+              LD        A,0FFH                         ; All other errors are 0FFH
+              JP        IO_END                         ; Close transient handle
+FWRRO         LD        A,0FFH
+              CALL      IO_END
+              JP        ROFILE
 
 
 ; Compute file size (BDOS function 35) from the exact ProDOS EOF.
@@ -6152,252 +6153,252 @@ FWRRO        LD        A,0FFH
 ; GET_EOF, then CLOSE it.  Reuse a free I/O buffer from the two usable slots,
 ; but do not claim a slot or alter the caller's S2 / open-file state.
 ; Only the randomly accessed file's FCB is updated; DMAADDR is untouched.
-F_SIZE        PUSH    DE                ; Keep FCB pointer across ProDOS calls
-            LD        IX,PATHBUF        ; FCB2PATH needs its destination in IX
-            CALL    FCB2PATH
-            CALL    CACHEFND
-            OR        A
-            JR        Z,FS_TEMP
-            LD        (CMRU),A
-            PUSH    AF
-            LD        HL,CHITS
-            CALL    CINC16
-            POP        AF
-            CALL    CACHEREF
-            LD        (GEMLIN),A
-            LD        HL,GEMLI
-            CALL    PRODOS
-            OR        A
-            JP        NZ,FSERRPOP
-            JP        FS_MATH
-FS_TEMP        CALL    CACHEFREE        ; Only open temporarily on a miss
-            CP        0FFH
-            JP        Z,FSERRPOP
-            LD        BC,OFFSET        ; Convert Z80 to 6502 buffer address
-            ADD        HL,BC
-            LD        (FOMLII),HL
-            LD        HL,FOMLI        ; ProDOS OPEN
-            CALL    PRODOS
-            OR        A
-            JP        NZ,FSERRPOP    ; No file opened: nothing to close
+F_SIZE        PUSH      DE                             ; Keep FCB pointer across ProDOS calls
+              LD        IX,PATHBUF                     ; FCB2PATH needs its destination in IX
+              CALL      FCB2PATH
+              CALL      CACHEFND
+              OR        A
+              JR        Z,FS_TEMP
+              LD        (CMRU),A
+              PUSH      AF
+              LD        HL,CHITS
+              CALL      CINC16
+              POP       AF
+              CALL      CACHEREF
+              LD        (GEMLIN),A
+              LD        HL,GEMLI
+              CALL      PRODOS
+              OR        A
+              JP        NZ,FSERRPOP
+              JP        FS_MATH
+FS_TEMP       CALL      CACHEFREE                      ; Only open temporarily on a miss
+              CP        0FFH
+              JP        Z,FSERRPOP
+              LD        BC,OFFSET                      ; Convert Z80 to 6502 buffer address
+              ADD       HL,BC
+              LD        (FOMLII),HL
+              LD        HL,FOMLI                       ; ProDOS OPEN
+              CALL      PRODOS
+              OR        A
+              JP        NZ,FSERRPOP                    ; No file opened: nothing to close
 
-            LD        A,(FOMLIN)        ; Temporary ProDOS reference number
-            LD        (GEMLIN),A
-            LD        (FCMLIN),A
-            LD        HL,GEMLI        ; ProDOS GET_EOF, 24-bit byte count
-            CALL    PRODOS
-            PUSH    AF                ; Save GET_EOF result across CLOSE
-            LD        HL,FCMLI        ; Always CLOSE the temporary file
-            CALL    PRODOS
-            LD        B,A                ; CLOSE error, if any
-            POP        AF
-            OR        A
-            JP        NZ,FSERRPOP    ; GET_EOF failed
-            LD        A,B
-            OR        A
-            JP        NZ,FSERRPOP    ; CLOSE failed
+              LD        A,(FOMLIN)                     ; Temporary ProDOS reference number
+              LD        (GEMLIN),A
+              LD        (FCMLIN),A
+              LD        HL,GEMLI                       ; ProDOS GET_EOF, 24-bit byte count
+              CALL      PRODOS
+              PUSH      AF                             ; Save GET_EOF result across CLOSE
+              LD        HL,FCMLI                       ; Always CLOSE the temporary file
+              CALL      PRODOS
+              LD        B,A                            ; CLOSE error, if any
+              POP       AF
+              OR        A
+              JP        NZ,FSERRPOP                    ; GET_EOF failed
+              LD        A,B
+              OR        A
+              JP        NZ,FSERRPOP                    ; CLOSE failed
 
-FS_MATH        ; Shift 24-bit EOF right 7 to obtain 128-byte records.
-            ; A:H:L is the 24-bit value (high:middle:low).
-            ; E remembers whether the discarded low 7 bits are nonzero.
-            LD        A,(GEMLIE1)
-            LD        L,A
-            AND        7FH
-            LD        E,A
-            LD        A,(GEMLIE2)
-            LD        H,A
-            LD        A,(GEMLIE3)
-            LD        B,7
-FS_SHIFT    SRL        A
-            RR        H
-            RR        L
-            DJNZ    FS_SHIFT
-            LD        C,A                ; High byte of record count
-            LD        A,E                ; Round up partial final record
-            OR        A
-            JR        Z,FS_STORE
-            INC        HL
-            LD        A,H
-            OR        L
-            JR        NZ,FS_STORE
-            INC        C                ; Carry into 3rd record-count byte
-FS_STORE    POP        DE                ; Original caller's FCB
-            PUSH    DE
-            POP        IX
-            LD        (IX+21H),L        ; R0 (LSB)
-            LD        (IX+22H),H        ; R1
-            LD        (IX+23H),C        ; R2 (MSB)
-            XOR        A
-            LD        L,A
-            RET
-FSERRPOP    POP        DE                ; Leave FCB unchanged on failure
-            LD        A,0FFH
-            LD        L,A
-            RET
+FS_MATH                     ; Shift 24-bit EOF right 7 to obtain 128-byte records.
+              ; A:H:L is the 24-bit value (high:middle:low).
+              ; E remembers whether the discarded low 7 bits are nonzero.
+              LD        A,(GEMLIE1)
+              LD        L,A
+              AND       7FH
+              LD        E,A
+              LD        A,(GEMLIE2)
+              LD        H,A
+              LD        A,(GEMLIE3)
+              LD        B,7
+FS_SHIFT      SRL       A
+              RR        H
+              RR        L
+              DJNZ      FS_SHIFT
+              LD        C,A                            ; High byte of record count
+              LD        A,E                            ; Round up partial final record
+              OR        A
+              JR        Z,FS_STORE
+              INC       HL
+              LD        A,H
+              OR        L
+              JR        NZ,FS_STORE
+              INC       C                              ; Carry into 3rd record-count byte
+FS_STORE      POP       DE                             ; Original caller's FCB
+              PUSH      DE
+              POP       IX
+              LD        (IX+21H),L                     ; R0 (LSB)
+              LD        (IX+22H),H                     ; R1
+              LD        (IX+23H),C                     ; R2 (MSB)
+              XOR       A
+              LD        L,A
+              RET
+FSERRPOP      POP       DE                             ; Leave FCB unchanged on failure
+              LD        A,0FFH
+              LD        L,A
+              RET
 
 ; Update random access pointer
 ; DE contains the pointer to the FCB to update
 ; Sets the random access record of the FCB to the value of the last record
 ; read or written sequentially
-F_RANDREC    PUSH    DE                ; Copy pointer to FCB ...
-            POP        IX                ; ... into IX
-            LD        A,(IX+20H)        ; Obtain sequential record number
-            LD        B,(IX+0CH)        ; Obtain extent from FCB
-            CALL    EXRC2RECS        ; Leaves the length in records in HL
-            DEC        HL                ; Because F_READ/F_WRITE advance this
-            LD        (IX+21H),L        ; Store in random access pointer ...
-            LD        (IX+22H),H        ; ... In little endian format
-            LD        (IX+23H),0        ; Upper record-count byte
-            RET
+F_RANDREC     PUSH      DE                             ; Copy pointer to FCB ...
+              POP       IX                             ; ... into IX
+              LD        A,(IX+20H)                     ; Obtain sequential record number
+              LD        B,(IX+0CH)                     ; Obtain extent from FCB
+              CALL      EXRC2RECS                      ; Leaves the length in records in HL
+              DEC       HL                             ; Because F_READ/F_WRITE advance this
+              LD        (IX+21H),L                     ; Store in random access pointer ...
+              LD        (IX+22H),H                     ; ... In little endian format
+              LD        (IX+23H),0                     ; Upper record-count byte
+              RET
 
 ; Selectively reset disk drives
 ; DE contains bitmap of drives to reset (bit 0 of E if A:, bit 7 of D is P:)
 ; Returns A=00H if okay, A=FFH if error
 ; Resetting means removing the read-only status
-DRV_RESET    LD        A,E
-            CPL
-            LD        B,A
-            LD        A,(ROVEC)
-            AND        B
-            LD        (ROVEC),A
-            LD        A,D
-            CPL
-            LD        B,A
-            LD        A,(ROVEC+1)
-            AND        B
-            LD        (ROVEC+1),A
-            XOR        A
-            LD        L,A
-            RET
+DRV_RESET     LD        A,E
+              CPL
+              LD        B,A
+              LD        A,(ROVEC)
+              AND       B
+              LD        (ROVEC),A
+              LD        A,D
+              CPL
+              LD        B,A
+              LD        A,(ROVEC+1)
+              AND       B
+              LD        (ROVEC+1),A
+              XOR       A
+              LD        L,A
+              RET
 
 ; Make a ProDOS MLI call
 ; Address of 6502 JSR instruction in front of ProDOS parameter list is
 ; passed in in register pair HL, in Z80 address space
 ; Return code is passed back in A
-PRODOS        LD        BC,OFFSET        ; Add offset to convert Z80->6502 address
-            ADD        HL,BC            ; ...
-            LD        (ADDR),HL        ; Store it for 6502
-            LD        A,2                ; CMD=2 means ProDOS MLI call
-            LD        (CMD),A            ; ...
-            LD         (SOFTCARD),A    ; Do it!
-            LD        A,(AREG)        ; Get return code from the MLI call
-            RET
+PRODOS        LD        BC,OFFSET                      ; Add offset to convert Z80->6502 address
+              ADD       HL,BC                          ; ...
+              LD        (ADDR),HL                      ; Store it for 6502
+              LD        A,2                            ; CMD=2 means ProDOS MLI call
+              LD        (CMD),A                        ; ...
+              LD        (SOFTCARD),A                   ; Do it!
+              LD        A,(AREG)                       ; Get return code from the MLI call
+              RET
 
 ; Populate the PATH buffer (and PATHLEN) by copying from FCB
 ; If the FCB contains A:TEST____.TXT then the PATH buffer will be A/TEST.TXT
 ; Unrepresentable 8.3 names are escaped as Z.<13 base36 digits>
 ; DE contains a pointer to the FCB
 ; IX contains pointer to the path buffer into which to write
-FCB2PATH   PUSH    IX
-            POP     IY         ; IY points to Pascal length
-            INC     IX         ; IX points to first pathname byte
-            LD      A,(DE)
-            OR      A
-            JR      NZ,F2P_DRV
-            LD      A,(CURDRV)
-            AND     00FH
-            INC     A
-F2P_DRV     ADD     A,'A'-1
-            LD      (IX+0),A
-            INC     IX
-            LD      C,1         ; number of pathname prefix bytes
-            CALL    F2P_USER    ; A=bound user for open FCB; else current
-            OR      A
-            JR      Z,F2P_SLASH
-            CP      10
-            JR      C,F2P_ONED
-            SUB     10
-            PUSH    AF
-            LD      (IX+0),'1'
-            INC     IX
-            INC     C
-            POP     AF
-F2P_ONED    ADD     A,'0'
-            LD      (IX+0),A
-            INC     IX
-            INC     C
-F2P_SLASH   LD      (IX+0),'/'
-            INC     IX
-            INC     C
-            LD      H,D
-            LD      L,E
-            INC     HL          ; FCB first name char
-            LD      A,(HL)
-            AND     07FH
-            CP      ' '
-            JP      Z,F2PS7     ; open directory (blank filename)
-            CALL    B69PTH
-            OR      A
-            RET     NZ         ; escaped path, dynamic prefix included
-            LD      B,8
-F2PL1       LD      A,(HL)
-            AND     07FH
-            CP      ' '
-            JR      Z,F2PS3
-            LD      (IX+0),A
-            INC     C
-            INC     HL
-            INC     IX
-            DJNZ    F2PL1
+FCB2PATH      PUSH      IX
+              POP       IY                             ; IY points to Pascal length
+              INC       IX                             ; IX points to first pathname byte
+              LD        A,(DE)
+              OR        A
+              JR        NZ,F2P_DRV
+              LD        A,(CURDRV)
+              AND       00FH
+              INC       A
+F2P_DRV       ADD       A,'A'-1
+              LD        (IX+0),A
+              INC       IX
+              LD        C,1                            ; number of pathname prefix bytes
+              CALL      F2P_USER                       ; A=bound user for open FCB; else current
+              OR        A
+              JR        Z,F2P_SLASH
+              CP        10
+              JR        C,F2P_ONED
+              SUB       10
+              PUSH      AF
+              LD        (IX+0),'1'
+              INC       IX
+              INC       C
+              POP       AF
+F2P_ONED      ADD       A,'0'
+              LD        (IX+0),A
+              INC       IX
+              INC       C
+F2P_SLASH     LD        (IX+0),'/'
+              INC       IX
+              INC       C
+              LD        H,D
+              LD        L,E
+              INC       HL                             ; FCB first name char
+              LD        A,(HL)
+              AND       07FH
+              CP        ' '
+              JP        Z,F2PS7                        ; open directory (blank filename)
+              CALL      B69PTH
+              OR        A
+              RET       NZ                             ; escaped path, dynamic prefix included
+              LD        B,8
+F2PL1         LD        A,(HL)
+              AND       07FH
+              CP        ' '
+              JR        Z,F2PS3
+              LD        (IX+0),A
+              INC       C
+              INC       HL
+              INC       IX
+              DJNZ      F2PL1
 
-F2PS3      ; An empty extension has no dot (and never reads beyond FCB).
-            PUSH    HL
-            LD      HL,9
-            ADD     HL,DE       ; FCB first extension character
-            LD      A,(HL)
-            AND     07FH
-            POP     HL
-            CP      ' '
-            JP      Z,F2PS7
-F2PL2        LD        A,(HL)            ; Read next character from FCB
-            AND        07FH
-            CP        ' '                ; Is it space?
-            JR        NZ,F2PS4        ; If not, we are done eating!
-            INC        HL                ; Otherwise advance to next char
-            JR        F2PL2            ; And loop
+F2PS3                       ; An empty extension has no dot (and never reads beyond FCB).
+              PUSH      HL
+              LD        HL,9
+              ADD       HL,DE                          ; FCB first extension character
+              LD        A,(HL)
+              AND       07FH
+              POP       HL
+              CP        ' '
+              JP        Z,F2PS7
+F2PL2         LD        A,(HL)                         ; Read next character from FCB
+              AND       07FH
+              CP        ' '                            ; Is it space?
+              JR        NZ,F2PS4                       ; If not, we are done eating!
+              INC       HL                             ; Otherwise advance to next char
+              JR        F2PL2                          ; And loop
 
-F2PS4        LD        A,'.'            ; Separator is a period
-            LD        (IX+0),A        ; Write to buffer
-            INC        C                ; Count the character!
-            INC        IX                ; Advance to next character in buffer
-            LD        B,0                ; Use B to track num chars in extension
+F2PS4         LD        A,'.'                          ; Separator is a period
+              LD        (IX+0),A                       ; Write to buffer
+              INC       C                              ; Count the character!
+              INC       IX                             ; Advance to next character in buffer
+              LD        B,0                            ; Use B to track num chars in extension
 
-            ; Handle the extension - up to 3 characters
-F2PL3        LD        A,B                ; Number of extension chars copied
-            CP        3                ; Maximum of three
-            JR        Z,F2PS7
-            LD        A,(HL)            ; Obtain extension character
-            AND        07FH
-            CP        ' '                ; End of extension?
-            JR        Z,F2PS7
-            LD        (IX+0),A            ; Copy to PATH buffer (no lossy $/8 swap)
-            INC        C                ; Overall character count
-            INC        B                ; Extension character count
-            INC        HL                ; Next byte of filename in FCB
-            INC        IX                ; Next byte of PATH buffer
-            JR        F2PL3
+              ; Handle the extension - up to 3 characters
+F2PL3         LD        A,B                            ; Number of extension chars copied
+              CP        3                              ; Maximum of three
+              JR        Z,F2PS7
+              LD        A,(HL)                         ; Obtain extension character
+              AND       07FH
+              CP        ' '                            ; End of extension?
+              JR        Z,F2PS7
+              LD        (IX+0),A                       ; Copy to PATH buffer (no lossy $/8 swap)
+              INC       C                              ; Overall character count
+              INC       B                              ; Extension character count
+              INC       HL                             ; Next byte of filename in FCB
+              INC       IX                             ; Next byte of PATH buffer
+              JR        F2PL3
 
-F2PS7        LD        A,C                ; Store length of string
-            LD        (IY+0),A        ; We kept size byte in IY at start
-            RET                        ;
+F2PS7         LD        A,C                            ; Store length of string
+              LD        (IY+0),A                       ; We kept size byte in IY at start
+              RET                                      ;
 
 ; Clear FCB pointed to by DMAADDR
-CLRFCB        LD        HL,(DMAADDR)    ; 16-byte CP/M FCB header to zero
-            LD        C,16
-            XOR        A
-CFL1        LD        (HL),A
-            INC        HL
-            DEC        C
-            JR        NZ,CFL1
-            LD        HL,(DMAADDR)    ; FCB name/extension padded with spaces
-            INC        HL
-            LD        C,11
-            LD        A,' '
-CFL2        LD        (HL),A
-            INC        HL
-            DEC        C
-            JR        NZ,CFL2
-            RET
+CLRFCB        LD        HL,(DMAADDR)                   ; 16-byte CP/M FCB header to zero
+              LD        C,16
+              XOR       A
+CFL1          LD        (HL),A
+              INC       HL
+              DEC       C
+              JR        NZ,CFL1
+              LD        HL,(DMAADDR)                   ; FCB name/extension padded with spaces
+              INC       HL
+              LD        C,11
+              LD        A,' '
+CFL2          LD        (HL),A
+              INC       HL
+              DEC       C
+              JR        NZ,CFL2
+              RET
 
 ; This operation is almost the inverse of FCB2PATH.  It takes a pointer to the
 ; beginning of the ProDOS dirent and converts it to FCB format (8.3 with
@@ -6409,200 +6410,200 @@ CFL2        LD        (HL),A
 ; C controls whether file size is populated in FCB (C=0 disables file size)
 ; The FCB is written to the buffer pointed to by DMAADDR
 ; Trashes pretty much all registers (except IX, IY)
-NAME2FCB   XOR     A
-            LD      (B69BAD),A   ; only directory search cares about BAD
-            PUSH    BC               ; We will need C later
-            PUSH    HL                ; Remember source ProDOS dir entry for EOF
-            EX        DE,HL            ; Stash HL in DE for call to CLRFCB
-            CALL    CLRFCB            ; Clear FCB at DMAADDR
-            EX        DE,HL            ; Get file entry pointer back in HL
-    
-            LD        A,(HL)            ; Obtain first char of ProDOS dirent
-            AND        0FH                ; Mask to obtain length of the name
-            LD        C,A                ; Stash source character count in C
-            LD        DE,(DMAADDR)    ; Initialize DE as write pointer
-            LD        A,B                ; Move drive number to A
-            LD        (DE),A            ; Write drive number
-            LD        B,0                ; Use B to count chars written
+NAME2FCB      XOR       A
+              LD        (B69BAD),A                     ; only directory search cares about BAD
+              PUSH      BC                             ; We will need C later
+              PUSH      HL                             ; Remember source ProDOS dir entry for EOF
+              EX        DE,HL                          ; Stash HL in DE for call to CLRFCB
+              CALL      CLRFCB                         ; Clear FCB at DMAADDR
+              EX        DE,HL                          ; Get file entry pointer back in HL
 
-            ; Only 15-character names may use the Z.<13> escape.
-            LD      A,C
-            CP      15
-            JR      NZ,N2FL1
-            PUSH    BC
-            PUSH    HL
-            PUSH    DE
-            CALL    B69TRY
-            POP     DE
-            POP     HL
-            POP     BC
-            OR      A
-            JP      Z,N2FS6      ; decoded a valid CP/M FCB
-            CP      1
-            JP      NZ,N2FS6     ; malformed alias (B69BAD set)
-N2FL1        INC        HL                ; Advance source pointer
-            INC        DE                ; Advance destination pointer
-            LD        A,C                ; Get count of chars remaining
-            CP        0                ; If none left ...
-            JP        Z,N2FS6            ; We are done
-            LD        A,B                ; Get count of chars written
-            CP        8+3                ; If 8+3 chars have been written ...
-            JP        Z,N2FS6            ; We are done
-            LD        A,(HL)            ; Read character
-            CP        ':'                ; See if it is a colon - terminates filename
-            JR        Z,N2FS6            ; Prepare to copy the extension
-            CP        '.'                ; See if it is a period
-            JR        Z,N2FS2            ; Prepare to copy the extension
-            CP        '*'                ; See if it is an asterix
-            JR        Z,N2FS3            ; Handle asterix wildcard
-            LD        (DE),A            ; Write character verbatim
-            INC        B                ; Increment count of chars written
-N2FS1        DEC        C                ; Decrement count of chars remaining
-            JP        N2FL1            ; Loop
+              LD        A,(HL)                         ; Obtain first char of ProDOS dirent
+              AND       0FH                            ; Mask to obtain length of the name
+              LD        C,A                            ; Stash source character count in C
+              LD        DE,(DMAADDR)                   ; Initialize DE as write pointer
+              LD        A,B                            ; Move drive number to A
+              LD        (DE),A                         ; Write drive number
+              LD        B,0                            ; Use B to count chars written
 
-            ; Initialize DE, B to start processing the extension
-N2FS2        LD        DE,(DMAADDR)    ; Destination is start of extension
-            INC        DE                ;
-            INC        DE                ;
-            INC        DE                ;
-            INC        DE                ;
-            INC        DE                ;
-            INC        DE                ;
-            INC        DE                ;
-            INC        DE                ;
-            LD        B,8                ; 8 chars have been written
-            JR        N2FS1            ; Jump back into the read-write loop
+              ; Only 15-character names may use the Z.<13> escape.
+              LD        A,C
+              CP        15
+              JR        NZ,N2FL1
+              PUSH      BC
+              PUSH      HL
+              PUSH      DE
+              CALL      B69TRY
+              POP       DE
+              POP       HL
+              POP       BC
+              OR        A
+              JP        Z,N2FS6                        ; decoded a valid CP/M FCB
+              CP        1
+              JP        NZ,N2FS6                       ; malformed alias (B69BAD set)
+N2FL1         INC       HL                             ; Advance source pointer
+              INC       DE                             ; Advance destination pointer
+              LD        A,C                            ; Get count of chars remaining
+              CP        0                              ; If none left ...
+              JP        Z,N2FS6                        ; We are done
+              LD        A,B                            ; Get count of chars written
+              CP        8+3                            ; If 8+3 chars have been written ...
+              JP        Z,N2FS6                        ; We are done
+              LD        A,(HL)                         ; Read character
+              CP        ':'                            ; See if it is a colon - terminates filename
+              JR        Z,N2FS6                        ; Prepare to copy the extension
+              CP        '.'                            ; See if it is a period
+              JR        Z,N2FS2                        ; Prepare to copy the extension
+              CP        '*'                            ; See if it is an asterix
+              JR        Z,N2FS3                        ; Handle asterix wildcard
+              LD        (DE),A                         ; Write character verbatim
+              INC       B                              ; Increment count of chars written
+N2FS1         DEC       C                              ; Decrement count of chars remaining
+              JP        N2FL1                          ; Loop
 
-            ; Handle asterix wildcard character
-N2FS3        LD        A,B                ; See how many chars have been written
-            CP        8                ; >=8? If so we are in the extension
-            JR        C,N2FS4            ; If in main filename (not extension)
+              ; Initialize DE, B to start processing the extension
+N2FS2         LD        DE,(DMAADDR)                   ; Destination is start of extension
+              INC       DE                             ;
+              INC       DE                             ;
+              INC       DE                             ;
+              INC       DE                             ;
+              INC       DE                             ;
+              INC       DE                             ;
+              INC       DE                             ;
+              INC       DE                             ;
+              LD        B,8                            ; 8 chars have been written
+              JR        N2FS1                          ; Jump back into the read-write loop
 
-            ; Asterix in extension
-N2FL2        LD        A,'?'            ; We will write '?' to rest of extension
-            LD        (DE),A            ; Write character
-            INC        DE                ; Increment write pointer
-            INC        B                ; Increment character count
-            LD        A,B                ; See if we are done
-            CP        8+3                ; Filename+extension
-            JR        Z,N2FS6            ; We are done
-            JR        N2FL2            ; Loop
+              ; Handle asterix wildcard character
+N2FS3         LD        A,B                            ; See how many chars have been written
+              CP        8                              ; >=8? If so we are in the extension
+              JR        C,N2FS4                        ; If in main filename (not extension)
 
-N2FS4        ; Asterix in main filename
-N2FL3        LD        A,'?'            ; We will write '?' to rest of filename
-            LD        (DE),A            ; Write character
-            INC        DE                ; Increment write pointer
-            INC        B                ; Increment character count
-            LD        A,B                ; See if we are done
-            CP        8                ; Filename+extension
-            JR        Z,N2FS5            ; We are done - eat chars up until '.'
-            JR        N2FL3            ; Loop
+              ; Asterix in extension
+N2FL2         LD        A,'?'                          ; We will write '?' to rest of extension
+              LD        (DE),A                         ; Write character
+              INC       DE                             ; Increment write pointer
+              INC       B                              ; Increment character count
+              LD        A,B                            ; See if we are done
+              CP        8+3                            ; Filename+extension
+              JR        Z,N2FS6                        ; We are done
+              JR        N2FL2                          ; Loop
 
-N2FS5        ; Eat rest of chars up until '.'
-N2FL4        LD        A,(HL)            ; Get character
-            CP        '.'                ; See if it is a period
-            JP        Z,N2FS2            ; If so, go process the extension
-            INC        HL                ; Increment source pointer
-            DEC        C                ; Decrement count of chars remaining
-            LD        A,C                ; Get count of chars remaining
-            CP        0                ; If none left ...
-            JR        Z,N2FS6            ; We are done
-            JR        N2FL4            ; Loop
+N2FS4                       ; Asterix in main filename
+N2FL3         LD        A,'?'                          ; We will write '?' to rest of filename
+              LD        (DE),A                         ; Write character
+              INC       DE                             ; Increment write pointer
+              INC       B                              ; Increment character count
+              LD        A,B                            ; See if we are done
+              CP        8                              ; Filename+extension
+              JR        Z,N2FS5                        ; We are done - eat chars up until '.'
+              JR        N2FL3                          ; Loop
 
-            ; Handle file size info
-N2FS6        POP        HL                ; Source ProDOS file entry
-            POP        BC                ; Original size-request flag in C
-            LD        A,C
-            OR        A
-            RET        Z                ; FCB for parsing only; don't touch allocation bytes
+N2FS5                       ; Eat rest of chars up until '.'
+N2FL4         LD        A,(HL)                         ; Get character
+              CP        '.'                            ; See if it is a period
+              JP        Z,N2FS2                        ; If so, go process the extension
+              INC       HL                             ; Increment source pointer
+              DEC       C                              ; Decrement count of chars remaining
+              LD        A,C                            ; Get count of chars remaining
+              CP        0                              ; If none left ...
+              JR        Z,N2FS6                        ; We are done
+              JR        N2FL4                          ; Loop
 
-            ; ProDOS dir entry +$1E is access; bit 1 permits writing.
-            ; Reflect a locked file in the high bit of FCB+9 (T1').
-            PUSH    HL
-            LD        DE,01EH
-            ADD        HL,DE
-            LD        A,(HL)
-            AND        02H
-            JR        NZ,N2FADON
-            LD        HL,(DMAADDR)
-            LD        DE,9
-            ADD        HL,DE
-            LD        A,(HL)
-            OR        080H
-            LD        (HL),A
+              ; Handle file size info
+N2FS6         POP       HL                             ; Source ProDOS file entry
+              POP       BC                             ; Original size-request flag in C
+              LD        A,C
+              OR        A
+              RET       Z                              ; FCB for parsing only; don't touch allocation bytes
+
+              ; ProDOS dir entry +$1E is access; bit 1 permits writing.
+              ; Reflect a locked file in the high bit of FCB+9 (T1').
+              PUSH      HL
+              LD        DE,01EH
+              ADD       HL,DE
+              LD        A,(HL)
+              AND       02H
+              JR        NZ,N2FADON
+              LD        HL,(DMAADDR)
+              LD        DE,9
+              ADD       HL,DE
+              LD        A,(HL)
+              OR        080H
+              LD        (HL),A
 N2FADON
-            POP        HL
+              POP       HL
 
-            ; ProDOS file entry EOF is a 24-bit little-endian byte count
-            ; at offsets 21..23. blocks_used includes sapling/tree
-            ; index blocks and is *not* the logical length.
-            LD        DE,21
-            ADD        HL,DE
-            LD        E,(HL)            ; EOF low byte
-            INC        HL
-            LD        D,(HL)            ; EOF middle byte
-            INC        HL
-            LD        B,(HL)            ; EOF high byte
+              ; ProDOS file entry EOF is a 24-bit little-endian byte count
+              ; at offsets 21..23. blocks_used includes sapling/tree
+              ; index blocks and is *not* the logical length.
+              LD        DE,21
+              ADD       HL,DE
+              LD        E,(HL)                         ; EOF low byte
+              INC       HL
+              LD        D,(HL)                         ; EOF middle byte
+              INC       HL
+              LD        B,(HL)                         ; EOF high byte
 
-            ; EX is one byte in this implementation. Saturate at
-            ; 256 * 128 records = 4 MiB, represented by EX=255 RC=128.
-            LD        A,B
-            CP        40H
-            JP        NC,N2FMAX
+              ; EX is one byte in this implementation. Saturate at
+              ; 256 * 128 records = 4 MiB, represented by EX=255 RC=128.
+              LD        A,B
+              CP        40H
+              JP        NC,N2FMAX
 
-            ; Compute ceil(EOF / 128) using EOF >> 7 plus one
-            ; for any nonzero fractional record. Result in HL.
-            LD        A,E
-            AND        7FH
-            LD        C,0
-            JR        Z,N2FALGN
-            INC        C
-N2FALGN    LD        A,E
-            RLCA
-            AND        1
-            LD        L,A
-            LD        A,D
-            ADD        A,A
-            OR        L
-            LD        L,A
-            LD        A,D
-            RLCA
-            AND        1
-            LD        H,A
-            LD        A,B
-            ADD        A,A
-            OR        H
-            LD        H,A
-            LD        A,C
-            OR        A
-            JR        Z,N2FROUND
-            INC        HL
+              ; Compute ceil(EOF / 128) using EOF >> 7 plus one
+              ; for any nonzero fractional record. Result in HL.
+              LD        A,E
+              AND       7FH
+              LD        C,0
+              JR        Z,N2FALGN
+              INC       C
+N2FALGN       LD        A,E
+              RLCA
+              AND       1
+              LD        L,A
+              LD        A,D
+              ADD       A,A
+              OR        L
+              LD        L,A
+              LD        A,D
+              RLCA
+              AND       1
+              LD        H,A
+              LD        A,B
+              ADD       A,A
+              OR        H
+              LD        H,A
+              LD        A,C
+              OR        A
+              JR        Z,N2FROUND
+              INC       HL
 
-N2FROUND    PUSH    HL                ; Save total records for exact boundary
-            CALL    RECS2EXRC        ; B = quotient /128, A = remainder
-            POP        HL
-            LD        C,A
-            LD        A,H
-            OR        L
-            JR        Z,N2FSTORE    ; Zero-length file
-            LD        A,C
-            OR        A
-            JR        NZ,N2FSTORE
-            DEC        B                ; Exactly n*128 records: previous extent is full
-            LD        C,080H
-            JR        N2FSTORE
+N2FROUND      PUSH      HL                             ; Save total records for exact boundary
+              CALL      RECS2EXRC                      ; B = quotient /128, A = remainder
+              POP       HL
+              LD        C,A
+              LD        A,H
+              OR        L
+              JR        Z,N2FSTORE                     ; Zero-length file
+              LD        A,C
+              OR        A
+              JR        NZ,N2FSTORE
+              DEC       B                              ; Exactly n*128 records: previous extent is full
+              LD        C,080H
+              JR        N2FSTORE
 
-N2FMAX        LD        B,0FFH            ; Clip files >=4 MiB to largest EX/RC
-            LD        C,080H
+N2FMAX        LD        B,0FFH                         ; Clip files >=4 MiB to largest EX/RC
+              LD        C,080H
 
-N2FSTORE    LD        HL,(DMAADDR)
-            PUSH    HL
-            POP        IX
-            LD        (IX+0CH),B
-            LD        (IX+0FH),C
-            LD        A,C
-            CALL    N2FMAP
-            RET
+N2FSTORE      LD        HL,(DMAADDR)
+              PUSH      HL
+              POP       IX
+              LD        (IX+0CH),B
+              LD        (IX+0FH),C
+              LD        A,C
+              CALL      N2FMAP
+              RET
 
 ; Generate a synthetic CP/M 2.2 allocation map in the directory FCB.
 ; A = records in THIS extent (0..128), DMAADDR = returned FCB.
@@ -6619,48 +6620,48 @@ N2FSTORE    LD        HL,(DMAADDR)
 ; Used by F_SFIRST and F_SNEXT
 ; Trashes HL + registers trashed by F_READ (best to assume all of them!)
 ; Returns A=0 for success, A=0FFH on error
-RDDIRBLK    LD        HL,(DMAADDR)    ; Preserve caller's DMA address
-            PUSH    HL
-            LD        HL,DIRBUF1    ; Four consecutive 128-byte record buffers
-            LD        B,4
-RDBREAD    PUSH    BC            ; F_READ may destroy registers
-            PUSH    HL
-            LD        (DMAADDR),HL
-            LD        DE,DFCB
-            CALL    F_READ
-            POP        HL
-            POP        BC
-            OR        A            ; 0=success, any other status=error
-            JR        NZ,RDBS1
-            LD        DE,128
-            ADD        HL,DE
-            DJNZ    RDBREAD
+RDDIRBLK      LD        HL,(DMAADDR)                   ; Preserve caller's DMA address
+              PUSH      HL
+              LD        HL,DIRBUF1                     ; Four consecutive 128-byte record buffers
+              LD        B,4
+RDBREAD       PUSH      BC                             ; F_READ may destroy registers
+              PUSH      HL
+              LD        (DMAADDR),HL
+              LD        DE,DFCB
+              CALL      F_READ
+              POP       HL
+              POP       BC
+              OR        A                              ; 0=success, any other status=error
+              JR        NZ,RDBS1
+              LD        DE,128
+              ADD       HL,DE
+              DJNZ      RDBREAD
 
-            ; Every directory block starts with two link pointers ($00-$03).
-            ; A zero previous-block pointer identifies the key block, whose
-            ; first 39-byte entry ($04-$2A) is the directory header.
-            ; Count that header as entry 1 of 13; scan 12 actual files.
-            ; Other blocks contain 13 files beginning at offset $04.
-            LD        HL,DIRBUF+4
-            XOR        A
-            LD        (CDBCOUNT),A
-            LD        A,(DIRBUF)
-            LD        B,A
-            LD        A,(DIRBUF+1)
-            OR        B
-            JR        NZ,RDBPTR
-            LD        HL,DIRBUF+DIRHDSZ
-            LD        A,1
-            LD        (CDBCOUNT),A
+              ; Every directory block starts with two link pointers ($00-$03).
+              ; A zero previous-block pointer identifies the key block, whose
+              ; first 39-byte entry ($04-$2A) is the directory header.
+              ; Count that header as entry 1 of 13; scan 12 actual files.
+              ; Other blocks contain 13 files beginning at offset $04.
+              LD        HL,DIRBUF+4
+              XOR       A
+              LD        (CDBCOUNT),A
+              LD        A,(DIRBUF)
+              LD        B,A
+              LD        A,(DIRBUF+1)
+              OR        B
+              JR        NZ,RDBPTR
+              LD        HL,DIRBUF+DIRHDSZ
+              LD        A,1
+              LD        (CDBCOUNT),A
 RDBPTR        LD        (CDBPTR),HL
-            XOR        A                ; Return code for success
-            JR        RDBS2            ; Successful return
+              XOR       A                              ; Return code for success
+              JR        RDBS2                          ; Successful return
 
-RDBS1        LD        A,0FFH            ; Error return code
+RDBS1         LD        A,0FFH                         ; Error return code
 
-RDBS2        POP        HL                ; Reset DMA address as we found it
-            LD        (DMAADDR),HL    ; ...
-            RET
+RDBS2         POP       HL                             ; Reset DMA address as we found it
+              LD        (DMAADDR),HL                   ; ...
+              RET
 
 ; Match FCBs
 ; Used by CHKDIRENT
@@ -6668,54 +6669,54 @@ RDBS2        POP        HL                ; Reset DMA address as we found it
 ; Compare with FCB at DMAADDR already created by NAME2FCB
 ; Returns A=0 if entry matches, A=FFH if no match
 ; Trashes A,BC,DE,HL
-MATCHFCB    INC        DE            ; Skip drive byte
-            LD        HL,(DMAADDR)
-            INC        HL
-            LD        B,11            ; 8.3 filename bytes
-MFL1        LD        A,(DE)
-            AND        07FH            ; Ignore CP/M attribute high bits
-            CP        '?'            ; Wildcard matches any byte
-            JR        Z,MFS1
-            LD        C,A
-            LD        A,(HL)
-            AND        07FH
-            CP        C
-            JR        NZ,MFS2
-MFS1        INC        DE
-            INC        HL
-            DJNZ    MFL1
-            XOR        A
-            RET
-MFS2        LD        A,0FFH
-            RET
+MATCHFCB      INC       DE                             ; Skip drive byte
+              LD        HL,(DMAADDR)
+              INC       HL
+              LD        B,11                           ; 8.3 filename bytes
+MFL1          LD        A,(DE)
+              AND       07FH                           ; Ignore CP/M attribute high bits
+              CP        '?'                            ; Wildcard matches any byte
+              JR        Z,MFS1
+              LD        C,A
+              LD        A,(HL)
+              AND       07FH
+              CP        C
+              JR        NZ,MFS2
+MFS1          INC       DE
+              INC       HL
+              DJNZ      MFL1
+              XOR       A
+              RET
+MFS2          LD        A,0FFH
+              RET
 
 ; Compare a ProDOS directory file entry to see if it matches
 ; Used by F_SFIRST and F_SNEXT
 ; DE is the address of the FCB describing the file to look for
 ; HL points to the first file entry in the ProDOS directory
 ; Returns A=0 if entry matches, A=FFH if no match
-CHKDIRENT    LD        B,0                ; Hardcode drive A: MATCHFCB ignores it
-            LD        A,(HL)            ; Get first byte of file entry
-            AND        0FH                ; Mask to get the filename length
-            CP        0                ; If zero ...
-            JR        Z,CDES1            ; File is deleted - no match
-            PUSH    HL                ; Preserve HL
-            PUSH    DE                ; Preserve DE
-            LD        C,1                ; Do check file sizes and put in FCB
-            CALL    NAME2FCB        ; Create FCB in DMA buffer
-            POP        DE                ; Recover DE
-            POP        HL                ; Recover HL
-            LD      A,(B69BAD) ; malformed escaped entry cannot match
-            OR      A
-            JR      NZ,CDES1
-            PUSH    HL                ; Preserve HL
-            PUSH    DE                ; Preserve DE
-            CALL    MATCHFCB        ; Compare search FCB w/ FCB in DMA buffer
-            POP        DE                ; Recover DE
-            POP        HL                ; Recover HL
-            RET                    ; MATCHFCB returns 0 or $FF
-CDES1        LD        A,0FFH            ; Deleted entry
-            RET
+CHKDIRENT     LD        B,0                            ; Hardcode drive A: MATCHFCB ignores it
+              LD        A,(HL)                         ; Get first byte of file entry
+              AND       0FH                            ; Mask to get the filename length
+              CP        0                              ; If zero ...
+              JR        Z,CDES1                        ; File is deleted - no match
+              PUSH      HL                             ; Preserve HL
+              PUSH      DE                             ; Preserve DE
+              LD        C,1                            ; Do check file sizes and put in FCB
+              CALL      NAME2FCB                       ; Create FCB in DMA buffer
+              POP       DE                             ; Recover DE
+              POP       HL                             ; Recover HL
+              LD        A,(B69BAD)                     ; malformed escaped entry cannot match
+              OR        A
+              JR        NZ,CDES1
+              PUSH      HL                             ; Preserve HL
+              PUSH      DE                             ; Preserve DE
+              CALL      MATCHFCB                       ; Compare search FCB w/ FCB in DMA buffer
+              POP       DE                             ; Recover DE
+              POP       HL                             ; Recover HL
+              RET                                      ; MATCHFCB returns 0 or $FF
+CDES1         LD        A,0FFH                         ; Deleted entry
+              RET
 
 ; Search a 512 byte block of a ProDOS directory for a matching file entry
 ; Used by F_SFIRST and F_SNEXT
@@ -6729,218 +6730,218 @@ CDES1        LD        A,0FFH            ; Deleted entry
 ; candidate does not match, CDBS2 loops here without advancing CDBPTR.
 ; Never pass that DMA address to CHKDIRENT as a ProDOS dir entry.
 CHKDIRBLK
-CDBL1        LD        HL,(CDBPTR)        ; Reload each iteration, including EX='?' retries
-            CALL    CHKDIRENT        ; Match the file entry at HL, build FCB
-            PUSH    AF                ; Stash return code for now
-            PUSH    DE                ; Copy pointer to search FCB ...
-            POP        IX                ; ... into IX
-            LD        A,(IX+0CH)        ; Get extent field of search FCB
-            CP        '?'                ; Is it '?'
-            JP        NZ,CDBS1        ; If not, we can advance to next entry
+CDBL1         LD        HL,(CDBPTR)                    ; Reload each iteration, including EX='?' retries
+              CALL      CHKDIRENT                      ; Match the file entry at HL, build FCB
+              PUSH      AF                             ; Stash return code for now
+              PUSH      DE                             ; Copy pointer to search FCB ...
+              POP       IX                             ; ... into IX
+              LD        A,(IX+0CH)                     ; Get extent field of search FCB
+              CP        '?'                            ; Is it '?'
+              JP        NZ,CDBS1                       ; If not, we can advance to next entry
 
-            LD        A,(CDBEXT)        ; Load CDBEXT
-            CP        0FFH            ; If it is 0FFH, means this is first ...
-            JR        Z,CDBS0            ; ... time we have looked at this dirent
-            JR        CDBS01            ; Not the first extent for this dirent
+              LD        A,(CDBEXT)                     ; Load CDBEXT
+              CP        0FFH                           ; If it is 0FFH, means this is first ...
+              JR        Z,CDBS0                        ; ... time we have looked at this dirent
+              JR        CDBS01                         ; Not the first extent for this dirent
 
-            ; First extent for directory entry (highest numbered extent)
-            ; This extent may contain 1-128 records
-CDBS0        LD        HL,(DMAADDR)    ; Address of FCB created by CHKDIRENT
-            PUSH    HL                ; Copy address of FCB ...
-            POP        IY                ; ... into IY
-            LD        A,(IY+0CH)        ; Get num extents for this entry minus one
-            LD        (CDBEXT),A        ; Store it for next time
-            LD        (IY+0CH),A        ; Store it in the FCB returned to caller
-            CP        0                ; If CDBEXT will be zero next time
-            JR        Z,CDBS1            ; ... we can advance to next entry
-            JP        CDBS2            ; Return FCB for this extent (it match)
+              ; First extent for directory entry (highest numbered extent)
+              ; This extent may contain 1-128 records
+CDBS0         LD        HL,(DMAADDR)                   ; Address of FCB created by CHKDIRENT
+              PUSH      HL                             ; Copy address of FCB ...
+              POP       IY                             ; ... into IY
+              LD        A,(IY+0CH)                     ; Get num extents for this entry minus one
+              LD        (CDBEXT),A                     ; Store it for next time
+              LD        (IY+0CH),A                     ; Store it in the FCB returned to caller
+              CP        0                              ; If CDBEXT will be zero next time
+              JR        Z,CDBS1                        ; ... we can advance to next entry
+              JP        CDBS2                          ; Return FCB for this extent (it match)
 
-            ; Not the first extent for directory entry
-            ; Always has 128 records
-CDBS01        LD        HL,(DMAADDR)    ; CHKDIRENT has rebuilt FCB
-            PUSH    HL
-            POP        IY                ; Use the current output FCB
-            LD        B,080H            ; Earlier extents have 128 records
-            LD        (IY+0FH),B        ; Store in RC
-            DEC        A                ; Decrement extent counter
-            LD        (CDBEXT),A        ; Store it for next time
-            LD        (IY+0CH),A        ; Store it in EX
-            PUSH    AF                ; Keep extent number across N2FMAP
-            PUSH    DE                ; N2FMAP clobbers DE (search FCB pointer)
-            LD        A,080H            ; Full extent => eight 2 KB blocks
-            CALL    N2FMAP
-            POP        DE                ; Restore search FCB pointer for CDBL1
-            POP        AF
-            CP        0                ; If CDBEXT will be zero next time
-            JR        Z,CDBS1            ; ... we can advance to next entry
-            JR        CDBS2            ; Return FCB for this extent (it match)
+              ; Not the first extent for directory entry
+              ; Always has 128 records
+CDBS01        LD        HL,(DMAADDR)                   ; CHKDIRENT has rebuilt FCB
+              PUSH      HL
+              POP       IY                             ; Use the current output FCB
+              LD        B,080H                         ; Earlier extents have 128 records
+              LD        (IY+0FH),B                     ; Store in RC
+              DEC       A                              ; Decrement extent counter
+              LD        (CDBEXT),A                     ; Store it for next time
+              LD        (IY+0CH),A                     ; Store it in EX
+              PUSH      AF                             ; Keep extent number across N2FMAP
+              PUSH      DE                             ; N2FMAP clobbers DE (search FCB pointer)
+              LD        A,080H                         ; Full extent => eight 2 KB blocks
+              CALL      N2FMAP
+              POP       DE                             ; Restore search FCB pointer for CDBL1
+              POP       AF
+              CP        0                              ; If CDBEXT will be zero next time
+              JR        Z,CDBS1                        ; ... we can advance to next entry
+              JR        CDBS2                          ; Return FCB for this extent (it match)
 
-CDBS1        LD        HL,(CDBPTR)        ; Pointer to file entry
-            LD        BC,FILEENTSZ    ; Advance to next file entry
-            ADD        HL,BC            ; ...
-            LD        (CDBPTR),HL        ; Store the pointer
-            LD        A,(CDBCOUNT)    ; File entry counter
-            INC        A                ; Increment count of file entries
-            LD        (CDBCOUNT),A    ; Store the counter
-            LD        A,0FFH            ; Initialize CDBEXT to 0FFH ...
-            LD        (CDBEXT),A        ; ... to start processing next dirent
+CDBS1         LD        HL,(CDBPTR)                    ; Pointer to file entry
+              LD        BC,FILEENTSZ                   ; Advance to next file entry
+              ADD       HL,BC                          ; ...
+              LD        (CDBPTR),HL                    ; Store the pointer
+              LD        A,(CDBCOUNT)                   ; File entry counter
+              INC       A                              ; Increment count of file entries
+              LD        (CDBCOUNT),A                   ; Store the counter
+              LD        A,0FFH                         ; Initialize CDBEXT to 0FFH ...
+              LD        (CDBEXT),A                     ; ... to start processing next dirent
 
-CDBS2        POP        AF                ; Get return code back in A
-            CP        0                ; Was it a match?
-            JR        Z,CDBS3            ; If so, we are done
-            LD        A,(CDBCOUNT)    ; Get the counter back
-            CP        ENTPERBLK        ; Done all of them in this block?
-            JP        NZ,CDBL1        ; If not, loop
-            LD        A,0FFH            ; No match
-            RET                        ;
-CDBS3        XOR        A                ; Match
-            RET
+CDBS2         POP       AF                             ; Get return code back in A
+              CP        0                              ; Was it a match?
+              JR        Z,CDBS3                        ; If so, we are done
+              LD        A,(CDBCOUNT)                   ; Get the counter back
+              CP        ENTPERBLK                      ; Done all of them in this block?
+              JP        NZ,CDBL1                       ; If not, loop
+              LD        A,0FFH                         ; No match
+              RET                                      ;
+CDBS3         XOR       A                              ; Match
+              RET
 
 ; The following variables are used to preserve state between calls
-CDBPTR        DEFW    0000H            ; Stores pointer to next file entry
-CDBCOUNT    DEFB    0                ; Stores file entry counter
-CDBEXT        DEFB    0                ; Stores extent number
+CDBPTR        DEFW      0000H                          ; Stores pointer to next file entry
+CDBCOUNT      DEFB      0                              ; Stores file entry counter
+CDBEXT        DEFB      0                              ; Stores extent number
 
 ; Find IOBUF address for a file reference number
 ; Scan only FRN1..FRN2: third 1K region is spare, fourth is stack.
 ; If found, return FRN slot# 1 or 2 in A, I/O buffer address in HL
 ; If not found, return A=0FFH
 ; Trashes BC
-GETIOADDR    LD        B,A            ; Requested FRN (0 = first free slot)
-            LD        HL,FRN1        ; FRN1 and FRN2 only
-            LD        C,1            ; One-based slot number
-GIASCAN    LD        A,(HL)
-            CP        B
-            JR        Z,GIAFOUND
-            INC        HL
-            INC        C
-            LD        A,C
-            CP        3
-            JR        NZ,GIASCAN
-            LD        A,0FFH
-            RET
-GIAFOUND    LD        A,C            ; Return slot 1 or 2 in A
-            PUSH    AF
-            DEC        A            ; Buffer address = $9800 + (slot-1)*$400
-            ADD        A,A
-            ADD        A,A
-            LD        HL,IOBUF1
-            ADD        A,H
-            LD        H,A
-            POP        AF
-            RET
+GETIOADDR     LD        B,A                            ; Requested FRN (0 = first free slot)
+              LD        HL,FRN1                        ; FRN1 and FRN2 only
+              LD        C,1                            ; One-based slot number
+GIASCAN       LD        A,(HL)
+              CP        B
+              JR        Z,GIAFOUND
+              INC       HL
+              INC       C
+              LD        A,C
+              CP        3
+              JR        NZ,GIASCAN
+              LD        A,0FFH
+              RET
+GIAFOUND      LD        A,C                            ; Return slot 1 or 2 in A
+              PUSH      AF
+              DEC       A                              ; Buffer address = $9800 + (slot-1)*$400
+              ADD       A,A
+              ADD       A,A
+              LD        HL,IOBUF1
+              ADD       A,H
+              LD        H,A
+              POP       AF
+              RET
 
 ; Form 24-bit ProDOS byte mark from CP/M extent B and record A.
 ; Valid record numbers are 0..127.  Byte offset = (B*128+A)*128.
 ; Updates SET_MARK parameter directly, avoiding any 16-bit overflow.
-EXRC2MARK    LD        C,A
-            AND        1
-            RRCA                ; bit 0 becomes bit 7
-            LD        (SMMLIP1),A
-            LD        A,C
-            SRL        A
-            LD        C,A
-            LD        A,B
-            RRCA
-            RRCA
-            AND        0C0H        ; B bits 0..1 become byte-1 bits 6..7
-            OR        C
-            LD        (SMMLIP2),A
-            LD        A,B
-            SRL        A
-            SRL        A
-            LD        (SMMLIP3),A
-            RET
+EXRC2MARK     LD        C,A
+              AND       1
+              RRCA                                     ; bit 0 becomes bit 7
+              LD        (SMMLIP1),A
+              LD        A,C
+              SRL       A
+              LD        C,A
+              LD        A,B
+              RRCA
+              RRCA
+              AND       0C0H                           ; B bits 0..1 become byte-1 bits 6..7
+              OR        C
+              LD        (SMMLIP2),A
+              LD        A,B
+              SRL       A
+              SRL       A
+              LD        (SMMLIP3),A
+              RET
 
 ; Form 24-bit ProDOS byte mark from random FCB record R0/R1/R2.
 ; ProDOS supports byte offsets < $1000000, hence record <= $1FFFF.
 ; Returns carry set for out-of-range random records.
-RAND2MARK    LD        A,(IX+23H)
-            CP        2
-            JR        NC,RAND_MARK_BAD
-            LD        B,A
-            LD        A,(IX+21H)
-            LD        C,A
-            AND        1
-            RRCA
-            LD        (SMMLIP1),A
-            LD        A,C
-            SRL        A
-            LD        C,A
-            LD        A,(IX+22H)
-            AND        1
-            RRCA
-            OR        C
-            LD        (SMMLIP2),A
-            LD        A,(IX+22H)
-            SRL        A
-            LD        C,A
-            LD        A,B
-            AND        1
-            RRCA
-            OR        C
-            LD        (SMMLIP3),A
-            OR        A                ; Clear carry
-            RET
-RAND_MARK_BAD    SCF
-            RET
+RAND2MARK     LD        A,(IX+23H)
+              CP        2
+              JR        NC,RAND_MARK_BAD
+              LD        B,A
+              LD        A,(IX+21H)
+              LD        C,A
+              AND       1
+              RRCA
+              LD        (SMMLIP1),A
+              LD        A,C
+              SRL       A
+              LD        C,A
+              LD        A,(IX+22H)
+              AND       1
+              RRCA
+              OR        C
+              LD        (SMMLIP2),A
+              LD        A,(IX+22H)
+              SRL       A
+              LD        C,A
+              LD        A,B
+              AND       1
+              RRCA
+              OR        C
+              LD        (SMMLIP3),A
+              OR        A                              ; Clear carry
+              RET
+RAND_MARK_BAD SCF
+              RET
 
 ; Convert pos in extent/recs format to a linear position in 128 byte records
 ; Extent number is passed in B
 ; Records within the extent is passed in A
 ; Returns the length in records in HL - HL = (B*128)+A
-EXRC2RECS    LD        H,B            ; 16-bit (extent*128 + record)
-            LD        L,A            ; Record must be 0..127
-            LD        A,H
-            RRCA                ; Extent bit 0 -> bit 7 of low byte
-            AND        80H
-            OR        L
-            LD        L,A
-            SRL        H            ; Extent bits 1..7 -> high byte
-            RET
+EXRC2RECS     LD        H,B                            ; 16-bit (extent*128 + record)
+              LD        L,A                            ; Record must be 0..127
+              LD        A,H
+              RRCA                                     ; Extent bit 0 -> bit 7 of low byte
+              AND       80H
+              OR        L
+              LD        L,A
+              SRL       H                              ; Extent bits 1..7 -> high byte
+              RET
 
 ; Convert position in terms of random record number to extent/recs
 ; Length in records in passed in HL
 ; Returns extent number in B and records within extent in A
-RECS2EXRC    SLA        H                ; 7 MS-bits of extent number
-            BIT        7,L                ; See if MS-bit of L is set
-            JR        Z,R2ERS1        ; If set ...
-            INC        H                ; ... set LSB of extent number
-R2ERS1        LD        B,H                ; Return extent in B
-            LD        A,L                ; Now for the recs in the extent
-            AND        7FH                ; Just need to mask out MS-bit
-            RET
+RECS2EXRC     SLA       H                              ; 7 MS-bits of extent number
+              BIT       7,L                            ; See if MS-bit of L is set
+              JR        Z,R2ERS1                       ; If set ...
+              INC       H                              ; ... set LSB of extent number
+R2ERS1        LD        B,H                            ; Return extent in B
+              LD        A,L                            ; Now for the recs in the extent
+              AND       7FH                            ; Just need to mask out MS-bit
+              RET
 
 ; Compact diagnostic helper: print C as [XX] without a four-digit
 ; conversion buffer.  Preserve registers as the old PRHEX did.
-PRHEX        PUSH    AF
-            PUSH    BC
-            PUSH    DE
-            PUSH    HL
-            LD        E,'['
-            CALL    C_WRITE
-            LD        A,C
-            RRCA
-            RRCA
-            RRCA
-            RRCA
-            CALL    PHNYB
-            LD        A,C
-            CALL    PHNYB
-            LD        E,']'
-            CALL    C_WRITE
-            POP        HL
-            POP        DE
-            POP        BC
-            POP        AF
-            RET
-PHNYB        AND        0FH
-            ADD        A,'0'
-            CP        3AH            ; One past ASCII '9'
-            JR        C,PHOUT
-            ADD        A,7
-PHOUT        LD        E,A
-            JP        C_WRITE
+PRHEX         PUSH      AF
+              PUSH      BC
+              PUSH      DE
+              PUSH      HL
+              LD        E,'['
+              CALL      C_WRITE
+              LD        A,C
+              RRCA
+              RRCA
+              RRCA
+              RRCA
+              CALL      PHNYB
+              LD        A,C
+              CALL      PHNYB
+              LD        E,']'
+              CALL      C_WRITE
+              POP       HL
+              POP       DE
+              POP       BC
+              POP       AF
+              RET
+PHNYB         AND       0FH
+              ADD       A,'0'
+              CP        3AH                            ; One past ASCII '9'
+              JR        C,PHOUT
+              ADD       A,7
+PHOUT         LD        E,A
+              JP        C_WRITE
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Compact CP/M 2.2-style CCP
@@ -6967,77 +6968,77 @@ PHOUT        LD        E,A
 ; Full CP/M filename grammar is not yet enforced.
 
 ; Get a line of text from the console & handle it
-CCP            
+CCP
 ; A foreground .COM may yield after a scheduler quantum without
 ; actually exiting.  Nor may CCP draw a prompt when SCHMAIN returns
 ; with a pending hotkey.  Dispatch that hotkey, then restart the
 ; scheduler if the newly selected foreground still has a live .COM.
-CCPL1       CALL    SCHMAIN       ; run foreground program + background slices
-            CALL    TBAUTOSW     ; drain hotkeys raised INSIDE SCHMAIN
-            CALL    TSKACTIVE
-            OR      A
-            JR      NZ,CCPL1     ; no CCP prompt over WordStar's cursor
-            CALL    SBWGET       ; background-resumed program requested WBOOT?
-            OR      A
-            JP      NZ,BDOSWARM  ; MAIN CCP owns stack, so reset is now safe
-            CALL    CCPPRPTR
-            LD      A,(HL)
-            OR      A
-            JR      NZ,CCPREAD      ; restored CCP screen already has A>
-            LD      (HL),1          ; prompt will now be drawn
-            CALL    CCPPRNT        ; [session]drive:> prompt
+CCPL1         CALL      SCHMAIN                        ; run foreground program + background slices
+              CALL      TBAUTOSW                       ; drain hotkeys raised INSIDE SCHMAIN
+              CALL      TSKACTIVE
+              OR        A
+              JR        NZ,CCPL1                       ; no CCP prompt over WordStar's cursor
+              CALL      SBWGET                         ; background-resumed program requested WBOOT?
+              OR        A
+              JP        NZ,BDOSWARM                    ; MAIN CCP owns stack, so reset is now safe
+              CALL      CCPPRPTR
+              LD        A,(HL)
+              OR        A
+              JR        NZ,CCPREAD                     ; restored CCP screen already has A>
+              LD        (HL),1                         ; prompt will now be drawn
+              CALL      CCPPRNT                        ; [session]drive:> prompt
 CCPREAD
-            CALL    CCPSUB         ; last record of A:$$$.SUB, if present
-            OR      A
-            JR      NZ,CCPGOT      ; already copied into console line buffer
-            LD        DE,FILEBUF        ; Use FILEBUF as line buffer
-            LD        A,120            ; Max line length
-            LD        (DE),A            ; Stored in first char of buffer
-            CALL    C_READSTR        ; Get a line from the user
-CCPGOT      LD      A,(TABREQ)
-            CP      0FFH
-            JP      NZ,CCPL1       ; selector is pending: NO empty command
-            CALL    CCPPRPTR
-            LD      (HL),0         ; an actual input line was completed
-            LD        HL,FILEBUF+1    ; Use actual count byte, not DE (editing clobbers E)
-            CALL    UCASE            ; Uppercase commands AND transient command tails
+              CALL      CCPSUB                         ; last record of A:$$$.SUB, if present
+              OR        A
+              JR        NZ,CCPGOT                      ; already copied into console line buffer
+              LD        DE,FILEBUF                     ; Use FILEBUF as line buffer
+              LD        A,120                          ; Max line length
+              LD        (DE),A                         ; Stored in first char of buffer
+              CALL      C_READSTR                      ; Get a line from the user
+CCPGOT        LD        A,(TABREQ)
+              CP        0FFH
+              JP        NZ,CCPL1                       ; selector is pending: NO empty command
+              CALL      CCPPRPTR
+              LD        (HL),0                         ; an actual input line was completed
+              LD        HL,FILEBUF+1                   ; Use actual count byte, not DE (editing clobbers E)
+              CALL      UCASE                          ; Uppercase commands AND transient command tails
 
-            LD        A,(FILEBUF+1)    ; Number of chars entered
-            CP        0                 ; If none ...
-            JR        Z,CCPL1            ; Loop until user types something!
+              LD        A,(FILEBUF+1)                  ; Number of chars entered
+              CP        0                              ; If none ...
+              JR        Z,CCPL1                        ; Loop until user types something!
 
-            ; Two char built-in commands A:, B:, C: etc
-            CP        2                ; Check if two chars ...
-            JR        NZ,CCPS1        ; If not, skip
-            LD        A,(FILEBUF+3)    ; See if second char is ':'
-            CP        ':'                ; ...
-            JR        NZ,CCPS1        ; If not, skip
-            LD        A,(FILEBUF+2)    ; Get the character before the ':'
-            SUB        'A'                ; A is 0, B is 1 etc.
-            CP        16                ; Valid CP/M drives A: through P:
-            JP        NC,CCPBADDRV
-            LD        E,A                ; Set the default drive
-            CALL    DRV_SET            ; ...
-            JP        CCPL1            ; Go again
+              ; Two char built-in commands A:, B:, C: etc
+              CP        2                              ; Check if two chars ...
+              JR        NZ,CCPS1                       ; If not, skip
+              LD        A,(FILEBUF+3)                  ; See if second char is ':'
+              CP        ':'                            ; ...
+              JR        NZ,CCPS1                       ; If not, skip
+              LD        A,(FILEBUF+2)                  ; Get the character before the ':'
+              SUB       'A'                            ; A is 0, B is 1 etc.
+              CP        16                             ; Valid CP/M drives A: through P:
+              JP        NC,CCPBADDRV
+              LD        E,A                            ; Set the default drive
+              CALL      DRV_SET                        ; ...
+              JP        CCPL1                          ; Go again
 
-CCPBADDRV LD      DE,BFMSG
-           CALL    C_WRITESTR
-           JP      CCPL1
-CCPS1      LD      HL,FCB1            ; Clear FCB1
-            LD        (DMAADDR),HL    ;
-            CALL    CLRFCB            ;
+CCPBADDRV     LD        DE,BFMSG
+              CALL      C_WRITESTR
+              JP        CCPL1
+CCPS1         LD        HL,FCB1                        ; Clear FCB1
+              LD        (DMAADDR),HL                   ;
+              CALL      CLRFCB                         ;
 
-            LD        HL,FCB2            ; Clear FCB2
-            LD        (DMAADDR),HL    ;
-            CALL    CLRFCB            ;
+              LD        HL,FCB2                        ; Clear FCB2
+              LD        (DMAADDR),HL                   ;
+              CALL      CLRFCB                         ;
 
-            CALL    PARSE            ; Parse the command line
-            CALL    BUILTIN            ; Check for built-in commands
-            CP        0                ; If zero, was a built-in command
-            JP        Z,CCP            ; Go again
-            CALL    RUNCOM            ; Try to run .COM file
+              CALL      PARSE                          ; Parse the command line
+              CALL      BUILTIN                        ; Check for built-in commands
+              CP        0                              ; If zero, was a built-in command
+              JP        Z,CCP                          ; Go again
+              CALL      RUNCOM                         ; Try to run .COM file
 
-            JP        CCP                ; Go again
+              JP        CCP                            ; Go again
 
 ; CCP uppercaser routines relocated into spare MAIN memory.
 
@@ -7052,169 +7053,169 @@ CCPS1      LD      HL,FCB1            ; Clear FCB1
 ;   4 in whitespace segment following first argument
 ;   5 in second argument
 ;   6 in whitespace segment following second arg (or later)
-PARSE        CALL    RSTPATHBUF        ; Set IY and E for writing PATHBUF
-            LD        HL,FILEBUF+1    ; Skip first byte - buffer capacity
-            PUSH    HL                ; HL->IX. Use IX as dest pointer into FILEBUF
-            POP        IX                ; ...
-            LD        D,0                ; D is the count of chars for FILEBUF
-            LD        B,0                ; B is the state of the parser
-            LD        C,(HL)            ; Get the length of source string
-CTL1        LD        A,C                ; See if any chars are left in input
-            CP        0                ; ...
-            JR        Z,CTS2            ; If 0, go update the length byte
-            INC        HL                ; Advance to next char of source string
-            DEC        C                ; Decrement count remaining
-            LD        A,(HL)            ; Get char from buffer
-            CP        ' '                ; See if it a space
-            JR        Z,CTS1            ; If space ...
-            CALL    CMDNSPC            ; Handle non-space
-            JR        CTL1            ; Loop
-CTS1        CALL    CMDSPC            ; Handle space
-            JR        CTL1            ; Loop
-CTS2        LD        A,' '            ; Fake an additional space on the end ...
-            CALL    CMDSPC            ; ... so parser can get itself in correct state
-            LD        A,D                ; Get string length of command tail
-            CP        1                ; If length is 1, is just a space
-            JR        NZ,CTS3            ; If not length 1, store length, otherwise ...
-            LD        D,0                ; ... Set length to zero
-CTS3        LD        (IX+0),0        ; CP/M command tail needs a zero terminator
-                                ; IX points just past the generated tail.
-            LD        HL,FILEBUF        ; First byte is length of string
-            LD        (HL),D            ; Write string length (excluding zero)
-            RET                        ;
+PARSE         CALL      RSTPATHBUF                     ; Set IY and E for writing PATHBUF
+              LD        HL,FILEBUF+1                   ; Skip first byte - buffer capacity
+              PUSH      HL                             ; HL->IX. Use IX as dest pointer into FILEBUF
+              POP       IX                             ; ...
+              LD        D,0                            ; D is the count of chars for FILEBUF
+              LD        B,0                            ; B is the state of the parser
+              LD        C,(HL)                         ; Get the length of source string
+CTL1          LD        A,C                            ; See if any chars are left in input
+              CP        0                              ; ...
+              JR        Z,CTS2                         ; If 0, go update the length byte
+              INC       HL                             ; Advance to next char of source string
+              DEC       C                              ; Decrement count remaining
+              LD        A,(HL)                         ; Get char from buffer
+              CP        ' '                            ; See if it a space
+              JR        Z,CTS1                         ; If space ...
+              CALL      CMDNSPC                        ; Handle non-space
+              JR        CTL1                           ; Loop
+CTS1          CALL      CMDSPC                         ; Handle space
+              JR        CTL1                           ; Loop
+CTS2          LD        A,' '                          ; Fake an additional space on the end ...
+              CALL      CMDSPC                         ; ... so parser can get itself in correct state
+              LD        A,D                            ; Get string length of command tail
+              CP        1                              ; If length is 1, is just a space
+              JR        NZ,CTS3                        ; If not length 1, store length, otherwise ...
+              LD        D,0                            ; ... Set length to zero
+CTS3          LD        (IX+0),0                       ; CP/M command tail needs a zero terminator
+                                                       ; IX points just past the generated tail.
+              LD        HL,FILEBUF                     ; First byte is length of string
+              LD        (HL),D                         ; Write string length (excluding zero)
+              RET                                      ;
 
 ; Helper function to reset the PATHBUF buffer pointer & character count
 ; PATHBUF is used to store the filename for creating an FCB
 ; Sets IY to point to first character to be written to PATHBUF
 ; Resets count of chars written E
-RSTPATHBUF    PUSH    HL                ; Preserve HL
-            LD        HL,PATHBUF+1    ; Use HL to initialize IY
-            PUSH    HL                ; HL->IY. Use IY as dest ptr into PATHBUF
-            POP        IY                ; ...
-            POP        HL                ; Restore original HL
-            LD        E,0                ; Reset count of chars in PATHBUF
-            RET
+RSTPATHBUF    PUSH      HL                             ; Preserve HL
+              LD        HL,PATHBUF+1                   ; Use HL to initialize IY
+              PUSH      HL                             ; HL->IY. Use IY as dest ptr into PATHBUF
+              POP       IY                             ; ...
+              POP       HL                             ; Restore original HL
+              LD        E,0                            ; Reset count of chars in PATHBUF
+              RET
 
 ; Examines Pascal string pointed to by HL to see if it begins with a drive
 ; letter and a colon.  If so, reduces string length by 2 and advances HL two
 ; positions, sets B to the drive number.  If no drive is specified, sets B
 ; to the default drive.
-DRVLETTER    INC        HL                ; Advance to second char
-            INC        HL                ; ...
-            LD         A,(HL)            ; See if second char typed is a colon
-            CP         ':'                ;
-            JR         NZ,DLS1            ; If not then skip to default drive
-            DEC        HL                ; Back to first char
-            LD         A,(HL)            ; Get the drive letter
-            SUB     'A'-1            ; Convert to 1-based drive number
-            LD         B,A             ; In B for NAME2FCB
-            DEC        HL                ; Back one to the size byte
-            LD        A,(HL)            ; Get the string length
-            SUB        2                ; Eat drive letter and colon
-            INC        HL                ; ...
-            INC        HL                ; ...
-            LD        (HL),A            ; Write the reduced length
-            RET
-DLS1        DEC        HL                ; Put HL back to the beginning
-            DEC        HL                ; ...
-            LD        B,0                ; Use default drive
-            RET
+DRVLETTER     INC       HL                             ; Advance to second char
+              INC       HL                             ; ...
+              LD        A,(HL)                         ; See if second char typed is a colon
+              CP        ':'                            ;
+              JR        NZ,DLS1                        ; If not then skip to default drive
+              DEC       HL                             ; Back to first char
+              LD        A,(HL)                         ; Get the drive letter
+              SUB       'A'-1                          ; Convert to 1-based drive number
+              LD        B,A                            ; In B for NAME2FCB
+              DEC       HL                             ; Back one to the size byte
+              LD        A,(HL)                         ; Get the string length
+              SUB       2                              ; Eat drive letter and colon
+              INC       HL                             ; ...
+              INC       HL                             ; ...
+              LD        (HL),A                         ; Write the reduced length
+              RET
+DLS1          DEC       HL                             ; Put HL back to the beginning
+              DEC       HL                             ; ...
+              LD        B,0                            ; Use default drive
+              RET
 
 ; Handle the end of command/argument tokens. State B is 0..6:
 ; odd states 1/3/5 finish command / first / second argument.
-CMDSPC     LD      A,B
-           OR      A
-           RET     Z               ; Leading whitespace
-           CP      6
-           JR      Z,SPTAIL         ; Further arguments stay in command tail
-           AND     1
-           RET     Z               ; Inter-argument whitespace
-           LD      A,' '
-           CALL    EMTFILBUF
-           LD      A,E
-           LD      (PATHBUF),A
-           CALL    RSTPATHBUF
-           PUSH    HL
-           PUSH    BC
-           PUSH    DE
-           LD      A,B
-           CP      1
-           JR      Z,SPCOM
-           CP      3
-           JR      Z,SPFIRST
-           LD      HL,FCB2
-           JR      SPMKFCB
-SPCOM      LD      HL,PATHBUF2
-           JR      SPMKFCB
-SPFIRST    LD      HL,FCB1
-SPMKFCB    LD      (DMAADDR),HL
-           LD      HL,PATHBUF
-           CALL    DRVLETTER
-           LD      C,0
-           CALL    NAME2FCB
-           POP     DE
-           POP     BC
-           POP     HL
-           LD      A,B
-           CP      1
-           JR      NZ,SPNEXT
-           LD      A,'C'
-           LD      (PATHBUF2+9),A
-           LD      A,'O'
-           LD      (PATHBUF2+10),A
-           LD      A,'M'
-           LD      (PATHBUF2+11),A
-SPNEXT     INC     B
-           RET
-SPTAIL     LD      A,' '
-           JP      EMTFILBUF
+CMDSPC        LD        A,B
+              OR        A
+              RET       Z                              ; Leading whitespace
+              CP        6
+              JR        Z,SPTAIL                       ; Further arguments stay in command tail
+              AND       1
+              RET       Z                              ; Inter-argument whitespace
+              LD        A,' '
+              CALL      EMTFILBUF
+              LD        A,E
+              LD        (PATHBUF),A
+              CALL      RSTPATHBUF
+              PUSH      HL
+              PUSH      BC
+              PUSH      DE
+              LD        A,B
+              CP        1
+              JR        Z,SPCOM
+              CP        3
+              JR        Z,SPFIRST
+              LD        HL,FCB2
+              JR        SPMKFCB
+SPCOM         LD        HL,PATHBUF2
+              JR        SPMKFCB
+SPFIRST       LD        HL,FCB1
+SPMKFCB       LD        (DMAADDR),HL
+              LD        HL,PATHBUF
+              CALL      DRVLETTER
+              LD        C,0
+              CALL      NAME2FCB
+              POP       DE
+              POP       BC
+              POP       HL
+              LD        A,B
+              CP        1
+              JR        NZ,SPNEXT
+              LD        A,'C'
+              LD        (PATHBUF2+9),A
+              LD        A,'O'
+              LD        (PATHBUF2+10),A
+              LD        A,'M'
+              LD        (PATHBUF2+11),A
+SPNEXT        INC       B
+              RET
+SPTAIL        LD        A,' '
+              JP        EMTFILBUF
 
 ; Emit non-space input byte to command and/or argument buffers.
 ; State transitions 0->1, 2->3, 4->5 happen on the first byte.
-CMDNSPC    LD      A,B
-           CP      6
-           JR      Z,CNSFILE
-           LD      A,(HL)
-           CALL    EMTPATHBUF
-           LD      A,B
-           OR      A
-           JR      NZ,CNSNEXT
-           INC     B
-           RET
-CNSNEXT    CP      1
-           RET     Z
-           LD      A,(HL)
-           CALL    EMTFILBUF
-           LD      A,B
-           CP      2
-           JR      Z,CNSINC
-           CP      4
-           RET     NZ
-CNSINC     INC     B
-           RET
-CNSFILE    LD      A,(HL)
-           JP      EMTFILBUF
+CMDNSPC       LD        A,B
+              CP        6
+              JR        Z,CNSFILE
+              LD        A,(HL)
+              CALL      EMTPATHBUF
+              LD        A,B
+              OR        A
+              JR        NZ,CNSNEXT
+              INC       B
+              RET
+CNSNEXT       CP        1
+              RET       Z
+              LD        A,(HL)
+              CALL      EMTFILBUF
+              LD        A,B
+              CP        2
+              JR        Z,CNSINC
+              CP        4
+              RET       NZ
+CNSINC        INC       B
+              RET
+CNSFILE       LD        A,(HL)
+              JP        EMTFILBUF
 
 ; Write character at A to IX (which points into FILEBUF)
 ; Helper for CMDSPC/CMDNSPC
-EMTFILBUF    LD        (IX+0H),A        ; Emit char to FILEBUF
-            INC        IX                ; ...
-            INC        D                ; Character count for FILEBUF
-            RET
+EMTFILBUF     LD        (IX+0H),A                      ; Emit char to FILEBUF
+              INC       IX                             ; ...
+              INC       D                              ; Character count for FILEBUF
+              RET
 
 ; Write character at A to IX (which points into PATHBUF)
 ; Helper for CMDNSPC
-EMTPATHBUF PUSH    AF
-           LD      A,E
-           CP      63
-           JR      NC,EPPFULL
-           POP     AF
-           LD      (IY+0H),A
-           INC     IY
-           INC     E
-           RET
-EPPFULL    POP     AF
-           RET
+EMTPATHBUF    PUSH      AF
+              LD        A,E
+              CP        63
+              JR        NC,EPPFULL
+              POP       AF
+              LD        (IY+0H),A
+              INC       IY
+              INC       E
+              RET
+EPPFULL       POP       AF
+              RET
 
 ; Built-ins are matched against the first five bytes of the parsed
 ; command FCB. Table at MAIN $7600: name[5], nargs[1], handler[2].
@@ -7225,336 +7226,336 @@ EPPFULL    POP     AF
 
 ; Single table-driven dispatcher instead of six repeated string
 ; comparisons. A handler is entered with a synthetic return address.
-BUILTIN    LD      HL,BITABLE
-           LD      C,15
-BISCAN     LD      DE,PATHBUF2+1
-           LD      B,5
-BICMP      LD      A,(DE)
-           CP      (HL)
-           JR      NZ,BISKIP
-           INC     DE
-           INC     HL
-           DJNZ    BICMP
-           LD      A,(HL)
-           LD      (BIREQ),A
-           INC     HL
-           LD      E,(HL)
-           INC     HL
-           LD      D,(HL)
-           PUSH    DE
-           CALL    CCPARGC
-           LD      B,A
-           LD      A,(BIREQ)
-           CP      0FEH        ; TAB validates 0, 1 or 2 arguments itself
-           JR      Z,BIRUN
-           AND     0FH
-           CP      B
-           JR      Z,BIRUN
-           LD      A,(BIREQ)
-           BIT     7,A
-           JR      Z,BIFAIL
-           LD      A,B
-           OR      A
-           JR      NZ,BIFAIL
-BIRUN      POP     HL
-           LD      DE,BIRETURN
-           PUSH    DE
-           JP      (HL)
-BIRETURN   XOR     A
-           RET
-BIFAIL     POP     HL
-           CALL    CCPBAD
-           XOR     A
-           RET
-BISKIP     LD      E,B            ; Skip unmatched portion of 5-char key
-           LD      D,0
-           ADD     HL,DE
-           LD      DE,3           ; nargs and jump target
-           ADD     HL,DE
-           DEC     C
-           JR      NZ,BISCAN
-           LD      A,0FFH
-           RET
-BIREQ      DEFB    0
+BUILTIN       LD        HL,BITABLE
+              LD        C,15
+BISCAN        LD        DE,PATHBUF2+1
+              LD        B,5
+BICMP         LD        A,(DE)
+              CP        (HL)
+              JR        NZ,BISKIP
+              INC       DE
+              INC       HL
+              DJNZ      BICMP
+              LD        A,(HL)
+              LD        (BIREQ),A
+              INC       HL
+              LD        E,(HL)
+              INC       HL
+              LD        D,(HL)
+              PUSH      DE
+              CALL      CCPARGC
+              LD        B,A
+              LD        A,(BIREQ)
+              CP        0FEH                           ; TAB validates 0, 1 or 2 arguments itself
+              JR        Z,BIRUN
+              AND       0FH
+              CP        B
+              JR        Z,BIRUN
+              LD        A,(BIREQ)
+              BIT       7,A
+              JR        Z,BIFAIL
+              LD        A,B
+              OR        A
+              JR        NZ,BIFAIL
+BIRUN         POP       HL
+              LD        DE,BIRETURN
+              PUSH      DE
+              JP        (HL)
+BIRETURN      XOR       A
+              RET
+BIFAIL        POP       HL
+              CALL      CCPBAD
+              XOR       A
+              RET
+BISKIP        LD        E,B                            ; Skip unmatched portion of 5-char key
+              LD        D,0
+              ADD       HL,DE
+              LD        DE,3                           ; nargs and jump target
+              ADD       HL,DE
+              DEC       C
+              JR        NZ,BISCAN
+              LD        A,0FFH
+              RET
+BIREQ         DEFB      0
 
 ; CCP yesno routines relocated into spare MAIN memory.
 
 ; 44K experiment: CCP stays in MAIN, transients load into AUX $0100-$AFFF.
 ; Only console BDOS calls are supported by the temporary LC gateway.
-RUNCOM      CALL    TSKACTIVE
-            OR      A
-            JP      Z,AUXRUN
-            LD      DE,TSKBUSY
-            JP      C_WRITESTR
+RUNCOM        CALL      TSKACTIVE
+              OR        A
+              JP        Z,AUXRUN
+              LD        DE,TSKBUSY
+              JP        C_WRITESTR
 
-RCOERR      LD      DE,NFMSG
-            CALL    C_WRITESTR
-            RET
-RCLERR      LD      DE,REMSG
-            CALL    C_WRITESTR
-            RET
-AUXSIZEERR  LD      DE,AUXBIGMSG
-            CALL    C_WRITESTR
-            RET
-AUXBIGMSG   DEFM    'COM exceeds AUX TPA'
-            DEFB    13,'$'
-AUXBADMSG   DEFM    'AUX BDOS unsupported '
-            DEFB    '$'
-BDOSMSG     DEFM    'BDOS unsupported '
-            DEFB    '$'
+RCOERR        LD        DE,NFMSG
+              CALL      C_WRITESTR
+              RET
+RCLERR        LD        DE,REMSG
+              CALL      C_WRITESTR
+              RET
+AUXSIZEERR    LD        DE,AUXBIGMSG
+              CALL      C_WRITESTR
+              RET
+AUXBIGMSG     DEFM      'COM exceeds AUX TPA'
+              DEFB      13,'$'
+AUXBADMSG     DEFM      'AUX BDOS unsupported '
+              DEFB      '$'
+BDOSMSG       DEFM      'BDOS unsupported '
+              DEFB      '$'
 
-NFMSG        DEFM    'Not found'
-            DEFB    13,'$'
+NFMSG         DEFM      'Not found'
+              DEFB      13,'$'
 
-REMSG        DEFM    'I/O error'
-            DEFB    13,'$'
+REMSG         DEFM      'I/O error'
+              DEFB      13,'$'
 
-BFMSG        DEFM    'Bad format'
-            DEFB    13,'$'
+BFMSG         DEFM      'Bad format'
+              DEFB      13,'$'
 
-RNEMSG        DEFM    'Rename error'
-            DEFB    13,'$'
+RNEMSG        DEFM      'Rename error'
+              DEFB      13,'$'
 
 ; Four names per line, with their drive letters. No sorting is done.
-DIRECT     LD      A,(FCB1NAM)
-           CP      ' '
-           CALL    Z,DIRFCB
-           XOR     A
-           LD      (DIRCOL),A
-           LD      HL,FILEBUF
-           LD      (DMAADDR),HL
-           LD      E,13
-           CALL    C_WRITE
-           LD      DE,FCB1
-           CALL    F_SFIRST
-           OR      A
-           JR      NZ,DIRDONE
-DIRLOOP    CALL    PRDIRENT
-           LD      DE,FCB1
-           CALL    F_SNEXT
-           OR      A
-           JR      Z,DIRLOOP
-DIRDONE    LD      A,(DIRCOL)
-           OR      A
-           RET     Z
-           LD      E,13
-           JP      C_WRITE
-DIRCOL     DEFB    0
+DIRECT        LD        A,(FCB1NAM)
+              CP        ' '
+              CALL      Z,DIRFCB
+              XOR       A
+              LD        (DIRCOL),A
+              LD        HL,FILEBUF
+              LD        (DMAADDR),HL
+              LD        E,13
+              CALL      C_WRITE
+              LD        DE,FCB1
+              CALL      F_SFIRST
+              OR        A
+              JR        NZ,DIRDONE
+DIRLOOP       CALL      PRDIRENT
+              LD        DE,FCB1
+              CALL      F_SNEXT
+              OR        A
+              JR        Z,DIRLOOP
+DIRDONE       LD        A,(DIRCOL)
+              OR        A
+              RET       Z
+              LD        E,13
+              JP        C_WRITE
+DIRCOL        DEFB      0
 
 ; Set up FCB1 to search all files
 ; If length of command tail is zero, or length of command tail is 3
 ; and 3rd char is ':' then set up FCB for searching
-DIRFCB     LD      A,(FILEBUF)
-           CP      4
-           JR      NZ,DFS1
-           LD      A,(FILEBUF+3)
-           CP      ':'
-           JR      NZ,DFS1
-           LD      A,(FILEBUF+2)
-           SUB     'A'-1
-           JR      DFS2
-DFS1       LD      A,(CURDRV)
-           AND     0FH
-           INC     A
+DIRFCB        LD        A,(FILEBUF)
+              CP        4
+              JR        NZ,DFS1
+              LD        A,(FILEBUF+3)
+              CP        ':'
+              JR        NZ,DFS1
+              LD        A,(FILEBUF+2)
+              SUB       'A'-1
+              JR        DFS2
+DFS1          LD        A,(CURDRV)
+              AND       0FH
+              INC       A
 
-DFS2       LD      (FCB1DRV),A
-           LD      HL,FCB1NAM
-           LD      B,11
-           LD      A,'?'
-DFILL      LD      (HL),A
-           INC     HL
-           DJNZ    DFILL
-           RET
+DFS2          LD        (FCB1DRV),A
+              LD        HL,FCB1NAM
+              LD        B,11
+              LD        A,'?'
+DFILL         LD        (HL),A
+              INC       HL
+              DJNZ      DFILL
+              RET
 
 ; Print drive: plus 8.3 filename from the first 11 bytes of DMA.
 ; Four entries per row, 3-space separation. Existing dot retained.
-PRDIRENT   LD      A,(FCB1DRV)
-           DEC     A
-           ADD     A,'A'
-           LD      E,A
-           CALL    C_WRITE
-           LD      E,':'
-           CALL    C_WRITE
-           LD      E,' '
-           CALL    C_WRITE
-           LD      HL,FILEBUF+1
-           LD      B,11
-PRDLOOP    LD      A,B
-           CP      3
-           JR      NZ,PRDNODOT
-           LD      E,' '
-           PUSH    HL
-           CALL    C_WRITE
-           POP     HL
-PRDNODOT   LD      E,(HL)
-           PUSH    HL
-           CALL    C_WRITE
-           POP     HL
-           INC     HL
-           DJNZ    PRDLOOP
-           LD      A,(DIRCOL)
-           INC     A
-           AND     3
-           LD      (DIRCOL),A
-           JR      Z,PRDNEWLINE
-           LD      DE,DIRSEP
-           JP      C_WRITESTR
-PRDNEWLINE LD      E,13
-           JP      C_WRITE
-DIRSEP     DEFM    '   $'
+PRDIRENT      LD        A,(FCB1DRV)
+              DEC       A
+              ADD       A,'A'
+              LD        E,A
+              CALL      C_WRITE
+              LD        E,':'
+              CALL      C_WRITE
+              LD        E,' '
+              CALL      C_WRITE
+              LD        HL,FILEBUF+1
+              LD        B,11
+PRDLOOP       LD        A,B
+              CP        3
+              JR        NZ,PRDNODOT
+              LD        E,' '
+              PUSH      HL
+              CALL      C_WRITE
+              POP       HL
+PRDNODOT      LD        E,(HL)
+              PUSH      HL
+              CALL      C_WRITE
+              POP       HL
+              INC       HL
+              DJNZ      PRDLOOP
+              LD        A,(DIRCOL)
+              INC       A
+              AND       3
+              LD        (DIRCOL),A
+              JR        Z,PRDNEWLINE
+              LD        DE,DIRSEP
+              JP        C_WRITESTR
+PRDNEWLINE    LD        E,13
+              JP        C_WRITE
+DIRSEP        DEFM      '   $'
 
 ; Wildcard ERA always asks before deleting, including ERA *.COM.
 ; This is deliberately safer than stock CP/M 2.2, which prompts only
 ; for ERA *.*. FCB1 contains the wildcard-expanded '?' characters.
-ERASE      LD      HL,FCB1NAM
-           CALL    ISWILD
-           OR      A
-           JR      Z,ERADO
-           LD      DE,BYEASK
-           CALL    CCPYESNO
-           OR      A
-           RET     NZ
-ERADO      LD      HL,FILEBUF
-           LD      (DMAADDR),HL
-           LD      DE,FCB1
-           CALL    F_DELETE
-           OR      A
-           RET     Z
-           LD      A,(ROERROR)  ; BDOS already printed R/O reason
-           OR      A
-           RET     NZ
-           LD      DE,NFMSG
-           JP      C_WRITESTR
+ERASE         LD        HL,FCB1NAM
+              CALL      ISWILD
+              OR        A
+              JR        Z,ERADO
+              LD        DE,BYEASK
+              CALL      CCPYESNO
+              OR        A
+              RET       NZ
+ERADO         LD        HL,FILEBUF
+              LD        (DMAADDR),HL
+              LD        DE,FCB1
+              CALL      F_DELETE
+              OR        A
+              RET       Z
+              LD        A,(ROERROR)                    ; BDOS already printed R/O reason
+              OR        A
+              RET       NZ
+              LD        DE,NFMSG
+              JP        C_WRITESTR
 
 ; Rename a file
 ; Here we need to build our own 'special' FCB using the x:dest=src command line
 ; Maniplate the command tail to replace the leading space with char count of
 ; first string and the = with char count of second string.  Then use NAME2FCB
 ; twice to build the 'special' FCB used by F_RENAME.
-RENAME        LD        HL,FILEBUF        ; Command tail is in filebuf
-            LD        C,(HL)            ; Read length of string
-            INC        C                ; Makes length compare easier
-            LD        B,0                ; Use B to count chars
-RENL1        INC        HL                ; Advance to next char
-            INC        B                ; Increase char count
-            LD        A,B                ; Copy to A for compare
-            CP        C                ; Compare with string length
-            JP        Z,RENS4            ; If at end then bad format
-            LD        A,(HL)            ; Fetch char
-            CP        '='                ; See if it is equals sign
-            JR        Z,RENS1            ; Handle '=' sign
-            JR        RENL1            ; Loop
-RENS1      LD      A,B               ; Get char count
-           SUB     2
-           JP      Z,RENS4         ; Empty destination is invalid
-                ; For initial space and '='
-            LD        DE,FILEBUF        ; Will write through ptr DE
-            INC        DE                ; Advance to initial space
-            LD        (DE),A            ; Store length of first string
-            LD        (TEMPWORD),HL    ; Store address of '=' sign
-RENL2        INC        HL                ; Advance to next char
-            INC        B                ; Increase char count
-            LD        A,B                ; Copy to A for compare
-            CP        C                ; Compare with string length
-            JR        Z,RENS3            ; If at end then jump out
-            JR        RENL2            ; Loop
-RENS3        LD        A,B                ; Get overall char count into A
-            SUB        4                ; Compensate for extra chars
-            LD        HL,FILEBUF        ; Get char count of first string
-            INC        HL                ; ...
-            SUB        (HL)            ; Subtract from char count
-            LD        HL,(TEMPWORD)    ; Address of '=' sign
-           LD      (HL),A           ; Store length of second string
-           OR      A
-           JP      Z,RENS4         ; Empty source is invalid
+RENAME        LD        HL,FILEBUF                     ; Command tail is in filebuf
+              LD        C,(HL)                         ; Read length of string
+              INC       C                              ; Makes length compare easier
+              LD        B,0                            ; Use B to count chars
+RENL1         INC       HL                             ; Advance to next char
+              INC       B                              ; Increase char count
+              LD        A,B                            ; Copy to A for compare
+              CP        C                              ; Compare with string length
+              JP        Z,RENS4                        ; If at end then bad format
+              LD        A,(HL)                         ; Fetch char
+              CP        '='                            ; See if it is equals sign
+              JR        Z,RENS1                        ; Handle '=' sign
+              JR        RENL1                          ; Loop
+RENS1         LD        A,B                            ; Get char count
+              SUB       2
+              JP        Z,RENS4                        ; Empty destination is invalid
+              ; For initial space and '='
+              LD        DE,FILEBUF                     ; Will write through ptr DE
+              INC       DE                             ; Advance to initial space
+              LD        (DE),A                         ; Store length of first string
+              LD        (TEMPWORD),HL                  ; Store address of '=' sign
+RENL2         INC       HL                             ; Advance to next char
+              INC       B                              ; Increase char count
+              LD        A,B                            ; Copy to A for compare
+              CP        C                              ; Compare with string length
+              JR        Z,RENS3                        ; If at end then jump out
+              JR        RENL2                          ; Loop
+RENS3         LD        A,B                            ; Get overall char count into A
+              SUB       4                              ; Compensate for extra chars
+              LD        HL,FILEBUF                     ; Get char count of first string
+              INC       HL                             ; ...
+              SUB       (HL)                           ; Subtract from char count
+              LD        HL,(TEMPWORD)                  ; Address of '=' sign
+              LD        (HL),A                         ; Store length of second string
+              OR        A
+              JP        Z,RENS4                        ; Empty source is invalid
 
-           LD      HL,FCB2            ; Set DMAADDR for destination
-            LD        (DMAADDR),HL    ; ...
-            LD        HL,FILEBUF        ; Set HL to dest file string
-            INC        HL                ; ...
-            CALL    DRVLETTER        ; Handle any x: drive letter prefix
-            LD        C,0                ; NAME2FCB should not do size lookup
-            CALL    NAME2FCB        ; Make FCB for source file
+              LD        HL,FCB2                        ; Set DMAADDR for destination
+              LD        (DMAADDR),HL                   ; ...
+              LD        HL,FILEBUF                     ; Set HL to dest file string
+              INC       HL                             ; ...
+              CALL      DRVLETTER                      ; Handle any x: drive letter prefix
+              LD        C,0                            ; NAME2FCB should not do size lookup
+              CALL      NAME2FCB                       ; Make FCB for source file
 
-            LD        HL,FCB1            ; Set DMAADDR for source
-            LD        (DMAADDR),HL    ; ...
-            LD        HL,(TEMPWORD)    ; Set HL to source file string
-            LD        C,0                ; NAME2FCB should not do size lookup
-            CALL    NAME2FCB        ; Make FCB for source file
-           LD      A,(FCB2)       ; Get drive number of destination
-           LD      (FCB1),A
-           LD      HL,FCB1NAM     ; Neither REN filename may be ambiguous
-           CALL    ISWILD
-           OR      A
-           JP      NZ,RENS4
-           LD      HL,FCB2NAM
-           CALL    ISWILD
-           OR      A
-           JP      NZ,RENS4
+              LD        HL,FCB1                        ; Set DMAADDR for source
+              LD        (DMAADDR),HL                   ; ...
+              LD        HL,(TEMPWORD)                  ; Set HL to source file string
+              LD        C,0                            ; NAME2FCB should not do size lookup
+              CALL      NAME2FCB                       ; Make FCB for source file
+              LD        A,(FCB2)                       ; Get drive number of destination
+              LD        (FCB1),A
+              LD        HL,FCB1NAM                     ; Neither REN filename may be ambiguous
+              CALL      ISWILD
+              OR        A
+              JP        NZ,RENS4
+              LD        HL,FCB2NAM
+              CALL      ISWILD
+              OR        A
+              JP        NZ,RENS4
 
-           LD      DE,FCB1            ; Pass address of FCB to F_RENAME
-            LD        HL,FILEBUF        ; Set DMAADDR to point to FILEBUF
-            LD        (DMAADDR),HL    ; ...
-            CALL    F_RENAME        ; Perform the rename
+              LD        DE,FCB1                        ; Pass address of FCB to F_RENAME
+              LD        HL,FILEBUF                     ; Set DMAADDR to point to FILEBUF
+              LD        (DMAADDR),HL                   ; ...
+              CALL      F_RENAME                       ; Perform the rename
 
-            CP        0                ; See if it was successful
-            JR        NZ,RENS5        ; If not, display message
-            RET                        ;
+              CP        0                              ; See if it was successful
+              JR        NZ,RENS5                       ; If not, display message
+              RET                                      ;
 
-RENS4      JP      CCPBAD
-RENS5        LD        A,(ROERROR)
-            OR        A
-            RET        NZ                ; BDOS already printed R/O reason
-            LD        DE,RNEMSG        ; 'Rename error' message
-            CALL    C_WRITESTR        ; ...
-            RET
+RENS4         JP        CCPBAD
+RENS5         LD        A,(ROERROR)
+              OR        A
+              RET       NZ                             ; BDOS already printed R/O reason
+              LD        DE,RNEMSG                      ; 'Rename error' message
+              CALL      C_WRITESTR                     ; ...
+              RET
 
 ; Show a test file on the console
 ; File to open is in FCB1
-TYPEFILE    LD        DE,FCB1            ; Point to FCB1
-            LD        HL,FILEBUF        ; Set DMAADDR to FILEBUF
-            LD        (DMAADDR),HL    ; ...
-            CALL    F_OPEN            ; Open the file with wildcard search
-            CP        0                ;
-            JR        NZ,TFOERR        ; Open error
-TFL1        LD        HL,FILEBUF        ; Write ^Z to buffer in case 0 bytes read
-            LD        A,26            ; ...
-            LD        (HL),A            ; ...
-            LD        DE,FCB1            ; Point to FCB1
-            CALL    F_READ            ; Read records until done
-            CP        0                ; Check return code from F_READ
-            JR        NZ,TFS1            ; If non-zero jump out of loop
-            CALL    TYPEBLK            ; Display block on screen
-            JR        TFL1            ; Loop
-TFS1        CP        1                ; Check return code from F_READ
-            JR        NZ,TFLERR        ; If not EOF (1), then error
-            CALL    TYPEBLK            ; Display last block on screen
-            CALL    F_CLOSE            ; Close the file
-            LD        E,13            ; Carriage return
-            CALL    C_WRITE            ;
-            RET                        ;
-TFOERR        LD        DE,NFMSG        ; 'Not found' message
-            CALL    C_WRITESTR        ; ...
-            RET                        ;
-TFLERR        CALL    F_CLOSE            ; Close the file
-            LD        DE,REMSG        ; 'Read error' message
-            CALL    C_WRITESTR        ; ...
-            RET
+TYPEFILE      LD        DE,FCB1                        ; Point to FCB1
+              LD        HL,FILEBUF                     ; Set DMAADDR to FILEBUF
+              LD        (DMAADDR),HL                   ; ...
+              CALL      F_OPEN                         ; Open the file with wildcard search
+              CP        0                              ;
+              JR        NZ,TFOERR                      ; Open error
+TFL1          LD        HL,FILEBUF                     ; Write ^Z to buffer in case 0 bytes read
+              LD        A,26                           ; ...
+              LD        (HL),A                         ; ...
+              LD        DE,FCB1                        ; Point to FCB1
+              CALL      F_READ                         ; Read records until done
+              CP        0                              ; Check return code from F_READ
+              JR        NZ,TFS1                        ; If non-zero jump out of loop
+              CALL      TYPEBLK                        ; Display block on screen
+              JR        TFL1                           ; Loop
+TFS1          CP        1                              ; Check return code from F_READ
+              JR        NZ,TFLERR                      ; If not EOF (1), then error
+              CALL      TYPEBLK                        ; Display last block on screen
+              CALL      F_CLOSE                        ; Close the file
+              LD        E,13                           ; Carriage return
+              CALL      C_WRITE                        ;
+              RET                                      ;
+TFOERR        LD        DE,NFMSG                       ; 'Not found' message
+              CALL      C_WRITESTR                     ; ...
+              RET                                      ;
+TFLERR        CALL      F_CLOSE                        ; Close the file
+              LD        DE,REMSG                       ; 'Read error' message
+              CALL      C_WRITESTR                     ; ...
+              RET
 
 ; Display one 128-byte CP/M record, stopping at ^Z.
 ; C_WRITE preserves BC and DE, so only the pointer needs protection.
-TYPEBLK    LD      HL,FILEBUF
-           LD      B,128
-TBL1       LD      A,(HL)
-           CP      26
-           RET     Z
-           LD      E,A
-           PUSH    HL
-           CALL    C_WRITE
-           POP     HL
-           INC     HL
-           DJNZ    TBL1
-           RET
+TYPEBLK       LD        HL,FILEBUF
+              LD        B,128
+TBL1          LD        A,(HL)
+              CP        26
+              RET       Z
+              LD        E,A
+              PUSH      HL
+              CALL      C_WRITE
+              POP       HL
+              INC       HL
+              DJNZ      TBL1
+              RET
 
 ; AUX56 SAVEFILE/SVPAGES relocated to MAIN $4000 (free of AUX snapshot).
 
@@ -7567,152 +7568,152 @@ TBL1       LD      A,(HL)
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ; Parameter list for ProDOS CREATE call
-FMMLI        DEFB    20H,00H,0BFH    ; JSR $BF00 in 6502 code        
-            DEFB    0C0H            ; ProDOS CREATE call
-            DEFW    FMMLIPL+OFFSET    ; Pointer to parm list in 6502 addr space
-            DEFB    60H                ; RTS in 6502 code
-FMMLIPL        DEFB    7                ; ProDOS PL: Seven parameters
-FMMLIP        DEFW    PATHBUF+OFFSET    ; ProDOS PL: Pointer to path in 6502 addr
-FMMLIA        DEFB    0C3H            ; ProDOS PL: Access (0C3H full access)
-FMMLIT        DEFB    0                ; ProDOS PL: File type (0 means typeless)
-FMMLIAT        DEFW    0000H            ; ProDOS PL: Aux file type (always 0000H)
-FMMLIS        DEFB    1                ; ProDOS PL: Storage type (1 for file)
-FMMLICD        DEFW    0000H            ; ProDOS PL: Create date (always 0000H)
-FMMLICT        DEFW    0000H            ; ProDOS PL: Create time (always 0000H)
+FMMLI         DEFB      20H,00H,0BFH                   ; JSR $BF00 in 6502 code
+              DEFB      0C0H                           ; ProDOS CREATE call
+              DEFW      FMMLIPL+OFFSET                 ; Pointer to parm list in 6502 addr space
+              DEFB      60H                            ; RTS in 6502 code
+FMMLIPL       DEFB      7                              ; ProDOS PL: Seven parameters
+FMMLIP        DEFW      PATHBUF+OFFSET                 ; ProDOS PL: Pointer to path in 6502 addr
+FMMLIA        DEFB      0C3H                           ; ProDOS PL: Access (0C3H full access)
+FMMLIT        DEFB      0                              ; ProDOS PL: File type (0 means typeless)
+FMMLIAT       DEFW      0000H                          ; ProDOS PL: Aux file type (always 0000H)
+FMMLIS        DEFB      1                              ; ProDOS PL: Storage type (1 for file)
+FMMLICD       DEFW      0000H                          ; ProDOS PL: Create date (always 0000H)
+FMMLICT       DEFW      0000H                          ; ProDOS PL: Create time (always 0000H)
 
 ; Parameter list for ProDOS DESTROY call
-FDMLI        DEFB    20H,00H,0BFH    ; JSR $BF00 in 6502 code        
-            DEFB    0C1H            ; ProDOS DESTROY call
-            DEFW    FDMLIPL+OFFSET    ; Pointer to parm list in 6502 addr space
-            DEFB    60H                ; RTS in 6502 code
-FDMLIPL        DEFB    1                ; ProDOS PL: Seven parameters
-FDMLIP        DEFW    PATHBUF+OFFSET    ; ProDOS PL: Pointer to path in 6502 addr
+FDMLI         DEFB      20H,00H,0BFH                   ; JSR $BF00 in 6502 code
+              DEFB      0C1H                           ; ProDOS DESTROY call
+              DEFW      FDMLIPL+OFFSET                 ; Pointer to parm list in 6502 addr space
+              DEFB      60H                            ; RTS in 6502 code
+FDMLIPL       DEFB      1                              ; ProDOS PL: Seven parameters
+FDMLIP        DEFW      PATHBUF+OFFSET                 ; ProDOS PL: Pointer to path in 6502 addr
 
 ; Parameter list for ProDOS RENAME call
-FRNMLI        DEFB    20H,00H,0BFH    ; JSR $BF00 in 6502 code        
-            DEFB    0C2H            ; ProDOS RENAME call
-            DEFW    FRNMLIPL+OFFSET    ; Pointer to parm list in 6502 addr space
-            DEFB    60H                ; RTS in 6502 code
-FRNMLIPL    DEFB    2                ; ProDOS PL: Two parameters
-FRNMLIP1    DEFW    PATHBUF+OFFSET    ; ProDOS PL: Pointer to path in 6502 addr
-FRNMLIP2    DEFW    PATHBUF2+OFFSET    ; ProDOS PL: Pointer to path in 6502 addr
+FRNMLI        DEFB      20H,00H,0BFH                   ; JSR $BF00 in 6502 code
+              DEFB      0C2H                           ; ProDOS RENAME call
+              DEFW      FRNMLIPL+OFFSET                ; Pointer to parm list in 6502 addr space
+              DEFB      60H                            ; RTS in 6502 code
+FRNMLIPL      DEFB      2                              ; ProDOS PL: Two parameters
+FRNMLIP1      DEFW      PATHBUF+OFFSET                 ; ProDOS PL: Pointer to path in 6502 addr
+FRNMLIP2      DEFW      PATHBUF2+OFFSET                ; ProDOS PL: Pointer to path in 6502 addr
 
 ; Parameter list for ProDOS GET_FILE_INFO call
-GFIMLI        DEFB    20H,00H,0BFH    ; JSR $BF00 in 6502 code        
-            DEFB    0C4H            ; ProDOS GET_FILE_INFO call
-            DEFW    GFIMLIPL+OFFSET    ; Pointer to parm list in 6502 addr space
-            DEFB    60H                ; RTS in 6502 code
-GFIMLIPL    DEFB    0AH                ; ProDOS PL: Ten parameters
-GFIMLIP        DEFW    PATHBUF+OFFSET    ; ProDOS PL: Pointer to path in 6502 addr
-GFIMLIAC    DEFB    0                ; ProDOS PL: Access
-GFIMLIT        DEFB    0                ; ProDOS PL: File type
-GFIMLIAT    DEFW    0000H            ; ProDOS PL: Aux type
-GFIMLIS        DEFB    1                ; ProDOS PL: Storage type
-GFIMLIBU    DEFW    0000H            ; ProDOS PL: Blocks used
-GFIMLIMD    DEFW    0000H            ; ProDOS PL: Modification date
-GFIMLIMT    DEFW    0000H            ; ProDOS PL: Modification time
-GFIMLICD    DEFW    0000H            ; ProDOS PL: Create date
-GFIMLICT    DEFW    0000H            ; ProDOS PL: Create time
+GFIMLI        DEFB      20H,00H,0BFH                   ; JSR $BF00 in 6502 code
+              DEFB      0C4H                           ; ProDOS GET_FILE_INFO call
+              DEFW      GFIMLIPL+OFFSET                ; Pointer to parm list in 6502 addr space
+              DEFB      60H                            ; RTS in 6502 code
+GFIMLIPL      DEFB      0AH                            ; ProDOS PL: Ten parameters
+GFIMLIP       DEFW      PATHBUF+OFFSET                 ; ProDOS PL: Pointer to path in 6502 addr
+GFIMLIAC      DEFB      0                              ; ProDOS PL: Access
+GFIMLIT       DEFB      0                              ; ProDOS PL: File type
+GFIMLIAT      DEFW      0000H                          ; ProDOS PL: Aux type
+GFIMLIS       DEFB      1                              ; ProDOS PL: Storage type
+GFIMLIBU      DEFW      0000H                          ; ProDOS PL: Blocks used
+GFIMLIMD      DEFW      0000H                          ; ProDOS PL: Modification date
+GFIMLIMT      DEFW      0000H                          ; ProDOS PL: Modification time
+GFIMLICD      DEFW      0000H                          ; ProDOS PL: Create date
+GFIMLICT      DEFW      0000H                          ; ProDOS PL: Create time
 
 ; ProDOS $C3 SET_FILE_INFO uses the same fields as GET_FILE_INFO
 ; through modification time. F_ATTRIB sets count=7 temporarily.
-SFIMLI        DEFB    20H,00H,0BFH
-            DEFB    0C3H
-            DEFW    GFIMLIPL+OFFSET
-            DEFB    60H
+SFIMLI        DEFB      20H,00H,0BFH
+              DEFB      0C3H
+              DEFW      GFIMLIPL+OFFSET
+              DEFB      60H
 
 ; Parameter list for ProDOS OPEN call
-FOMLI        DEFB    20H,00H,0BFH    ; JSR $BF00 in 6502 code        
-            DEFB    0C8H            ; ProDOS OPEN call
-            DEFW    FOMLIPL+OFFSET    ; Pointer to parm list in 6502 addr space
-            DEFB    60H                ; RTS in 6502 code
-FOMLIPL        DEFB    3                ; ProDOS PL: Three parameters
-FOMLIP        DEFW    PATHBUF+OFFSET    ; ProDOS PL: pointer to path in 6502 addr
-FOMLII        DEFW    0000H            ; ProDOS PL: pointer to IO buffer
-FOMLIN        DEFB    0                ; ProDOS PL: File reference number
+FOMLI         DEFB      20H,00H,0BFH                   ; JSR $BF00 in 6502 code
+              DEFB      0C8H                           ; ProDOS OPEN call
+              DEFW      FOMLIPL+OFFSET                 ; Pointer to parm list in 6502 addr space
+              DEFB      60H                            ; RTS in 6502 code
+FOMLIPL       DEFB      3                              ; ProDOS PL: Three parameters
+FOMLIP        DEFW      PATHBUF+OFFSET                 ; ProDOS PL: pointer to path in 6502 addr
+FOMLII        DEFW      0000H                          ; ProDOS PL: pointer to IO buffer
+FOMLIN        DEFB      0                              ; ProDOS PL: File reference number
 
 ; Parameter list for ProDOS READ call
-FRMLI        DEFB    20H,00H,0BFH    ; JSR $BF00 in 6502 code        
-            DEFB    0CAH            ; ProDOS READ call
-            DEFW    FRMLIPL+OFFSET    ; Pointer to parm list in 6502 addr space
-            DEFB    60H                ; RTS in 6502 code
-FRMLIPL        DEFB    4                ; ProDOS PL: Four parameters
-FRMLIN        DEFB    0                ; ProDOS PL: File reference number
-FRMLIDB        DEFW    0000H            ; ProDOS PL: Data buffer
-FRMLIRC        DEFW    128                ; ProDOS PL: Request count (bytes to read)
-FRMLITC        DEFW    0000H            ; ProDOS PL: Number of bytes transferred
+FRMLI         DEFB      20H,00H,0BFH                   ; JSR $BF00 in 6502 code
+              DEFB      0CAH                           ; ProDOS READ call
+              DEFW      FRMLIPL+OFFSET                 ; Pointer to parm list in 6502 addr space
+              DEFB      60H                            ; RTS in 6502 code
+FRMLIPL       DEFB      4                              ; ProDOS PL: Four parameters
+FRMLIN        DEFB      0                              ; ProDOS PL: File reference number
+FRMLIDB       DEFW      0000H                          ; ProDOS PL: Data buffer
+FRMLIRC       DEFW      128                            ; ProDOS PL: Request count (bytes to read)
+FRMLITC       DEFW      0000H                          ; ProDOS PL: Number of bytes transferred
 
 ; Parameter list for ProDOS WRITE call
-FWMLI        DEFB    20H,00H,0BFH    ; JSR $BF00 in 6502 code        
-            DEFB    0CBH            ; ProDOS WRITE call
-            DEFW    FWMLIPL+OFFSET    ; Pointer to parm list in 6502 addr space
-            DEFB    60H                ; RTS in 6502 code
-FWMLIPL        DEFB    4                ; ProDOS PL: Four parameters
-FWMLIN        DEFB    0                ; ProDOS PL: File reference number
-FWMLIDB        DEFW    0000H            ; ProDOS PL: Data buffer
-FWMLIRC        DEFW    128                ; ProDOS PL: Request count (bytes to read)
-FWMLITC        DEFW    0000H            ; ProDOS PL: Number of bytes transferred
+FWMLI         DEFB      20H,00H,0BFH                   ; JSR $BF00 in 6502 code
+              DEFB      0CBH                           ; ProDOS WRITE call
+              DEFW      FWMLIPL+OFFSET                 ; Pointer to parm list in 6502 addr space
+              DEFB      60H                            ; RTS in 6502 code
+FWMLIPL       DEFB      4                              ; ProDOS PL: Four parameters
+FWMLIN        DEFB      0                              ; ProDOS PL: File reference number
+FWMLIDB       DEFW      0000H                          ; ProDOS PL: Data buffer
+FWMLIRC       DEFW      128                            ; ProDOS PL: Request count (bytes to read)
+FWMLITC       DEFW      0000H                          ; ProDOS PL: Number of bytes transferred
 
 ; Parameter list for ProDOS CLOSE call
-FCMLI        DEFB    20H,00H,0BFH    ; JSR $BF00 in 6502 code        
-            DEFB    0CCH            ; ProDOS CLOSE call
-            DEFW    FCMLIPL+OFFSET    ; Pointer to parm list in 6502 addr space
-            DEFB    60H                ; RTS in 6502 code
-FCMLIPL        DEFB    1                ; ProDOS PB: One parameter
-FCMLIN        DEFB    0                ; ProDOS PB: File reference number
+FCMLI         DEFB      20H,00H,0BFH                   ; JSR $BF00 in 6502 code
+              DEFB      0CCH                           ; ProDOS CLOSE call
+              DEFW      FCMLIPL+OFFSET                 ; Pointer to parm list in 6502 addr space
+              DEFB      60H                            ; RTS in 6502 code
+FCMLIPL       DEFB      1                              ; ProDOS PB: One parameter
+FCMLIN        DEFB      0                              ; ProDOS PB: File reference number
 
 ; Parameter list for ProDOS FLUSH call
-FLMLI        DEFB    20H,00H,0BFH    ; JSR $BF00 in 6502 code        
-            DEFB    0CDH            ; ProDOS FLUSH call
-            DEFW    FLMLIPL+OFFSET    ; Pointer to parm list in 6502 addr space
-            DEFB    60H                ; RTS in 6502 code
-FLMLIPL        DEFB    1                ; ProDOS PL: One parameter
-FLMLIN        DEFB    0                ; ProDOS PL: File ref num (0 = all files)
+FLMLI         DEFB      20H,00H,0BFH                   ; JSR $BF00 in 6502 code
+              DEFB      0CDH                           ; ProDOS FLUSH call
+              DEFW      FLMLIPL+OFFSET                 ; Pointer to parm list in 6502 addr space
+              DEFB      60H                            ; RTS in 6502 code
+FLMLIPL       DEFB      1                              ; ProDOS PL: One parameter
+FLMLIN        DEFB      0                              ; ProDOS PL: File ref num (0 = all files)
 
 ; Parameter list for ProDOS SET_MARK call
-SMMLI        DEFB    20H,00H,0BFH    ; JSR $BF00 in 6502 code        
-            DEFB    0CEH            ; ProDOS SET_MARK call
-            DEFW    SMMLIPL+OFFSET    ; Pointer to parm list in 6502 addr space
-            DEFB    60H                ; RTS in 6502 code
-SMMLIPL        DEFB    2                ; ProDOS PL: Two parameters
-SMMLIN        DEFB    0                ; ProDOS PL: File reference number
-SMMLIP1        DEFB    0                ; ProDOS PL: Position (LSB)
-SMMLIP2        DEFB    0                ; ProDOS PL: Position
-SMMLIP3        DEFB    0                ; ProDOS PL: Position (MSB)
+SMMLI         DEFB      20H,00H,0BFH                   ; JSR $BF00 in 6502 code
+              DEFB      0CEH                           ; ProDOS SET_MARK call
+              DEFW      SMMLIPL+OFFSET                 ; Pointer to parm list in 6502 addr space
+              DEFB      60H                            ; RTS in 6502 code
+SMMLIPL       DEFB      2                              ; ProDOS PL: Two parameters
+SMMLIN        DEFB      0                              ; ProDOS PL: File reference number
+SMMLIP1       DEFB      0                              ; ProDOS PL: Position (LSB)
+SMMLIP2       DEFB      0                              ; ProDOS PL: Position
+SMMLIP3       DEFB      0                              ; ProDOS PL: Position (MSB)
 
 ; Parameter list for ProDOS SET_EOF call
-SEMLI        DEFB    20H,00H,0BFH    ; JSR $BF00 in 6502 code
-            DEFB    0D0H            ; ProDOS SET_EOF call
-            DEFW    SEMLIPL+OFFSET    ; Pointer to parm list in 6502 addr space
-            DEFB    60H                ; RTS in 6502 code
-SEMLIPL        DEFB    2                ; ProDOS PL: Two parameters
-SEMLIN        DEFB    0                ; ProDOS PL: File reference number
-SEMLIE1        DEFB    0                ; ProDOS PL: EOF position (LS-byte)
-SEMLIE2        DEFB    0                ; ProDOS PL: EOF position
-SEMLIE3        DEFB    0                ; ProDOS PL: EOF position (MS-byte)
+SEMLI         DEFB      20H,00H,0BFH                   ; JSR $BF00 in 6502 code
+              DEFB      0D0H                           ; ProDOS SET_EOF call
+              DEFW      SEMLIPL+OFFSET                 ; Pointer to parm list in 6502 addr space
+              DEFB      60H                            ; RTS in 6502 code
+SEMLIPL       DEFB      2                              ; ProDOS PL: Two parameters
+SEMLIN        DEFB      0                              ; ProDOS PL: File reference number
+SEMLIE1       DEFB      0                              ; ProDOS PL: EOF position (LS-byte)
+SEMLIE2       DEFB      0                              ; ProDOS PL: EOF position
+SEMLIE3       DEFB      0                              ; ProDOS PL: EOF position (MS-byte)
 
 ; Parameter list for ProDOS GET_EOF call
-GEMLI        DEFB    20H,00H,0BFH    ; JSR $BF00 in 6502 code
-            DEFB    0D1H            ; ProDOS GET_EOF call
-            DEFW    GEMLIPL+OFFSET    ; Pointer to parm list in 6502 addr space
-            DEFB    60H                ; RTS in 6502 code
-GEMLIPL        DEFB    2                ; ProDOS PL: Two parameters
-GEMLIN        DEFB    0                ; ProDOS PL: File reference number
-GEMLIE1        DEFB    0                ; ProDOS PL: EOF position (LS-byte)
-GEMLIE2        DEFB    0                ; ProDOS PL: EOF position
-GEMLIE3        DEFB    0                ; ProDOS PL: EOF position (MS-byte)
+GEMLI         DEFB      20H,00H,0BFH                   ; JSR $BF00 in 6502 code
+              DEFB      0D1H                           ; ProDOS GET_EOF call
+              DEFW      GEMLIPL+OFFSET                 ; Pointer to parm list in 6502 addr space
+              DEFB      60H                            ; RTS in 6502 code
+GEMLIPL       DEFB      2                              ; ProDOS PL: Two parameters
+GEMLIN        DEFB      0                              ; ProDOS PL: File reference number
+GEMLIE1       DEFB      0                              ; ProDOS PL: EOF position (LS-byte)
+GEMLIE2       DEFB      0                              ; ProDOS PL: EOF position
+GEMLIE3       DEFB      0                              ; ProDOS PL: EOF position (MS-byte)
 
 ; FCB used for opening ProDOS directory corresponding to drive
-DFCB                                ; File control block for directory
-DFCBDRV        DEFB    00H                ; FCB Drive (0 current, 1 A:, 2 B: etc)
-DFCBNAM        DEFM    '           '    ; FCB filename and extension (all spaces)
-DFCBEX        DEFB    00H                ; FCB extent field
-DFCBS1        DEFB    00H                ; FCB S1 field
-DFCBS2        DEFB    00H                ; FCB S2 field
-DFCBRC        DEFB    00H                ; FCB RC field
-DFCBMAP        DEFS    16                ; Map of blocks in file
-DFCBSR        DEFB    0                ; FCB seq record number
-DFCBRR        DEFB    0,0,0            ; FCB rand record number
+DFCB                        ; File control block for directory
+DFCBDRV       DEFB      00H                            ; FCB Drive (0 current, 1 A:, 2 B: etc)
+DFCBNAM       DEFM      '           '                  ; FCB filename and extension (all spaces)
+DFCBEX        DEFB      00H                            ; FCB extent field
+DFCBS1        DEFB      00H                            ; FCB S1 field
+DFCBS2        DEFB      00H                            ; FCB S2 field
+DFCBRC        DEFB      00H                            ; FCB RC field
+DFCBMAP       DEFS      16                             ; Map of blocks in file
+DFCBSR        DEFB      0                              ; FCB seq record number
+DFCBRR        DEFB      0,0,0                          ; FCB rand record number
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; End of ProDOS Parameter Lists
@@ -7720,16 +7721,16 @@ DFCBRR        DEFB    0,0,0            ; FCB rand record number
 
 ; Drive parameter block (CP/M 2.2 format)
 ; See Johnson-Laird Pg 33-34
-DPB            DEFW    32                ; # 128 byte records per track (for Disk II)
-            DEFB    4                ; Block shift (2048 byte allocation blocks)
-            DEFB    15            ; Block mask (2048 byte allocation blocks)
-            DEFB    0                ; Extent mask (16K extents)
-DPBDSM        DEFW    511            ; 2K DSM set by V_GETFREE (up to 16382)
-            DEFW    255                ; # directory entries 
-            DEFB    0                ; Directory allocation bitmap byte 1
-            DEFB    0                ; Directory allocation bitmap byte 2
-            DEFW    0                ; Checksum vector size
-            DEFW    0                ; # of reserved tracks
+DPB           DEFW      32                             ; # 128 byte records per track (for Disk II)
+              DEFB      4                              ; Block shift (2048 byte allocation blocks)
+              DEFB      15                             ; Block mask (2048 byte allocation blocks)
+              DEFB      0                              ; Extent mask (16K extents)
+DPBDSM        DEFW      511                            ; 2K DSM set by V_GETFREE (up to 16382)
+              DEFW      255                            ; # directory entries
+              DEFB      0                              ; Directory allocation bitmap byte 1
+              DEFB      0                              ; Directory allocation bitmap byte 2
+              DEFW      0                              ; Checksum vector size
+              DEFW      0                              ; # of reserved tracks
 
 ; 2048-byte CP/M allocation vector supports up to 16384 x 2 KiB
 ; allocation blocks, i.e. ProDOS's 32 MiB maximum. This is synthetic
@@ -7743,61 +7744,61 @@ DPBDSM        DEFW    511            ; 2K DSM set by V_GETFREE (up to 16382)
 ; $0800-$09FF is the temporary ProDOS block buffer and GET_PREFIX buffer;
 ; ON_LINE uses $0880. Consequently V_GETFREE builds the allocation map
 ; ONLY after the final READ_BLOCK completes. A later V_GETFREE refreshes it.
-ALLOCVEC    EQU        0F800H
-VOLBUF        EQU        0F800H
-VLEFT        DEFW    0                ; Volume blocks remaining in scan
-VFREE        DEFW    0                ; Number of actual free 512-byte blocks
-VTOTAL        DEFW    0                ; ProDOS header total blocks (800K => $0640)
-VNBLOCKS    DEFW    0                ; 2K blocks (800K => 400, 32MB => 16383)
-VFEND        DEFW    0                ; Bitmap byte for highest CP/M block
-VFMASK        DEFB    0                ; Bit mask at VFEND
-VBUDGET    DEFW    0                ; Maximum bits available (excl 0..8)
-VERR        DEFB    0                ; Last ProDOS error, $FE if header invalid
+ALLOCVEC      EQU       0F800H
+VOLBUF        EQU       0F800H
+VLEFT         DEFW      0                              ; Volume blocks remaining in scan
+VFREE         DEFW      0                              ; Number of actual free 512-byte blocks
+VTOTAL        DEFW      0                              ; ProDOS header total blocks (800K => $0640)
+VNBLOCKS      DEFW      0                              ; 2K blocks (800K => 400, 32MB => 16383)
+VFEND         DEFW      0                              ; Bitmap byte for highest CP/M block
+VFMASK        DEFB      0                              ; Bit mask at VFEND
+VBUDGET       DEFW      0                              ; Maximum bits available (excl 0..8)
+VERR          DEFB      0                              ; Last ProDOS error, $FE if header invalid
 
 ; GET_PREFIX (ProDOS $C7). Returns Pascal absolute path in $0800.
-VPMLI        DEFB    20H,00H,0BFH
-            DEFB    0C7H
-            DEFW    VPPL+OFFSET
-            DEFB    60H
-VPPL        DEFB    1
-            DEFW    0800H
+VPMLI         DEFB      20H,00H,0BFH
+              DEFB      0C7H
+              DEFW      VPPL+OFFSET
+              DEFB      60H
+VPPL          DEFB      1
+              DEFW      0800H
 
 ; ON_LINE (ProDOS $C5), unit=0 enumerates mounted devices.
 ; 256-byte list at $0880, well away from the 64-byte prefix at $0800.
-VOMLI        DEFB    20H,00H,0BFH
-            DEFB    0C5H
-            DEFW    VOPL+OFFSET
-            DEFB    60H
-VOPL        DEFB    2
-            DEFB    0            ; 0 = enumerate all units
-            DEFW    0880H
+VOMLI         DEFB      20H,00H,0BFH
+              DEFB      0C5H
+              DEFW      VOPL+OFFSET
+              DEFB      60H
+VOPL          DEFB      2
+              DEFB      0                              ; 0 = enumerate all units
+              DEFW      0880H
 
 ; GET_FILE_INFO (ProDOS $C4), only for the no-prefix fallback.
 ; The temporary absolute pathname lives at $0800.
-VFMLI        DEFB    20H,00H,0BFH
-            DEFB    0C4H
-            DEFW    VFPL+OFFSET
-            DEFB    60H
-VFPL        DEFB    0AH
-            DEFW    0800H
-            DEFB    0            ; Access returned
-VFTYPE        DEFB    0            ; File type returned ($0F = DIR)
-            DEFS    13            ; Remaining GET_FILE_INFO fields
+VFMLI         DEFB      20H,00H,0BFH
+              DEFB      0C4H
+              DEFW      VFPL+OFFSET
+              DEFB      60H
+VFPL          DEFB      0AH
+              DEFW      0800H
+              DEFB      0                              ; Access returned
+VFTYPE        DEFB      0                              ; File type returned ($0F = DIR)
+              DEFS      13                             ; Remaining GET_FILE_INFO fields
 
-V_HASPFX   DEFB    0
-V_NAMELEN  DEFB    0
+V_HASPFX      DEFB      0
+V_NAMELEN     DEFB      0
 ; The unit in VRUNIT belongs to the one ProDOS volume backing BP/M.
-VUCVALID   DEFB    0
+VUCVALID      DEFB      0
 
 ; ProDOS READ_BLOCK call, read-only, used to inspect volume bitmap.
-VRMLI        DEFB    20H,00H,0BFH    ; JSR $BF00
-            DEFB    080H            ; ProDOS READ_BLOCK
-            DEFW    VRPL+OFFSET
-            DEFB    60H                ; RTS
-VRPL        DEFB    3
-VRUNIT        DEFB    0            ; Discovered once; reused for all CP/M drives
-            DEFW    0800H            ; physical 6502 address (NOT VOLBUF+OFFSET)
-VRBLK        DEFW    0                ; Requested ProDOS 512-byte block
+VRMLI         DEFB      20H,00H,0BFH                   ; JSR $BF00
+              DEFB      080H                           ; ProDOS READ_BLOCK
+              DEFW      VRPL+OFFSET
+              DEFB      60H                            ; RTS
+VRPL          DEFB      3
+VRUNIT        DEFB      0                              ; Discovered once; reused for all CP/M drives
+              DEFW      0800H                          ; physical 6502 address (NOT VOLBUF+OFFSET)
+VRBLK         DEFW      0                              ; Requested ProDOS 512-byte block
 
  ; ProDOS path buffers and directory workspace have been relocated to MAIN
  ; $4500.., in the reclaimed (former AUX LC snapshot) space.
@@ -7809,11 +7810,11 @@ VRBLK        DEFW    0                ; Requested ProDOS 512-byte block
 ; RAM $A400-$A7FF is reserved for Z80 stack, not file I/O.
 
 
-            ;ORG        9000H    ; Try this - WORKS
+              ;ORG        9000H   ; Try this - WORKS
 
-            ORG        9800H    ; Try this - WORKS
-IOBUF1        DEFS    1024
-IOBUF2        DEFS    1024
+              ORG       9800H                          ; Try this - WORKS
+IOBUF1        DEFS      1024
+IOBUF2        DEFS      1024
 ; Put the read completion shim in the otherwise spare $A000-$A3FF area.
 ; It cannot overlap ProDOS buffers or the dedicated $A400-$A7FF stack.
 ; Keeping it here actually saves 6 bytes in the crowded resident area.
@@ -7824,41 +7825,41 @@ IOFREE
 ; success and must be padded in the CP/M DMA buffer, not on disk.
 ; Return ProDOS status unchanged for errors other than $4C;
 ; otherwise return 0 if 1..128 bytes were read and $4C if none.
-READ128        XOR        A
-            LD        (FRMLITC),A    ; No stale transfer count on error
-            LD        (FRMLITC+1),A
-            LD        HL,FRMLI
-            CALL    PRODOS
-            OR        A
-            JR        Z,R128_COUNT
-            CP        04CH
-            RET        NZ        ; Preserve bad FRN / other error
+READ128       XOR       A
+              LD        (FRMLITC),A                    ; No stale transfer count on error
+              LD        (FRMLITC+1),A
+              LD        HL,FRMLI
+              CALL      PRODOS
+              OR        A
+              JR        Z,R128_COUNT
+              CP        04CH
+              RET       NZ                             ; Preserve bad FRN / other error
 R128_COUNT    LD        A,(FRMLITC+1)
-            OR        A            ; 128 requested: high byte must be 0
-            JR        NZ,R128_BAD
-            LD        A,(FRMLITC)
-            OR        A
-            JR        Z,R128_EOF
-            CP        128
-            JR        Z,R128_OK
-            JR        NC,R128_BAD    ; ProDOS cannot return >128 bytes
-            LD        C,A            ; Bytes read (1..127)
-            LD        B,0
-            LD        HL,(DMAADDR)
-            ADD        HL,BC        ; First unfilled byte
-            LD        A,128
-            SUB        C
-            LD        B,A            ; Number of bytes to pad (1..127)
-            LD        A,01AH        ; CP/M text EOF marker (^Z)
-R128_FILL    LD        (HL),A
-            INC        HL
-            DJNZ    R128_FILL
-R128_OK    XOR        A
-            RET
-R128_EOF    LD        A,04CH
-            RET
-R128_BAD    LD        A,0FFH
-            RET
+              OR        A                              ; 128 requested: high byte must be 0
+              JR        NZ,R128_BAD
+              LD        A,(FRMLITC)
+              OR        A
+              JR        Z,R128_EOF
+              CP        128
+              JR        Z,R128_OK
+              JR        NC,R128_BAD                    ; ProDOS cannot return >128 bytes
+              LD        C,A                            ; Bytes read (1..127)
+              LD        B,0
+              LD        HL,(DMAADDR)
+              ADD       HL,BC                          ; First unfilled byte
+              LD        A,128
+              SUB       C
+              LD        B,A                            ; Number of bytes to pad (1..127)
+              LD        A,01AH                         ; CP/M text EOF marker (^Z)
+R128_FILL     LD        (HL),A
+              INC       HL
+              DJNZ      R128_FILL
+R128_OK       XOR       A
+              RET
+R128_EOF      LD        A,04CH
+              RET
+R128_BAD      LD        A,0FFH
+              RET
 
 ; ProDOS's F_SFIRST/F_SNEXT leave the directory open between matches.
 ; Once exhausted, release its physical ProDOS handle and associated 1K
@@ -7866,10 +7867,10 @@ R128_BAD    LD        A,0FFH
 ; On an already-closed/failed OPEN, F_CLOSE is harmless (DFCB S2=0).
 ; Keep this helper in the spare region rather than crowding $9800.
 SEARCH_EOF    LD        DE,DFCB
-            CALL    F_CLOSE
-            LD        A,0FFH        ; CP/M search: no more entries
-            LD        L,A            ; Also return error in L
-            RET
+              CALL      F_CLOSE
+              LD        A,0FFH                         ; CP/M search: no more entries
+              LD        L,A                            ; Also return error in L
+              RET
 
 
 ; =====================================================================
@@ -7881,189 +7882,189 @@ SEARCH_EOF    LD        DE,DFCB
 
 ; Size-to-allocation-map synthesis, relocated from resident BDOS.
 ; All internal JR/DJNZ targets remain within this block.
-N2FMAP        ADD        A,15            ; Round record count up to 16
-            RRCA
-            RRCA
-            RRCA
-            RRCA
-            AND        0FH            ; (records+15)/16 (0..8)
-            LD        C,A
-            LD        HL,(DMAADDR)
-            LD        DE,16
-            ADD        HL,DE            ; Offset 16: start of allocation map
-            LD        B,8                ; Eight 16-bit block entries
-            LD        D,1                ; Fake block number, nonzero
+N2FMAP        ADD       A,15                           ; Round record count up to 16
+              RRCA
+              RRCA
+              RRCA
+              RRCA
+              AND       0FH                            ; (records+15)/16 (0..8)
+              LD        C,A
+              LD        HL,(DMAADDR)
+              LD        DE,16
+              ADD       HL,DE                          ; Offset 16: start of allocation map
+              LD        B,8                            ; Eight 16-bit block entries
+              LD        D,1                            ; Fake block number, nonzero
 N2FMLP        LD        A,C
-            OR        A
-            JR        Z,N2FMZERO
-            LD        A,D                ; Populated allocation entry
-            DEC        C
-            JR        N2FMSTORE
-N2FMZERO    XOR        A                ; Unused block entry
-N2FMSTORE    LD        (HL),A            ; Little endian, low byte
-            INC        HL
-            XOR        A
-            LD        (HL),A            ; High byte of block number
-            INC        HL
-            INC        D
-            DJNZ    N2FMLP
-            RET
+              OR        A
+              JR        Z,N2FMZERO
+              LD        A,D                            ; Populated allocation entry
+              DEC       C
+              JR        N2FMSTORE
+N2FMZERO      XOR       A                              ; Unused block entry
+N2FMSTORE     LD        (HL),A                         ; Little endian, low byte
+              INC       HL
+              XOR       A
+              LD        (HL),A                         ; High byte of block number
+              INC       HL
+              INC       D
+              DJNZ      N2FMLP
+              RET
 
-            ORG     0A080H
+              ORG       0A080H
 ; Auxiliary page zero: WBOOT -> LC DF06, BDOS -> LC DF00.
-AUXPZERO    DEFB    0C3H,006H,0DFH,0,0,0C3H,000H,0DFH
-AUXDEST     DEFW    0100H
-AUXEXCD     DEFB    0
+AUXPZERO      DEFB      0C3H,006H,0DFH,0,0,0C3H,000H,0DFH
+AUXDEST       DEFW      0100H
+AUXEXCD       DEFB      0
 
 ; AUX LC bank2 image at DF00. The BDOS vector is first for stack safety.
 LCIMG
-            JP      LCGATE
-            JP      LCNOP
-            JP      LCWBOOT
-            JP      LCBCST
-            JP      LCBCIN
-            JP      LCBCOUT
-            JP      LCBLST
-            JP      LCBPUN
-            JP      LCBRDR
-            JP      LCNOP
-            JP      LCBNULL
-            JP      LCNOP
-            JP      LCNOP
-            JP      LCNOP
-            JP      LCBERR
-            JP      LCBERR
-            JP      LCBZERO
-            JP      LCBTRAN
-LIENT       XOR     A
-            LD      SP,LCBASE
-            LD      (WRAUX),A
-            LD      (RDAUX),A
-            CALL    0100H
-            JP      LCFIN
-LIGATE      XOR     A
-            LD      (WRMAIN),A
-            LD      (RDMAIN),A
-            JP      AXGATE
-LIFIN       XOR     A
-            LD      (WRMAIN),A
-            LD      (RDMAIN),A
-            JP      AXFIN
-LIRES       LD      (WRAUX),A
-            LD      (RDAUX),A
-            RET
-LIPEEK      XOR     A
-            LD      (RDAUX),A
-            LD      A,(HL)
-            LD      (RDMAIN),A
-            RET
-LIA2M       XOR     A
-            LD      (RDAUX),A
-            LDIR
-            LD      (RDMAIN),A
-            RET
-LINOP       RET
-LIBCST      PUSH    BC
-            PUSH    DE
-            PUSH    HL
-            LD      C,0F1H
-            CALL    LCGATE
-            POP     HL
-            POP     DE
-            POP     BC
-            RET
-LIBCIN      PUSH    BC
-            PUSH    DE
-            PUSH    HL
-            LD      C,0F2H
-            CALL    LCGATE
-            POP     HL
-            POP     DE
-            POP     BC
-            RET
-LIBCOUT     PUSH    BC
-            PUSH    DE
-            PUSH    HL
-            LD      E,C
-            LD      C,0F3H
-            CALL    LCGATE
-            POP     HL
-            POP     DE
-            POP     BC
-            RET
+              JP        LCGATE
+              JP        LCNOP
+              JP        LCWBOOT
+              JP        LCBCST
+              JP        LCBCIN
+              JP        LCBCOUT
+              JP        LCBLST
+              JP        LCBPUN
+              JP        LCBRDR
+              JP        LCNOP
+              JP        LCBNULL
+              JP        LCNOP
+              JP        LCNOP
+              JP        LCNOP
+              JP        LCBERR
+              JP        LCBERR
+              JP        LCBZERO
+              JP        LCBTRAN
+LIENT         XOR       A
+              LD        SP,LCBASE
+              LD        (WRAUX),A
+              LD        (RDAUX),A
+              CALL      0100H
+              JP        LCFIN
+LIGATE        XOR       A
+              LD        (WRMAIN),A
+              LD        (RDMAIN),A
+              JP        AXGATE
+LIFIN         XOR       A
+              LD        (WRMAIN),A
+              LD        (RDMAIN),A
+              JP        AXFIN
+LIRES         LD        (WRAUX),A
+              LD        (RDAUX),A
+              RET
+LIPEEK        XOR       A
+              LD        (RDAUX),A
+              LD        A,(HL)
+              LD        (RDMAIN),A
+              RET
+LIA2M         XOR       A
+              LD        (RDAUX),A
+              LDIR
+              LD        (RDMAIN),A
+              RET
+LINOP         RET
+LIBCST        PUSH      BC
+              PUSH      DE
+              PUSH      HL
+              LD        C,0F1H
+              CALL      LCGATE
+              POP       HL
+              POP       DE
+              POP       BC
+              RET
+LIBCIN        PUSH      BC
+              PUSH      DE
+              PUSH      HL
+              LD        C,0F2H
+              CALL      LCGATE
+              POP       HL
+              POP       DE
+              POP       BC
+              RET
+LIBCOUT       PUSH      BC
+              PUSH      DE
+              PUSH      HL
+              LD        E,C
+              LD        C,0F3H
+              CALL      LCGATE
+              POP       HL
+              POP       DE
+              POP       BC
+              RET
 ; AUX LC must preserve caller registers while switching via LCGATE.
-LIBLST      PUSH    BC
-            PUSH    DE
-            PUSH    HL
-            LD      E,C
-            LD      C,0F4H
-            CALL    LCGATE
-            POP     HL
-            POP     DE
-            POP     BC
-            RET
-LIBPUN      PUSH    BC
-            PUSH    DE
-            PUSH    HL
-            LD      E,C
-            LD      C,0F5H
-            CALL    LCGATE
-            POP     HL
-            POP     DE
-            POP     BC
-            RET
-LIBRDR      PUSH    BC
-            PUSH    DE
-            PUSH    HL
-            LD      C,0F6H
-            CALL    LCGATE
-            POP     HL
-            POP     DE
-            POP     BC
-            RET
-LIBNULL     LD      HL,0
-            RET
-LIBERR      LD      A,1
-            RET
-LIBZERO     XOR     A
-            RET
-LIBTRAN     LD      H,B
-            LD      L,C
-            RET
+LIBLST        PUSH      BC
+              PUSH      DE
+              PUSH      HL
+              LD        E,C
+              LD        C,0F4H
+              CALL      LCGATE
+              POP       HL
+              POP       DE
+              POP       BC
+              RET
+LIBPUN        PUSH      BC
+              PUSH      DE
+              PUSH      HL
+              LD        E,C
+              LD        C,0F5H
+              CALL      LCGATE
+              POP       HL
+              POP       DE
+              POP       BC
+              RET
+LIBRDR        PUSH      BC
+              PUSH      DE
+              PUSH      HL
+              LD        C,0F6H
+              CALL      LCGATE
+              POP       HL
+              POP       DE
+              POP       BC
+              RET
+LIBNULL       LD        HL,0
+              RET
+LIBERR        LD        A,1
+              RET
+LIBZERO       XOR       A
+              RET
+LIBTRAN       LD        H,B
+              LD        L,C
+              RET
 ; Explicit AUX RST 0 / JP 0000H is WBOOT, not ordinary .COM RET.
 ; Select MAIN RAM before updating the MAIN-owned AXQUIT flag.
-LIWBOOT    XOR     A
-           LD      (WRMAIN),A
-           LD      (RDMAIN),A
-           INC     A
-           LD      (AXQUIT),A
-           JP      AXFIN
+LIWBOOT       XOR       A
+              LD        (WRMAIN),A
+              LD        (RDMAIN),A
+              INC       A
+              LD        (AXQUIT),A
+              JP        AXFIN
 LIEND
 
 ; LC runtime addresses; only eight-character distinct symbol prefixes.
-LCREN       EQU     LCBASE+(LIENT-LCIMG)
-LCGATE      EQU     LCBASE+(LIGATE-LCIMG)
-LCFIN       EQU     LCBASE+(LIFIN-LCIMG)
-LCWBOOT     EQU     LCBASE+(LIWBOOT-LCIMG)
-LCRES       EQU     LCBASE+(LIRES-LCIMG)
-LCPEE0      EQU     LCBASE+(LIPEEK-LCIMG)
-LCA2MR      EQU     LCBASE+(LIA2M-LCIMG)
-LCNOP       EQU     LCBASE+(LINOP-LCIMG)
-LCBCST      EQU     LCBASE+(LIBCST-LCIMG)
-LCBCIN      EQU     LCBASE+(LIBCIN-LCIMG)
-LCBCOUT     EQU     LCBASE+(LIBCOUT-LCIMG)
-LCBLST      EQU     LCBASE+(LIBLST-LCIMG)
-LCBPUN      EQU     LCBASE+(LIBPUN-LCIMG)
-LCBRDR      EQU     LCBASE+(LIBRDR-LCIMG)
-LCBNULL     EQU     LCBASE+(LIBNULL-LCIMG)
-LCBERR      EQU     LCBASE+(LIBERR-LCIMG)
-LCBZERO     EQU     LCBASE+(LIBZERO-LCIMG)
-LCBTRAN     EQU     LCBASE+(LIBTRAN-LCIMG)
-LCQUIT      EQU     AXQUIT
-LCLEN       EQU     LIEND-LCIMG
+LCREN         EQU       LCBASE+(LIENT-LCIMG)
+LCGATE        EQU       LCBASE+(LIGATE-LCIMG)
+LCFIN         EQU       LCBASE+(LIFIN-LCIMG)
+LCWBOOT       EQU       LCBASE+(LIWBOOT-LCIMG)
+LCRES         EQU       LCBASE+(LIRES-LCIMG)
+LCPEE0        EQU       LCBASE+(LIPEEK-LCIMG)
+LCA2MR        EQU       LCBASE+(LIA2M-LCIMG)
+LCNOP         EQU       LCBASE+(LINOP-LCIMG)
+LCBCST        EQU       LCBASE+(LIBCST-LCIMG)
+LCBCIN        EQU       LCBASE+(LIBCIN-LCIMG)
+LCBCOUT       EQU       LCBASE+(LIBCOUT-LCIMG)
+LCBLST        EQU       LCBASE+(LIBLST-LCIMG)
+LCBPUN        EQU       LCBASE+(LIBPUN-LCIMG)
+LCBRDR        EQU       LCBASE+(LIBRDR-LCIMG)
+LCBNULL       EQU       LCBASE+(LIBNULL-LCIMG)
+LCBERR        EQU       LCBASE+(LIBERR-LCIMG)
+LCBZERO       EQU       LCBASE+(LIBZERO-LCIMG)
+LCBTRAN       EQU       LCBASE+(LIBTRAN-LCIMG)
+LCQUIT        EQU       AXQUIT
+LCLEN         EQU       LIEND-LCIMG
 
 ; MAIN staging buffer for 128-byte ProDOS record reads.
-AUXSTAGE    DEFS    128
+AUXSTAGE      DEFS      128
 
  ; DCHKRO/RODENY relocated to MAIN $4800 with the I/O driver.
 
@@ -8078,174 +8079,174 @@ AUXSTAGE    DEFS    128
 ; CMRU=1/2 is last used slot; eviction prefers the other one.
 ; This code occupies the otherwise unused MAIN $A200-$A3FF region.
 ; =====================================================================
-            ORG     0A200H
+              ORG       0A200H
 ; Look up PATHBUF in cached slots. A=1/2 for a hit, A=0 for miss.
-CACHEFND    LD      A,(CSTAT1)
-            OR      A
-            JR      Z,CF_TWO
-            LD      DE,CNAME1
-            CALL    CACHECMP
-            JR      Z,CF_ONE
-CF_TWO      LD      A,(CSTAT2)
-            OR      A
-            JR      Z,CF_MISS
-            LD      DE,CNAME2
-            CALL    CACHECMP
-            JR      Z,CF_TWON
-CF_MISS     XOR     A
-            RET
-CF_ONE      LD      A,1
-            RET
-CF_TWON     LD      A,2
-            RET
+CACHEFND      LD        A,(CSTAT1)
+              OR        A
+              JR        Z,CF_TWO
+              LD        DE,CNAME1
+              CALL      CACHECMP
+              JR        Z,CF_ONE
+CF_TWO        LD        A,(CSTAT2)
+              OR        A
+              JR        Z,CF_MISS
+              LD        DE,CNAME2
+              CALL      CACHECMP
+              JR        Z,CF_TWON
+CF_MISS       XOR       A
+              RET
+CF_ONE        LD        A,1
+              RET
+CF_TWON       LD        A,2
+              RET
 ; Compare Pascal-style paths, including length; ignore stale trailing data.
-CACHECMP    LD      HL,PATHBUF
-            LD      A,(HL)
-            INC     A
-            LD      B,A
-CC_LOOP     LD      A,(DE)
-            CP      (HL)
-            RET     NZ
-            INC     HL
-            INC     DE
-            DJNZ    CC_LOOP
-            XOR     A
-            RET
+CACHECMP      LD        HL,PATHBUF
+              LD        A,(HL)
+              INC       A
+              LD        B,A
+CC_LOOP       LD        A,(DE)
+              CP        (HL)
+              RET       NZ
+              INC       HL
+              INC       DE
+              DJNZ      CC_LOOP
+              XOR       A
+              RET
 
 ; A=1 or 2, return cached physical ProDOS reference (no register clobber).
-CACHEREF    CP      1
-            JR      Z,CR_ONE
-            LD      A,(FRN2)
-            RET
-CR_ONE      LD      A,(FRN1)
-            RET
+CACHEREF      CP        1
+              JR        Z,CR_ONE
+              LD        A,(FRN2)
+              RET
+CR_ONE        LD        A,(FRN1)
+              RET
 
 ; A=slot; register a successful _F_OPEN's pathname as cached.
-CACHEPUT    LD      (CSLOT),A
-            PUSH    AF
-            LD      HL,COPENS
-            CALL    CINC16
-            POP     AF
-            LD      HL,PATHBUF
-            LD      DE,CNAME1
-            CP      1
-            JR      Z,CP_COPY
-            LD      DE,CNAME2
-CP_COPY     LD      BC,20
-            LDIR
-            LD      A,(CSLOT)
-            LD      (CMRU),A
-            CP      1
-            JR      NZ,CP_TWO
-            LD      (CSTAT1),A
-            RET
-CP_TWO      LD      A,1
-            LD      (CSTAT2),A
-            RET
+CACHEPUT      LD        (CSLOT),A
+              PUSH      AF
+              LD        HL,COPENS
+              CALL      CINC16
+              POP       AF
+              LD        HL,PATHBUF
+              LD        DE,CNAME1
+              CP        1
+              JR        Z,CP_COPY
+              LD        DE,CNAME2
+CP_COPY       LD        BC,20
+              LDIR
+              LD        A,(CSLOT)
+              LD        (CMRU),A
+              CP        1
+              JR        NZ,CP_TWO
+              LD        (CSTAT1),A
+              RET
+CP_TWO        LD        A,1
+              LD        (CSTAT2),A
+              RET
 
 ; A=1/2; physically close slot, clear its FRN and cache flag on success.
-CACHESLT    LD      (CSLOT),A
-            CALL    CACHEREF
-            LD      (FCMLIN),A
-            LD      HL,FCMLI
-            CALL    PRODOS
-            OR      A
-            RET     NZ
-            LD      A,(CSLOT)
-            CP      1
-            JR      NZ,CS_TWO
-            XOR     A
-            LD      (FRN1),A
-            LD      (CSTAT1),A
-            RET
-CS_TWO      XOR     A
-            LD      (FRN2),A
-            LD      (CSTAT2),A
-            RET
+CACHESLT      LD        (CSLOT),A
+              CALL      CACHEREF
+              LD        (FCMLIN),A
+              LD        HL,FCMLI
+              CALL      PRODOS
+              OR        A
+              RET       NZ
+              LD        A,(CSLOT)
+              CP        1
+              JR        NZ,CS_TWO
+              XOR       A
+              LD        (FRN1),A
+              LD        (CSTAT1),A
+              RET
+CS_TWO        XOR       A
+              LD        (FRN2),A
+              LD        (CSTAT2),A
+              RET
 
 ; Close only a cached handle matching PATHBUF; leave raw directory FRNs.
-CACHECLS    CALL    CACHEFND
-            OR      A
-            RET     Z
-            JP      CACHESLT
+CACHECLS      CALL      CACHEFND
+              OR        A
+              RET       Z
+              JP        CACHESLT
 
 ; When both buffers are occupied, evict only cached files (never DFCB).
-CACHEEV     LD      A,(CSTAT1)
-            OR      A
-            JR      Z,CE_SECOND
-            LD      A,(CSTAT2)
-            OR      A
-            JR      Z,CE_FIRST
-            LD      A,(CMRU)
-            CP      1
-            JR      Z,CE_SECOND
-CE_FIRST    LD      A,1
-            JP      CACHESLT
-CE_SECOND   LD      A,(CSTAT2)
-            OR      A
-            JR      Z,CE_FAIL
-            LD      A,2
-            JP      CACHESLT
-CE_FAIL     LD      A,0FFH
-            RET
+CACHEEV       LD        A,(CSTAT1)
+              OR        A
+              JR        Z,CE_SECOND
+              LD        A,(CSTAT2)
+              OR        A
+              JR        Z,CE_FIRST
+              LD        A,(CMRU)
+              CP        1
+              JR        Z,CE_SECOND
+CE_FIRST      LD        A,1
+              JP        CACHESLT
+CE_SECOND     LD        A,(CSTAT2)
+              OR        A
+              JR        Z,CE_FAIL
+              LD        A,2
+              JP        CACHESLT
+CE_FAIL       LD        A,0FFH
+              RET
 
 ; Return an available IOBUF (A=slot, HL=buffer), evicting LRU if needed.
-CACHEFREE   XOR     A
-            CALL    GETIOADDR
-            CP      0FFH
-            RET     NZ
-            CALL    CACHEEV
-            OR      A
-            JR      NZ,CE_FAIL
-            LD      HL,CEVICTS
-            CALL    CINC16
-            XOR     A
-            JP      GETIOADDR
+CACHEFREE     XOR       A
+              CALL      GETIOADDR
+              CP        0FFH
+              RET       NZ
+              CALL      CACHEEV
+              OR        A
+              JR        NZ,CE_FAIL
+              LD        HL,CEVICTS
+              CALL      CINC16
+              XOR       A
+              JP        GETIOADDR
 
 ; Warm boot / AUX termination: flush all ProDOS refs, clear slot metadata.
-CACHEALL    XOR     A
-            LD      (FCMLIN),A
-            LD      HL,FCMLI
-            CALL    PRODOS
-            XOR     A
-            LD      (FRN1),A
-            LD      (FRN2),A
-            LD      (FRN3),A
-            LD      (FRN4),A
-            LD      (DFCB+0EH),A     ; No stale physical directory reference
-            LD      (CSTAT1),A
-            LD      (CSTAT2),A
-            LD      (CMRU),A
-            RET
+CACHEALL      XOR       A
+              LD        (FCMLIN),A
+              LD        HL,FCMLI
+              CALL      PRODOS
+              XOR       A
+              LD        (FRN1),A
+              LD        (FRN2),A
+              LD        (FRN3),A
+              LD        (FRN4),A
+              LD        (DFCB+0EH),A                   ; No stale physical directory reference
+              LD        (CSTAT1),A
+              LD        (CSTAT2),A
+              LD        (CMRU),A
+              RET
 
-CSTAT1      DEFB    0
-CSTAT2      DEFB    0
-CMRU        DEFB    0
-CSLOT       DEFB    0
-CNAME1      DEFS    20
-CNAME2      DEFS    20
+CSTAT1        DEFB      0
+CSTAT2        DEFB      0
+CMRU          DEFB      0
+CSLOT         DEFB      0
+CNAME1        DEFS      20
+CNAME2        DEFS      20
 
-            ORG     0A3D0H
+              ORG       0A3D0H
 ; Executable base name (8 bytes) is in PATHBUF2+1 after PARSE.
-TBEXE   LD      A,(TABMODE)
-            CALL    TBNPTR
-            EX      DE,HL
-            LD      HL,PATHBUF2+1
-            LD      BC,8
-            LDIR
-            RET
+TBEXE         LD        A,(TABMODE)
+              CALL      TBNPTR
+              EX        DE,HL
+              LD        HL,PATHBUF2+1
+              LD        BC,8
+              LDIR
+              RET
 ; Return HL -> first byte of tab B's 10-byte virtual video metadata.
-TB_METAP    LD      HL,VSMETAS
-            LD      DE,10
-            LD      A,B
-            OR      A
-            RET     Z
-TM_NEXT     ADD     HL,DE
-            DEC     A
-            JR      NZ,TM_NEXT
-            RET
+TB_METAP      LD        HL,VSMETAS
+              LD        DE,10
+              LD        A,B
+              OR        A
+              RET       Z
+TM_NEXT       ADD       HL,DE
+              DEC       A
+              JR        NZ,TM_NEXT
+              RET
 
-            ORG     0A400H
+              ORG       0A400H
 ; Experimental base-69 codec lives at the bottom of the resident stack
 ; reservation. Z80 SP still starts at $A800. Check available stack!
 ; Zapple-II base-69/base-36 arithmetic prototype for Udo Munk Z80asm.
@@ -8272,405 +8273,405 @@ TM_NEXT     ADD     HL,DE
 ;
 ; Use without inserting a separate ORG here. Start with B69ENC label.
 
-B69ENC  LD      (B69INT),HL
-        LD      (B69OUT),DE
-        CALL    B69CLR
-        LD      HL,(B69INT)
-        LD      B,11
-E69LOOP LD      A,(HL)
-        AND     07FH           ; ignore CP/M attribute flag
-        CP      020H
-        JP      C,B69ERR
-        CP      07FH
-        JP      NC,B69ERR
-        CP      061H           ; skip lowercase ASCII a-z
-        JR      C,E69MAP
-        CP      07BH
-        JP      C,B69ERR
-        SUB     26
-E69MAP  SUB     020H           ; 0..68 base69 digit
-        PUSH    BC
-        PUSH    HL
-        CALL    B69M69
-        POP     HL
-        POP     BC
-        INC     HL
-        DJNZ    E69LOOP
-        LD      HL,(B69OUT)
-        LD      (HL),'Z'
-        INC     HL
-        LD      (HL),'.'
-        INC     HL
-        LD      (B69OUT),HL   ; 13-byte payload beginning
-        LD      DE,12
-        ADD     HL,DE         ; write digits from right to left
-        LD      B,13
-E69OUT  PUSH    BC
-        PUSH    HL
-        LD      A,36
-        CALL    B69DIV        ; A=number modulo 36; big /= 36
-        POP     HL
-        POP     BC
-        CP      10
-        JR      C,E69NUM
-        ADD     A,'A'-10
-        JR      E69PUT
-E69NUM  ADD     A,'0'
-E69PUT  LD      (HL),A
-        DEC     HL
-        DJNZ    E69OUT
-        XOR     A
-        RET
+B69ENC        LD        (B69INT),HL
+              LD        (B69OUT),DE
+              CALL      B69CLR
+              LD        HL,(B69INT)
+              LD        B,11
+E69LOOP       LD        A,(HL)
+              AND       07FH                           ; ignore CP/M attribute flag
+              CP        020H
+              JP        C,B69ERR
+              CP        07FH
+              JP        NC,B69ERR
+              CP        061H                           ; skip lowercase ASCII a-z
+              JR        C,E69MAP
+              CP        07BH
+              JP        C,B69ERR
+              SUB       26
+E69MAP        SUB       020H                           ; 0..68 base69 digit
+              PUSH      BC
+              PUSH      HL
+              CALL      B69M69
+              POP       HL
+              POP       BC
+              INC       HL
+              DJNZ      E69LOOP
+              LD        HL,(B69OUT)
+              LD        (HL),'Z'
+              INC       HL
+              LD        (HL),'.'
+              INC       HL
+              LD        (B69OUT),HL                    ; 13-byte payload beginning
+              LD        DE,12
+              ADD       HL,DE                          ; write digits from right to left
+              LD        B,13
+E69OUT        PUSH      BC
+              PUSH      HL
+              LD        A,36
+              CALL      B69DIV                         ; A=number modulo 36; big /= 36
+              POP       HL
+              POP       BC
+              CP        10
+              JR        C,E69NUM
+              ADD       A,'A'-10
+              JR        E69PUT
+E69NUM        ADD       A,'0'
+E69PUT        LD        (HL),A
+              DEC       HL
+              DJNZ      E69OUT
+              XOR       A
+              RET
 
-B69DEC  LD      (B69INT),HL
-        LD      (B69OUT),DE
-        LD      A,(HL)
-        CP      'Z'
-        JP      NZ,B69ERR
-        INC     HL
-        LD      A,(HL)
-        CP      '.'
-        JP      NZ,B69ERR
-        INC     HL
-        LD      (B69INT),HL   ; first payload character
-        CALL    B69CLR
-        LD      HL,(B69INT)
-        LD      B,13
-D69LOOP LD      A,(HL)
-        CP      '0'
-        JP      C,B69ERR
-        CP      03AH
-        JR      C,D69NUM
-        CP      'A'
-        JP      C,B69ERR
-        CP      05BH
-        JP      NC,B69ERR
-        SUB     'A'-10
-        JR      D69ADD
-D69NUM SUB     '0'
-D69ADD  PUSH    BC
-        PUSH    HL
-        CALL    B69M36
-        POP     HL
-        POP     BC
-        INC     HL
-        DJNZ    D69LOOP
-        LD      HL,(B69OUT)
-        LD      DE,10
-        ADD     HL,DE
-        LD      B,11
-D69OUT  PUSH    BC
-        PUSH    HL
-        LD      A,69
-        CALL    B69DIV        ; A=number modulo 69; big /=69
-        POP     HL
-        POP     BC
-        CP      65             ; first 65 chars map to ASCII 32..96
-        JR      C,D69LOW
-        ADD     A,26           ; last 4 chars map to {|}~
-D69LOW  ADD     A,020H
-        LD      (HL),A
-        DEC     HL
-        DJNZ    D69OUT
-        ; Reject input >= 69^11 by ensuring quotient becomes zero.
-        LD      HL,B69BIG
-        LD      B,9
-D69CHK  LD      A,(HL)
-        OR      A
-        JP      NZ,B69ERR
-        INC     HL
-        DJNZ    D69CHK
-        XOR     A
-        RET
+B69DEC        LD        (B69INT),HL
+              LD        (B69OUT),DE
+              LD        A,(HL)
+              CP        'Z'
+              JP        NZ,B69ERR
+              INC       HL
+              LD        A,(HL)
+              CP        '.'
+              JP        NZ,B69ERR
+              INC       HL
+              LD        (B69INT),HL                    ; first payload character
+              CALL      B69CLR
+              LD        HL,(B69INT)
+              LD        B,13
+D69LOOP       LD        A,(HL)
+              CP        '0'
+              JP        C,B69ERR
+              CP        03AH
+              JR        C,D69NUM
+              CP        'A'
+              JP        C,B69ERR
+              CP        05BH
+              JP        NC,B69ERR
+              SUB       'A'-10
+              JR        D69ADD
+D69NUM        SUB       '0'
+D69ADD        PUSH      BC
+              PUSH      HL
+              CALL      B69M36
+              POP       HL
+              POP       BC
+              INC       HL
+              DJNZ      D69LOOP
+              LD        HL,(B69OUT)
+              LD        DE,10
+              ADD       HL,DE
+              LD        B,11
+D69OUT        PUSH      BC
+              PUSH      HL
+              LD        A,69
+              CALL      B69DIV                         ; A=number modulo 69; big /=69
+              POP       HL
+              POP       BC
+              CP        65                             ; first 65 chars map to ASCII 32..96
+              JR        C,D69LOW
+              ADD       A,26                           ; last 4 chars map to {|}~
+D69LOW        ADD       A,020H
+              LD        (HL),A
+              DEC       HL
+              DJNZ      D69OUT
+              ; Reject input >= 69^11 by ensuring quotient becomes zero.
+              LD        HL,B69BIG
+              LD        B,9
+D69CHK        LD        A,(HL)
+              OR        A
+              JP        NZ,B69ERR
+              INC       HL
+              DJNZ      D69CHK
+              XOR       A
+              RET
 
-B69ERR  LD      A,0FFH
-        RET
+B69ERR        LD        A,0FFH
+              RET
 
 ; Clear 9-byte big-endian intermediate integer.
-B69CLR  LD      HL,B69BIG
-        LD      B,9
-        XOR     A
-C69LOOP LD      (HL),A
-        INC     HL
-        DJNZ    C69LOOP
-        RET
+B69CLR        LD        HL,B69BIG
+              LD        B,9
+              XOR       A
+C69LOOP       LD        (HL),A
+              INC       HL
+              DJNZ      C69LOOP
+              RET
 
 ; BIGNUM = BIGNUM*69 + A (0..68).
 ; Carry flows from least-significant (highest-address) byte upwards.
-B69M69  LD      C,A
-        LD      HL,B69BIG+8
-        LD      B,9
-M69LOOP PUSH    HL
-        LD      L,(HL)
-        LD      H,0
-        LD      D,H
-        LD      E,L            ; DE=old byte
-        ADD     HL,HL          ; 2x
-        ADD     HL,HL          ; 4x
-        ADD     HL,HL          ; 8x
-        ADD     HL,HL          ; 16x
-        ADD     HL,HL          ; 32x
-        ADD     HL,HL          ; 64x
-        ADD     HL,DE          ; 65x
-        SLA     E
-        RL      D
-        SLA     E
-        RL      D             ; DE=4x
-        ADD     HL,DE          ; 69x
-        LD      E,C
-        LD      D,0
-        ADD     HL,DE          ; plus incoming carry
-        LD      C,H            ; outgoing carry
-        LD      A,L            ; new byte
-        POP     HL
-        LD      (HL),A
-        DEC     HL
-        DJNZ    M69LOOP
-        RET
+B69M69        LD        C,A
+              LD        HL,B69BIG+8
+              LD        B,9
+M69LOOP       PUSH      HL
+              LD        L,(HL)
+              LD        H,0
+              LD        D,H
+              LD        E,L                            ; DE=old byte
+              ADD       HL,HL                          ; 2x
+              ADD       HL,HL                          ; 4x
+              ADD       HL,HL                          ; 8x
+              ADD       HL,HL                          ; 16x
+              ADD       HL,HL                          ; 32x
+              ADD       HL,HL                          ; 64x
+              ADD       HL,DE                          ; 65x
+              SLA       E
+              RL        D
+              SLA       E
+              RL        D                              ; DE=4x
+              ADD       HL,DE                          ; 69x
+              LD        E,C
+              LD        D,0
+              ADD       HL,DE                          ; plus incoming carry
+              LD        C,H                            ; outgoing carry
+              LD        A,L                            ; new byte
+              POP       HL
+              LD        (HL),A
+              DEC       HL
+              DJNZ      M69LOOP
+              RET
 
 ; BIGNUM = BIGNUM*36 + A (0..35).
-B69M36  LD      C,A
-        LD      HL,B69BIG+8
-        LD      B,9
-M36LOOP PUSH    HL
-        LD      L,(HL)
-        LD      H,0
-        ADD     HL,HL
-        ADD     HL,HL          ; 4x
-        LD      D,H
-        LD      E,L            ; DE=4x
-        ADD     HL,HL
-        ADD     HL,HL
-        ADD     HL,HL          ; 32x
-        ADD     HL,DE          ; 36x
-        LD      E,C
-        LD      D,0
-        ADD     HL,DE
-        LD      C,H
-        LD      A,L
-        POP     HL
-        LD      (HL),A
-        DEC     HL
-        DJNZ    M36LOOP
-        RET
+B69M36        LD        C,A
+              LD        HL,B69BIG+8
+              LD        B,9
+M36LOOP       PUSH      HL
+              LD        L,(HL)
+              LD        H,0
+              ADD       HL,HL
+              ADD       HL,HL                          ; 4x
+              LD        D,H
+              LD        E,L                            ; DE=4x
+              ADD       HL,HL
+              ADD       HL,HL
+              ADD       HL,HL                          ; 32x
+              ADD       HL,DE                          ; 36x
+              LD        E,C
+              LD        D,0
+              ADD       HL,DE
+              LD        C,H
+              LD        A,L
+              POP       HL
+              LD        (HL),A
+              DEC       HL
+              DJNZ      M36LOOP
+              RET
 
 ; BIGNUM /= A (base 36 or 69); return remainder in A.
 ; Eight quotient bits per byte, MSB first, using shift-and-subtract.
-B69DIV  LD      (B69BASE),A
-        PUSH    IX
-        LD      IX,B69BASE
-        LD      HL,B69BIG
-        LD      B,9
-        LD      C,0            ; remainder so far
-V69BYTE PUSH    BC              ; save byte count
-        LD      E,(HL)         ; original dividend byte
-        LD      D,0            ; new quotient byte
-        LD      B,8
-V69BIT  SLA     E               ; incoming dividend bit -> carry
-        LD      A,C
-        ADC     A,A            ; rem*2 + incoming bit, 0..137
-        CP      (IX+0)         ; compare to divisor
-        JR      C,V69ZERO
-        SUB     (IX+0)
-        LD      C,A            ; updated remainder
-        SCF                     ; quotient bit 1
-        JR      V69Q
-V69ZERO LD      C,A
-        OR      A               ; quotient bit 0 (clear carry)
-V69Q    RL      D               ; append quotient bit
-        DJNZ    V69BIT
-        LD      (HL),D
-        INC     HL
-        LD      A,C             ; preserve remainder while popping counter
-        POP     BC
-        LD      C,A
-        DJNZ    V69BYTE
-        POP     IX
-        LD      A,C
-        RET
+B69DIV        LD        (B69BASE),A
+              PUSH      IX
+              LD        IX,B69BASE
+              LD        HL,B69BIG
+              LD        B,9
+              LD        C,0                            ; remainder so far
+V69BYTE       PUSH      BC                             ; save byte count
+              LD        E,(HL)                         ; original dividend byte
+              LD        D,0                            ; new quotient byte
+              LD        B,8
+V69BIT        SLA       E                              ; incoming dividend bit -> carry
+              LD        A,C
+              ADC       A,A                            ; rem*2 + incoming bit, 0..137
+              CP        (IX+0)                         ; compare to divisor
+              JR        C,V69ZERO
+              SUB       (IX+0)
+              LD        C,A                            ; updated remainder
+              SCF                                      ; quotient bit 1
+              JR        V69Q
+V69ZERO       LD        C,A
+              OR        A                              ; quotient bit 0 (clear carry)
+V69Q          RL        D                              ; append quotient bit
+              DJNZ      V69BIT
+              LD        (HL),D
+              INC       HL
+              LD        A,C                            ; preserve remainder while popping counter
+              POP       BC
+              LD        C,A
+              DJNZ      V69BYTE
+              POP       IX
+              LD        A,C
+              RET
 
-B69INT  DEFW    0
-B69OUT  DEFW    0
-B69BASE DEFB    0
-B69BIG  DEFS    9
+B69INT        DEFW      0
+B69OUT        DEFW      0
+B69BASE       DEFB      0
+B69BIG        DEFS      9
 
 ; Check whether an FCB name can be represented *unchanged* on ProDOS.
 ; HL-> eleven FCB name bytes. A=0 normal; FF requires base69 escape.
 ; B,C,DE,HL clobbered.  Name and extension must be canonical
 ; (spaces only at the end of each field), no lower-case or punctuation.
-B69NEED LD      A,(HL)
-        AND     07FH
-        CP      'A'
-        JR      C,B69REQ
-        CP      'Z'+1
-        JR      NC,B69REQ
-        LD      B,8
-        CALL    B69DIR
-        RET     NZ
-        LD      B,3
-        CALL    B69DIR
-        RET
-B69DIR  LD      E,0            ; seen-padding marker
-B69DL   LD      A,(HL)
-        AND     07FH
-        CP      ' '
-        JR      Z,B69PAD
-        LD      D,A
-        LD      A,E
-        OR      A
-        JR      NZ,B69REQ
-        LD      A,D
-        CP      '0'
-        JR      C,B69REQ
-        CP      '9'+1
-        JR      C,B69DG
-        CP      'A'
-        JR      C,B69REQ
-        CP      'Z'+1
-        JR      NC,B69REQ
-        JR      B69DG
-B69PAD  LD      E,1
-B69DG   INC     HL
-        DJNZ    B69DL
-        XOR     A
-        RET
-B69REQ  LD      A,0FFH
-        RET
+B69NEED       LD        A,(HL)
+              AND       07FH
+              CP        'A'
+              JR        C,B69REQ
+              CP        'Z'+1
+              JR        NC,B69REQ
+              LD        B,8
+              CALL      B69DIR
+              RET       NZ
+              LD        B,3
+              CALL      B69DIR
+              RET
+B69DIR        LD        E,0                            ; seen-padding marker
+B69DL         LD        A,(HL)
+              AND       07FH
+              CP        ' '
+              JR        Z,B69PAD
+              LD        D,A
+              LD        A,E
+              OR        A
+              JR        NZ,B69REQ
+              LD        A,D
+              CP        '0'
+              JR        C,B69REQ
+              CP        '9'+1
+              JR        C,B69DG
+              CP        'A'
+              JR        C,B69REQ
+              CP        'Z'+1
+              JR        NC,B69REQ
+              JR        B69DG
+B69PAD        LD        E,1
+B69DG         INC       HL
+              DJNZ      B69DL
+              XOR       A
+              RET
+B69REQ        LD        A,0FFH
+              RET
 
 ; Validate a decoded name: printable uppercase canonical FCB, no CP/M
 ; directory metacharacters, must actually require escaping.
 ; HL -> 11 decoded bytes; A=0 valid, FF invalid; trashes BC/DE/HL.
-B69ILGL DEFB    03CH,03EH,02CH,02EH,03BH,03AH,03DH,03FH,02AH,05BH,05DH
-B69BAD  DEFB    0
+B69ILGL       DEFB      03CH,03EH,02CH,02EH,03BH,03AH,03DH,03FH,02AH,05BH,05DH
+B69BAD        DEFB      0
 ; Bridge from FCB2PATH; keep IX/IY and source DE unchanged.
 ; Returns A=0 for ordinary name, FF if encoded; DE preserved.
-B69PTH  PUSH    BC
-        PUSH    DE
-        PUSH    HL
-        CALL    B69NEED
-        POP     HL
-        POP     DE
-        POP     BC
-        OR      A
-        RET     Z
-        ; Only canonical CP/M 8.3 names can round-trip through DIR.
-        PUSH    BC
-        PUSH    DE
-        PUSH    HL
-        CALL    B69CAN
-        POP     HL
-        POP     DE
-        POP     BC
-        OR      A
-        JR      NZ,B69PFAL
-        PUSH    BC         ; preserve variable user-directory prefix length
-        PUSH    DE
-        PUSH    IX
-        POP     DE
-        CALL    B69ENC
-        POP     DE
-        POP     BC
-        OR      A
-        JR      NZ,B69PFAL
-        LD      A,C          ; prefix length (2..4)
-        ADD     A,15         ; encoded ProDOS component
-        LD      (IY+0),A
-        LD      A,0FFH
-        RET
-B69PFAL XOR     A            ; invalid input: safe empty pathname
-        LD      (IY+0),A
-        DEC     A
-        RET
+B69PTH        PUSH      BC
+              PUSH      DE
+              PUSH      HL
+              CALL      B69NEED
+              POP       HL
+              POP       DE
+              POP       BC
+              OR        A
+              RET       Z
+              ; Only canonical CP/M 8.3 names can round-trip through DIR.
+              PUSH      BC
+              PUSH      DE
+              PUSH      HL
+              CALL      B69CAN
+              POP       HL
+              POP       DE
+              POP       BC
+              OR        A
+              JR        NZ,B69PFAL
+              PUSH      BC                             ; preserve variable user-directory prefix length
+              PUSH      DE
+              PUSH      IX
+              POP       DE
+              CALL      B69ENC
+              POP       DE
+              POP       BC
+              OR        A
+              JR        NZ,B69PFAL
+              LD        A,C                            ; prefix length (2..4)
+              ADD       A,15                           ; encoded ProDOS component
+              LD        (IY+0),A
+              LD        A,0FFH
+              RET
+B69PFAL       XOR       A                              ; invalid input: safe empty pathname
+              LD        (IY+0),A
+              DEC       A
+              RET
 
 ; Decode a 15-character Z.<13> alias, or decline if not our prefix.
 ; HL=dirent, DE=DMA FCB drive byte; clobbers BC/DE/HL and IX.
 ; Return A=0 valid, A=1 not an alias, A=FF invalid alias (skip entry).
-B69TRY  INC     HL
-        LD      A,(HL)
-        CP      'Z'
-        JR      NZ,B69TNOT
-        INC     HL
-        LD      A,(HL)
-        CP      '.'
-        JR      NZ,B69TNOT
-        DEC     HL
-        INC     DE
-        CALL    B69DEC
-        OR      A
-        JR      NZ,B69TBAD
-        LD      HL,(DMAADDR)
-        INC     HL
-        CALL    B69CAN
-        OR      A
-        RET     Z
-B69TBAD LD      A,0FFH
-        LD      (B69BAD),A
-        RET
-B69TNOT LD      A,1
-        RET
-B69CAN  PUSH    HL
-        LD      A,(HL)
-        CP      ' '
-        JR      Z,B69CERR
-        LD      B,8
-        CALL    B69PART
-        OR      A
-        JR      NZ,B69CERR
-        LD      B,3
-        CALL    B69PART
-        OR      A
-        JR      NZ,B69CERR
-        POP     HL
-        CALL    B69NEED
-        OR      A
-        JP      Z,B69REQ       ; only non-native CP/M names are escaped
-        XOR     A
-        RET
-B69CERR POP     HL
-        JP      B69REQ
-B69PART LD      C,0            ; seen spaces
-B69PLP  LD      A,(HL)
-        CP      ' '
-        JR      Z,B69PSP
-        CP      021H
-        JP      C,B69REQ
-        CP      07FH
-        JP      NC,B69REQ
-        LD      D,A
-        LD      A,C
-        OR      A
-        JP      NZ,B69REQ
-        LD      A,D
-        CP      061H
-        JR      C,B69PCK
-        CP      07BH
-        JP      C,B69REQ
-B69PCK  PUSH    HL
-        PUSH    BC
-        LD      HL,B69ILGL
-        LD      B,11
-B69PCL  CP      (HL)
-        JR      Z,B69PERR
-        INC     HL
-        DJNZ    B69PCL
-        POP     BC
-        POP     HL
-        JR      B69POK
-B69PERR POP     BC
-        POP     HL
-        JP      B69REQ
-B69PSP  LD      C,1
-B69POK  INC     HL
-        DJNZ    B69PLP
-        XOR     A
-        RET
+B69TRY        INC       HL
+              LD        A,(HL)
+              CP        'Z'
+              JR        NZ,B69TNOT
+              INC       HL
+              LD        A,(HL)
+              CP        '.'
+              JR        NZ,B69TNOT
+              DEC       HL
+              INC       DE
+              CALL      B69DEC
+              OR        A
+              JR        NZ,B69TBAD
+              LD        HL,(DMAADDR)
+              INC       HL
+              CALL      B69CAN
+              OR        A
+              RET       Z
+B69TBAD       LD        A,0FFH
+              LD        (B69BAD),A
+              RET
+B69TNOT       LD        A,1
+              RET
+B69CAN        PUSH      HL
+              LD        A,(HL)
+              CP        ' '
+              JR        Z,B69CERR
+              LD        B,8
+              CALL      B69PART
+              OR        A
+              JR        NZ,B69CERR
+              LD        B,3
+              CALL      B69PART
+              OR        A
+              JR        NZ,B69CERR
+              POP       HL
+              CALL      B69NEED
+              OR        A
+              JP        Z,B69REQ                       ; only non-native CP/M names are escaped
+              XOR       A
+              RET
+B69CERR       POP       HL
+              JP        B69REQ
+B69PART       LD        C,0                            ; seen spaces
+B69PLP        LD        A,(HL)
+              CP        ' '
+              JR        Z,B69PSP
+              CP        021H
+              JP        C,B69REQ
+              CP        07FH
+              JP        NC,B69REQ
+              LD        D,A
+              LD        A,C
+              OR        A
+              JP        NZ,B69REQ
+              LD        A,D
+              CP        061H
+              JR        C,B69PCK
+              CP        07BH
+              JP        C,B69REQ
+B69PCK        PUSH      HL
+              PUSH      BC
+              LD        HL,B69ILGL
+              LD        B,11
+B69PCL        CP        (HL)
+              JR        Z,B69PERR
+              INC       HL
+              DJNZ      B69PCL
+              POP       BC
+              POP       HL
+              JR        B69POK
+B69PERR       POP       BC
+              POP       HL
+              JP        B69REQ
+B69PSP        LD        C,1
+B69POK        INC       HL
+              DJNZ      B69PLP
+              XOR       A
+              RET
 
 
 B69END
 
 ; Stack grows from $A800 down to B69END (roughly 0.5KB remaining).
 ; Compile guard: negative DEFS if the codec doesn't fit.
-Z80STACK    DEFS    STCKTOP-B69END
+Z80STACK      DEFS      STCKTOP-B69END
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
