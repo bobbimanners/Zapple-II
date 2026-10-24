@@ -128,7 +128,7 @@ RELOC_ST
               JMP       VPUT
               JMP       VGET
               JMP       VBELL
-              JMP       VSETMODE                       ; B80C: A=0 Videx, A=1 Soroc (does not clear)
+              JMP       VSETMODE                       ; B80C: A=0 VT100, A=1 Soroc (does not clear)
               JMP       VRAWPUT                        ; B80F: raw BIOS/BDOS function 6 output
               JMP       VCLS                           ; B812: CLS reset terminal, clear and home
               JMP       RWPROBE                        ; B815: cached physical bank count (cold probe)
@@ -349,9 +349,8 @@ RWCOUNT       DB        1                              ; Filled by disposable lo
 * VBELL: speaker click
 *
 * Two output personalities share the same screen primitives:
-*   Videx VideoTerm: $1E, column+$20, row+$20
 *   Soroc IQ-120:    ESC '=', row+$20, column+$20
-* VMODE 0=Videx, 1=Soroc (default); set using B80C vector.
+* VMODE 0=VT100 (Z80 parser), 1=Soroc (default).
 * Cursor address parameters are consumed even when malformed.
 * Cooked CR implies newline (existing CCP convention); cooked CR+LF
 * advances once. Raw BIOS CR only returns to column 0; LF goes down.
@@ -359,7 +358,7 @@ RWCOUNT       DB        1                              ; Filled by disposable lo
 * Soroc protected fields, graphics and auxiliary port are not emulated.
 ***************************************************
 
-* CLS restores a known text-screen state but preserves Soroc/Videx mode.
+* CLS restores a known text-screen state but preserves Soroc/VT100 mode.
 * Called from the MAIN-memory CCP via the public B812 vector.
 VCLS
               LDA       #0
@@ -405,7 +404,7 @@ VINIT
 * VSELECT initialized the BASIC control bytes above
               JMP       VCLEAR
 
-* A=0 selects Videx, A=1 selects Soroc. Ignore all other values.
+* A=0 selects Z80 VT100 parser, A=1 selects Soroc. Ignore others.
 * Public vector at B80C. Mode change retains screen and cursor.
 VSETMODE      CMP       #2
               BCC       :LONG5
@@ -433,22 +432,14 @@ VMBASIC       LDX       #5
               BPL       :BLANK
               LDA       #$1B
               STA       $0397                          ; ESC prefix
-              LDX       VMODE
-              LDA       VBASTAB,X
-              STA       $0396
-              LDA       VBASHOME,X
-              STA       $0398
-              LDA       VBASPOS,X
-              STA       $039E
+* MBASIC always receives Soroc commands, even with VT100 selected.
+              LDA       #$20
+              STA       $0396                          ; Soroc row/column bias
+              LDA       #$AA
+              STA       $0398                          ; ESC '*': clear screen
+              LDA       #$BD
+              STA       $039E                          ; ESC '=': cursor position
               RTS
-
-* Mode indexed: 0 Videx, 1 Soroc.
-* For Soroc, an encoded $AA means ESC '*' (clear screen),
-* and $BD means ESC '=' (cursor address introducer).
-* Videx uses ^L (clear) and CTRL-^ (position introducer).
-VBASTAB       DB        $A0,$20                        ; coordinate bias (Videx swaps order)
-VBASHOME      DB        $0C,$AA                        ; HOME: ^L or ESC '*'
-VBASPOS       DB        $1E,$BD                        ; position: $1E or ESC '='
 
 * Raw output from BIOS CONOUT / BDOS function 6. Real terminals
 * interpret CR and LF independently; avoid cooked CCP newline policy.
@@ -467,7 +458,7 @@ VRAWPUT       AND       #$7F
 :RC2          JMP       VPUT
 
 * Cooked output used by BDOS function 2, CCP, loader, etc.
-* Other than CR/LF, only the parser is mode-dependent.
+* The Z80 VT100 parser translates CSI to Soroc-compatible primitives.
 VPUT          AND       #$7F
               CMP       #$0A
               BEQ       :KEEPC
@@ -504,46 +495,15 @@ VPUT          AND       #$7F
               CMP       #$07
               BNE       :VCTL
               JMP       VBELL
-:VCTL         LDX       VMODE
-              BNE       VSOROC
-* Videx VideoTerm (including Apple escape editor handled below).
-              CMP       #$0C
-              BNE       :VD1
-              JMP       VCLEAR
-:VD1          CMP       #$19
-              BNE       :LONG6
-              JMP       VHOME
-:LONG6
-              CMP       #$1E
-              BEQ       VPOS
-              CMP       #$1C
-              BNE       :LONG7
-              JMP       VRIGHT
-:LONG7
-              CMP       #$1F
-              BNE       :LONG8
-              JMP       VUP
-:LONG8
-              CMP       #$1D
-              BNE       :VD2
-              JMP       VEOL
-:VD2          CMP       #$0B
-              BNE       VDONE
-              JMP       VEOP
-
-* Soroc IQ-120: ^K up, ^L forward, ^^ home.
-VSOROC        CMP       #$0B
+:VCTL         CMP       #$0B                           ; Soroc ^K cursor up
               BNE       :LONG9
               JMP       VUP
-:LONG9
-              CMP       #$0C
+:LONG9        CMP       #$0C                           ; Soroc ^L cursor right
               BNE       :LONG10
               JMP       VRIGHT
-:LONG10
-              CMP       #$1E
-              BNE       :LONG12
+:LONG10       CMP       #$1E                           ; Soroc ^^ home
+              BNE       VDONE
               JMP       VHOME
-:LONG12
 VDONE         RTS
 
 VESC          LDA       #1
@@ -565,19 +525,7 @@ VSEQ          CPX       #1
               RTS
 :VP2          LDY       #0
               STY       VSTATE
-              LDX       VMODE
-              BNE       :SPOS
-* Videx: first X/column, then Y/row.
-              CMP       #24
-              BCS       VDONE
-              LDY       VCOORD
-              CPY       #80
-              BCS       VDONE
-              STA       VROW
-              STY       VCOL
-              RTS
-* Soroc: first Y/row, then X/column.
-:SPOS         CMP       #80
+              CMP       #80
               BCS       VDONE
               LDY       VCOORD
               CPY       #24
@@ -589,32 +537,7 @@ VSEQ          CPX       #1
 * ESC sequences. Unrecognised commands are silently consumed.
 VESCCMD       LDY       #0
               STY       VSTATE
-              LDY       VMODE
-              BNE       :SORE
-* VideoTerm accepts the Apple editing ESC sequences.
-              CMP       #'@'
-              BNE       :E1
-              JMP       VCLEAR
-:E1           CMP       #'A'
-              BNE       :E1A
-              JMP       VRIGHT
-:E1A          CMP       #'B'
-              BNE       :E1B
-              JMP       VBACK
-:E1B          CMP       #'C'
-              BNE       :LONG13
-              JMP       VDOWN
-:LONG13
-              CMP       #'D'
-              BEQ       VUP
-              CMP       #'E'
-              BNE       :E2
-              JMP       VEOL
-:E2           CMP       #'F'
-              BEQ       :E2F
-              JMP       VDONE
-:E2F          JMP       VEOP
-:SORE         CMP       #'('                           ; Microsoft SoftCard Soroc: inverse ON
+              CMP       #'('                           ; Microsoft SoftCard Soroc: inverse ON
               BNE       :SINV1
               LDA       #1
               STA       VATTR
@@ -1027,7 +950,7 @@ VCOL          DB        0
 VROW          DB        0
 VTCNT         DB        0
 VUNDER        DB        0
-VMODE         DB        1                              ; 0 Videx, 1 Soroc (default)
+VMODE         DB        1                              ; 0 VT100 via Z80, 1 Soroc
 VSTATE        DB        0                              ; 0 idle, 1 ESC, 2 coord1, 3 coord2
 VCOORD        DB        0
 VCRP          DB        0                              ; Suppress second half of CR/LF pair

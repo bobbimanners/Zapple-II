@@ -48,8 +48,8 @@ RDKEY         EQU       0B806H                         ; Direct keyboard/cursor 
 BELL          EQU       0B809H                         ; Direct speaker click entry (B809)
 RAWOUT        EQU       0B80FH                         ; Raw BIOS console entry (B80F)
 VTASK         EQU       0B821H                         ; 6502 select running/foreground display
-; TERM.COM (separate transient utility) calls 6502 B80C to switch terminal.
-; Only a 6-byte raw-output shim is added to the resident BDOS.
+; B80C selects Soroc (1) or the resident Z80 VT100 translator (0).
+; The VT parser lives in reclaimed MAIN RAM, not the 6502 video bank.
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; Entry point when Z80 cold starts is 0000H
@@ -452,7 +452,7 @@ TABMODE       DEFB      0
 
 ; Session descriptors are only seven bytes each, stored in MAIN memory.
 ; Offsets: 0 current drive/user, 1 IOBYTE, 2..3 LOGVEC,
-; 4..5 ROVEC, 6 terminal personality (0 Videx / 1 Soroc).
+; 4..5 ROVEC, 6 terminal personality (0 VT100 / 1 Soroc).
 ; DMA is intentionally reset to $0080 at each switch; no BDOS search
 ; or pending directory enumeration is allowed across a CCP TAB command.
 TABPICK       LD        IX,TABCTXS
@@ -532,6 +532,12 @@ TI_NEXT       XOR       A
               LD        (HL),A                         ; Soroc default
               INC       HL
               DJNZ      TI_NEXT
+              LD        HL,VTSTATES
+              LD        DE,VTSTATES+1
+              LD        BC,127
+              XOR       A
+              LD        (HL),A
+              LDIR
               CALL      VSINIT
               CALL      VSSAVE                         ; seed tab 0 backing with startup text
               CALL      TB_VINIT                       ; tab 0 is visited at cold boot
@@ -2777,13 +2783,13 @@ AXIOSFX       LD        SP,(AXMSP)
               ORG       06000H
 ; Short CCP help plus explicit blocked-input label for TAB LIST.
 CCPHELP       LD        DE,CCPH1
+              CALL      C_WRITESTR
+              LD        DE,CCPH2
               JP        C_WRITESTR
-
-CCPH1         DEFM      'DIR ERA REN SAVE TYPE USER XSUB'
+CCPH1         DEFM      'DIR ERA REN TYPE SAVE'
               DEFB      13
-              DEFM      'BANKS BYE CACHE CLS TAB TERM HELP'
+              DEFM      'BYE TERM XSUB USER'
               DEFB      13,'$'
-
 
               ORG       06100H
 ; A CP/M FCB is logically open as S2=$7E (or legacy $FE).
@@ -2885,13 +2891,401 @@ COPENS        DEFW      0
 CHITS         DEFW      0
 CEVICTS       DEFW      0
 
+
+              ORG       06400H
+; VT100-to-Soroc translator, resident in MAIN (not the banked AUX TPA).
+; TERM VT100 = mode 0; TERM SOROC = mode 1. Never feed translated
+; bytes back through VTGATE: VTEMIT calls the physical B80F vector.
+; Per-tab 8-byte state: parser, value, first argument, semicolon flag,
+; saved row, saved column, private CSI flag, cooked CRLF suppression.
+; Only the Soroc display engine touches the hardware/virtual screen.
+VTISEN        PUSH      BC
+              PUSH      IX
+              PUSH      DE
+              CALL      TABPICK
+              LD        A,(IX+6)
+              POP       DE
+              POP       IX
+              POP       BC
+              OR        A
+              RET
+
+; In: A=terminal mode. Preserves all caller registers and A.
+VTSETMODE     PUSH      AF
+              PUSH      BC
+              PUSH      DE
+              PUSH      HL
+              PUSH      IX
+              LD        C,A                            ; TABPICK does not touch C
+              CALL      TABPICK
+              LD        (IX+6),C
+              ; Clear parser state when explicitly selecting a terminal.
+              CALL      VTPTR
+              XOR       A
+              LD        B,8
+VTRSTLOOP     LD        (IX+0),A
+              INC       IX
+              DJNZ      VTRSTLOOP
+              POP       IX
+              POP       HL
+              POP       DE
+              POP       BC
+              POP       AF
+              RET
+
+; Return IX = state for current TABMODE; preserves BC/DE/HL.
+VTPTR         PUSH      DE
+              PUSH      HL
+              LD        A,(TABMODE)
+              LD        E,A
+              LD        D,0
+              LD        HL,VTSTATES
+              ADD       HL,DE
+              ADD       HL,DE
+              ADD       HL,DE
+              ADD       HL,DE
+              ADD       HL,DE
+              ADD       HL,DE
+              ADD       HL,DE
+              ADD       HL,DE
+              PUSH      HL
+              POP       IX
+              POP       HL
+              POP       DE
+              RET
+
+; A=original character, bit7 set only for cooked BDOS output.
+VTCHAR        PUSH      BC
+              PUSH      DE
+              PUSH      HL
+              PUSH      IX
+              LD        C,A
+              CALL      VTPTR
+              LD        A,C
+              AND       07FH
+              LD        B,A
+              LD        A,(IX+0)
+              OR        A
+              JP        Z,VTIDLE
+              DEC       A
+              JP        Z,VTESC
+              DEC       A
+              JP        Z,VTCSI
+              ; Ignore exactly one charset-designator byte after ESC ( or ).
+              XOR       A
+              LD        (IX+0),A
+              JP        VTRET
+
+VTIDLE        LD        A,B
+              CP        01BH
+              JR        NZ,VTLITERAL
+              LD        (IX+0),1
+              JP        VTRET
+VTLITERAL     CP        0AH
+              JR        NZ,VTNOTLF
+              BIT       7,C
+              JR        Z,VTRAWCHAR
+              LD        A,(IX+7)
+              LD        (IX+7),0
+              OR        A
+              JP        NZ,VTRET                       ; discard cooked LF after CR
+              JR        VTRAWCHAR
+VTNOTLF       XOR       A
+              LD        (IX+7),A
+              LD        A,B
+              CP        0DH
+              JR        NZ,VTRAWCHAR
+              BIT       7,C
+              JR        Z,VTRAWCHAR
+              LD        (IX+7),1
+              CALL      VTEMIT                         ; cooked CR -> CR + LF
+              LD        A,0AH
+              JR        VTRAWCHAR
+VTRAWCHAR     LD        A,B
+              CP        0DH
+              JR        NZ,VTRAWOTHER
+              BIT       7,C
+              JR        Z,VTRAWOTHER
+              LD        A,0AH                          ; already emitted cooked CR
+              JR        VTRAWOTHER
+VTRAWOTHER    CALL      VTEMIT
+              JP        VTRET
+
+VTESC         XOR       A
+              LD        (IX+0),A
+              LD        A,B
+              CP        '['
+              JR        Z,VTBEGIN
+              CP        '('
+              JR        Z,VTCHARSET
+              CP        ')'
+              JR        Z,VTCHARSET
+              CP        '7'
+              JP        Z,VTSAVE
+              CP        '8'
+              JP        Z,VTRESTORE
+              CP        'D'
+              JR        NZ,VTESCE
+              LD        A,0AH                          ; IND: line feed
+              JR        VTESCEMIT
+VTESCE        CP        'E'
+              JR        NZ,VTESCC
+              LD        A,0DH
+              CALL      VTEMIT
+              LD        A,0AH
+              JR        VTESCEMIT
+VTESCC        CP        'c'
+              JP        NZ,VTRET
+              XOR       A
+              LD        (IX+7),A
+              CALL      VTNORMA
+              CALL      VTCLEARALL
+              JP        VTRET
+VTESCEMIT     CALL      VTEMIT
+              JP        VTRET
+VTCHARSET     LD        (IX+0),3                         ; consume one charset designation
+              JP        VTRET
+VTBEGIN       LD        (IX+0),2
+              XOR       A
+              LD        (IX+1),A
+              LD        (IX+2),A
+              LD        (IX+3),A
+              LD        (IX+6),A
+              JP        VTRET
+
+VTCSI         LD        A,B
+              CP        '?'
+              JR        NZ,VTNUM
+              LD        (IX+6),1                         ; DEC private CSI: ignore safely
+              JP        VTRET
+VTNUM         CP        '0'
+              JR        C,VTSEP
+              CP        ':'
+              JR        NC,VTSEP
+              SUB       '0'
+              LD        D,A                            ; new digit
+              LD        A,(IX+1)
+              CP        26
+              JR        NC,VTMAX
+              LD        E,A
+              ADD       A,A
+              ADD       A,A
+              ADD       A,E
+              ADD       A,A
+              ADD       A,D
+              JR        C,VTMAX
+              LD        (IX+1),A
+              JP        VTRET
+VTMAX         LD        (IX+1),255
+              JP        VTRET
+VTSEP         CP        03BH                           ; ASCII semicolon; quoted ';' confuses z80asm
+              JR        NZ,VTENDCSI
+              LD        A,(IX+3)
+              OR        A
+              JP        NZ,VTRET                       ; ignore extra arguments
+              LD        A,(IX+1)
+              LD        (IX+2),A
+              LD        (IX+3),1
+              LD        (IX+1),0
+              JP        VTRET
+VTENDCSI      XOR       A
+              LD        (IX+0),A
+              LD        A,(IX+6)
+              OR        A
+              JP        NZ,VTRET                       ; e.g. ESC[?25l
+              LD        A,B
+              CP        'H'
+              JP        Z,VTCUP
+              CP        'f'
+              JP        Z,VTCUP
+              CP        'A'
+              JP        Z,VTMOVEUP
+              CP        'B'
+              JP        Z,VTMOVEDOWN
+              CP        'C'
+              JP        Z,VTMOVERIGHT
+              CP        'D'
+              JP        Z,VTMOVELEFT
+              CP        'J'
+              JP        Z,VTERASESCREEN
+              CP        'K'
+              JP        Z,VTERASELINE
+              CP        'm'
+              JP        Z,VTSGR
+              CP        's'
+              JP        Z,VTSAVE
+              CP        'u'
+              JP        Z,VTRESTORE
+              JP        VTRET
+
+; Translate one-based ANSI CUP to zero-based Soroc coordinates.
+VTCUP         LD        A,(IX+3)
+              OR        A
+              JR        Z,VTCUPONE
+              LD        A,(IX+2)                       ; row argument
+              LD        D,A
+              LD        A,(IX+1)                       ; col argument
+              JR        VTCUPC
+VTCUPONE      LD        A,(IX+1)                       ; row, no column
+              LD        D,A
+              LD        A,1
+VTCUPC        OR        A
+              JR        NZ,VTCUPC1
+              INC       A
+VTCUPC1       CP        81
+              JR        C,VTCUPC2
+              LD        A,80
+VTCUPC2       DEC       A
+              LD        E,A
+              LD        A,D
+              OR        A
+              JR        NZ,VTCUPR1
+              INC       A
+VTCUPR1       CP        25
+              JR        C,VTCUPR2
+              LD        A,24
+VTCUPR2       DEC       A
+              LD        D,A
+              CALL      VTPOS
+              JP        VTRET
+
+; Read live 6502 VCOL/VROW, already virtualised by task switcher.
+VTGETXY       LD        HL,(VSPTR)
+              LD        E,(HL)
+              INC       HL
+              LD        D,(HL)
+              RET
+; D=zero-based row (0..23), E=zero-based col (0..79).
+VTPOS         PUSH      DE
+              LD        A,01BH
+              CALL      VTEMIT
+              LD        A,'='
+              CALL      VTEMIT
+              LD        A,D
+              ADD       A,20H
+              CALL      VTEMIT
+              LD        A,E
+              ADD       A,20H
+              CALL      VTEMIT
+              POP       DE
+              RET
+VTSTEP        LD        A,(IX+1)
+              OR        A
+              RET       NZ
+              INC       A
+              RET
+VTMOVEUP      CALL      VTGETXY
+              CALL      VTSTEP
+              LD        L,A
+              LD        A,D
+              SUB       L
+              JR        NC,VTMUY
+              XOR       A
+VTMUY         LD        D,A
+              JR        VTMOVEGO
+VTMOVEDOWN    CALL      VTGETXY
+              CALL      VTSTEP
+              ADD       A,D
+              JR        C,VTMDMAX
+              CP        24
+              JR        C,VTMDY
+VTMDMAX      LD        A,23
+VTMDY         LD        D,A
+              JR        VTMOVEGO
+VTMOVERIGHT   CALL      VTGETXY
+              CALL      VTSTEP
+              ADD       A,E
+              JR        C,VTMRMAX
+              CP        80
+              JR        C,VTMRX
+VTMRMAX      LD        A,79
+VTMRX         LD        E,A
+              JR        VTMOVEGO
+VTMOVELEFT    CALL      VTGETXY
+              CALL      VTSTEP
+              LD        L,A
+              LD        A,E
+              SUB       L
+              JR        NC,VTMLX
+              XOR       A
+VTMLX         LD        E,A
+VTMOVEGO      CALL      VTPOS
+              JP        VTRET
+
+VTERASESCREEN LD        A,(IX+1)
+              CP        2
+              JR        Z,VTEALL
+              OR        A
+              JP        NZ,VTRET                       ; ED 1 deferred
+              LD        A,'Y'                          ; Soroc erase to end of page
+              CALL      VTESCREQ
+              JP        VTRET
+VTEALL        CALL      VTCLEARALL
+              JP        VTRET
+VTCLEARALL    LD        A,'*'                          ; Soroc clear and home
+VTESCREQ      PUSH      AF
+              LD        A,01BH
+              CALL      VTEMIT
+              POP       AF
+              JP        VTEMIT
+VTERASELINE   LD        A,(IX+1)
+              OR        A
+              JR        Z,VTEOL
+              CP        2
+              JP        NZ,VTRET                       ; EL 1 deferred
+              CALL      VTGETXY
+              PUSH      DE
+              LD        E,0
+              CALL      VTPOS
+              CALL      VTCLREOL
+              POP       DE
+              CALL      VTPOS
+              JP        VTRET
+VTEOL         CALL      VTCLREOL
+              JP        VTRET
+VTCLREOL      LD        A,'T'
+              JP        VTESCREQ
+
+VTSGR         LD        A,(IX+1)
+              CP        7
+              JR        Z,VTINVERSE
+              OR        A
+              JR        Z,VTNORMCALL
+              CP        27
+              JP        NZ,VTRET                       ; attributes not implemented
+VTNORMCALL    CALL      VTNORMA
+              JP        VTRET
+VTINVERSE     LD        A,'('
+              CALL      VTATTR
+              JP        VTRET
+VTNORMA       LD        A,')'
+VTATTR        JP        VTESCREQ
+VTSAVE        CALL      VTGETXY
+              LD        (IX+4),D
+              LD        (IX+5),E
+              JP        VTRET
+VTRESTORE     LD        D,(IX+4)
+              LD        E,(IX+5)
+              CALL      VTPOS
+VTRET         POP       IX
+              POP       HL
+              POP       DE
+              POP       BC
+              RET
+VTEMIT        PUSH      HL
+              LD        HL,RAWOUT                       ; B80F 6502 raw console
+              CALL      C_SENDA
+              POP       HL
+              RET
+
+VTSTATES      DEFS      128
               ORG       07000H
 
 AXBDOS        CALL      XSPRE                          ; skip physical keyboard wait if XSUB
               RET       C
               LD        A,C
               LD        (AXBADFN),A                    ; diagnostic: remember original BDOS C
-              CP        0F0H                           ; BP/M private: set terminal (E=0/1)
+              CP        0F0H                           ; private TERM: 0 VT100 / 1 Soroc
               JP        Z,AXTMODE
               OR        A
               JP        Z,AUXBDOS0
@@ -2992,9 +3386,10 @@ AXBAD         LD        A,2
 ; TERM.COM must not switch to the 6502 directly from AUX RAM:
 ; the 6502 console lives at MAIN $B800. This dispatcher is called by
 ; LCGATE with MAIN RAM selected, and the original LC/stack are restored
-; automatically on return. Private BDOS $F0: E=0 Videx / E=1 Soroc.
+; automatically on return. Private BDOS $F0: E=0 VT100 / E=1 Soroc.
 AXTMODE       JP        SCHTMCHK
-AXTMRUN       LD        (AREG),A
+AXTMRUN       CALL      VTSETMODE                      ; save active tab mode and reset CSI
+              LD        (AREG),A
               LD        HL,0B80CH                      ; 6502 VSETMODE public entry
               LD        (ADDR),HL
               LD        A,1
@@ -3451,17 +3846,18 @@ TB_HELPMSG    DEFM      'TAB [LIST], TAB n [SUSP/RES/EXCL/KILL]'
 ; unlike the old AUX .COM, so it calls the 6502 VSETMODE vector directly.
 ; The next AUXRUN already mirrors MAIN $0396-$039E to AUX for MBASIC.
 CCPTERM       LD        HL,FILEBUF+2                   ; first argument, after leading space
-              LD        DE,TMVIDEX
+              LD        DE,TMVT100
               CALL      TMCHK
-              JR        Z,TMVID
+              JR        Z,TMVT
               LD        HL,FILEBUF+2
               LD        DE,TMSOROC
               CALL      TMCHK
               JP        NZ,CCPBAD                      ; reject bad / abbreviated mode names
               LD        A,1                            ; Soroc
               JR        TMSET
-TMVID         XOR       A                              ; Videx
-TMSET         LD        (AREG),A
+TMVT          XOR       A                              ; VT100
+TMSET         CALL      VTSETMODE                      ; update tab mode immediately
+              LD        (AREG),A
               LD        HL,0B80CH                      ; 6502 VSETMODE, already in MAIN
               LD        (ADDR),HL
               LD        A,1
@@ -3480,7 +3876,7 @@ TMCHL         LD        A,(DE)
               LD        A,(HL)
               CP        ' '
               RET
-TMVIDEX       DEFM      'VIDEX'
+TMVT100       DEFM      'VT100'
 TMSOROC       DEFM      'SOROC'
 
 ; BDOS 30: Set CP/M file R/O attribute in ProDOS access byte.
@@ -4345,6 +4741,9 @@ STYIELD       LD        A,3
 ; and manual TAB switches. VSMETAS retains the nine original bytes.
 ; This helper block lives in MAIN $8000-$80FF before BIOS $8100.
 ; Remaining built-ins and CCP command syntax.
+CCPH2         DEFM      'CACHE CLS BANKS TAB HELP'
+              DEFB      13,'$'
+
               ORG       08000H
 VSSTSAVE      LD        A,(VSOK)
               OR        A
@@ -4728,7 +5127,9 @@ C_WRITE       LD        A,(IOBYTE)
               JR        NZ,C_RAWPUT                    ; serial/BAT must retain LF
               LD        A,E
               CP        0AH
-              RET       Z
+              JR        NZ,C_PUT
+              CALL      VTISEN                         ; Soroc swallows cooked LF
+              RET       NZ                             ; VT100 needs LF handling
               JR        C_PUT
 
 ; Shared low-level output path for cooked and direct console writes.
@@ -4738,11 +5139,22 @@ C_RAWPUT      LD        A,(IOBYTE)
               CP        1
               JP        NZ,IOCONOUT                    ; redirected console bypasses screen driver
               LD        A,E                            ; raw output also updates virtual display
+              AND       07FH                           ; preserve distinction from cooked BDOS
               LD        HL,RAWOUT                      ; B80F raw 6502 vector
-              JR        C_SENDA
+              JR        VTGATE
 C_PUT         LD        A,80H                          ; cooked output, both background/foreground
               OR        E
               LD        HL,COUT                        ; B803 cooked 6502 vector
+VTGATE        PUSH      AF                             ; retain raw/cooked flag in bit 7
+              PUSH      HL
+              CALL      VTISEN                         ; zero => VT100 mode
+              JR        NZ,VTNOGATE                    ; branch BEFORE restoring flags
+              POP       HL
+              POP       AF
+              JP        VTCHAR                         ; parse VT before 6502 handoff
+VTNOGATE      POP       HL
+              POP       AF
+              JR        C_SENDA
 ; Step 3: CP/M terminal ^S/^Q output flow control.  All BDOS and
 ; BIOS console output passes through C_SENDA (cooked and raw).
 ; Only foreground output polls the keyboard.  Preserve a pending
@@ -6954,7 +7366,7 @@ PHOUT         LD        E,A
 ; - SAVE         - Save 256-byte pages of TPA (SAVE 7 FOO.COM)
 ; - TYPE         - Show text file on console (TYPE TEST.TXT)
 ; - BYE          - Confirm and exit to the ProDOS selector
-; - TERM VIDEX/SOROC - Set terminal personality (no .COM needed)
+; - TERM VT100/SOROC - Set terminal personality (no .COM needed)
 ; - CACHE        - Show ProDOS handle-cache counters (CACHE RESET to zero)
 ; - CLS          - Reset video state, clear screen and home cursor
 ; - TAB          - [LIST|HELP|N [SUSPEND|RESUME|EXCLUSIVE|KILL]]
