@@ -2686,15 +2686,13 @@ UD_STAT       DEFB      0
 UC_SAVE       DEFB      0
 
 ; FCB file operations keep the USER at OPEN time in S1=$A0+user.
-; S2 must still be $7E/$FE; ordinary FCBs always use current USER.
+; S2=$7E denotes a virtual open; other FCBs use current USER.
 ; Returns A=0..15 and preserves BC, DE, HL, IX, IY.
 F2P_USER      PUSH      HL
               LD        HL,0EH
               ADD       HL,DE
               LD        A,(HL)
               CP        07EH
-              JR        Z,F2P_LOCK
-              CP        0FEH
               JR        NZ,F2P_CUR
 F2P_LOCK      DEC       HL
               LD        A,(HL)
@@ -2798,21 +2796,26 @@ CCPH1         DEFM      'DIR ERA REN TYPE SAVE'
               DEFB      13,'$'
 
               ORG       06100H
-; A CP/M FCB is logically open as S2=$7E (or legacy $FE).
-; During BDOS I/O we temporarily substitute the cached physical FRN;
-; IO_END always restores $7E. Cache is keyed by canonical ProDOS path,
-; never by the FCB address (which can be a shared AUX gateway copy).
-; Directory/loader physical FCBs keep their own ProDOS FRNs unchanged.
+; A CP/M FCB is logically open as S2=$7E.
+; Some CP/M software (SORCIM Pascal/M, including SuperCalc INSTALL)
+; deliberately clears S2 immediately after a successful OPEN. Recover
+; the open state from the S1=$A0|USER tag already installed by F_OPEN.
+; Do not accept an untagged S2=0 FCB, which really was never opened.
+; During I/O temporarily substitute the cached physical ProDOS FRN;
+; IO_END restores S2=$7E. Physical directory/loader FCBs are unchanged.
 IO_BEGIN      XOR       A
               LD        (IOVIRT),A
               LD        A,(IX+0EH)
               CP        07EH
               JR        Z,IO_CACHE
-              CP        0FEH
-              JR        Z,IO_CACHE
               OR        A
-              JR        Z,IO_BAD
-              XOR       A
+              JR        NZ,IO_PHYS
+              LD        A,(IX+0DH)             ; S1 tag survives Pascal/M's S2 clear
+              AND       0F0H
+              CP        0A0H
+              JR        Z,IO_CACHE
+              JR        IO_BAD
+IO_PHYS       XOR       A
               RET
 IO_BAD        LD        A,9
               RET
@@ -5719,8 +5722,16 @@ F_CLOSE       LD        H,D                            ; Pointer to FCB ...
               LD        A,(HL)                         ; Obtain file reference num from FCB S2
               CP        07EH                           ; Virtual CP/M open marker
               JR        Z,FCVIRT
-              CP        0FEH                           ; Accept old high-bit-set marker too
+              OR        A
               JR        NZ,FCPHYS
+              DEC       HL                             ; S2 was cleared: inspect S1 tag
+              LD        A,(HL)
+              INC       HL
+              AND       0F0H
+              CP        0A0H
+              JR        Z,FCVIRT                       ; Pascal/M's cleared S2
+              XOR       A                              ; Untagged, unopened FCB
+              JR        FCPHYS
 FCVIRT                      ; A virtual-close request must close the matching cache entry.
               ; Names, not FCB addresses, identify cache entries (AUX staging).
               PUSH      HL
@@ -5734,7 +5745,9 @@ FCVIRT                      ; A virtual-close request must close the matching ca
               POP       HL
               OR        A
               JP        NZ,FCERR
-              LD        (HL),0
+              LD        (HL),0                         ; Clear virtual S2
+              DEC       HL
+              LD        (HL),0                         ; Clear S1 tag too: now really closed
               JP        FCSUCC
 FCPHYS        CP        0                              ; If file reference number is zero ...
               JR        Z,FCSUCC                       ; ... Nothing to do, just return
