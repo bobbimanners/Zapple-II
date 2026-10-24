@@ -452,7 +452,7 @@ TABMODE       DEFB      0
 
 ; Session descriptors are only seven bytes each, stored in MAIN memory.
 ; Offsets: 0 current drive/user, 1 IOBYTE, 2..3 LOGVEC,
-; 4..5 ROVEC, 6 terminal personality (0 VT100 / 1 Soroc).
+; 4..5 ROVEC, 6 personality (0 VT100 / 1 Soroc / 2 H19).
 ; DMA is intentionally reset to $0080 at each switch; no BDOS search
 ; or pending directory enumeration is allowed across a CCP TAB command.
 TABPICK       LD        IX,TABCTXS
@@ -481,6 +481,9 @@ TABSAVE       CALL      TABPICK
               LD        A,1
               LD        (CMD),A
               LD        (SOFTCARD),A
+              LD        A,(IX+6)
+              CP        2                              ; 6502 knows only Soroc for H19
+              RET       Z                              ; keep H19 personality on save
               LD        A,(AREG)
               LD        (IX+6),A
               RET
@@ -501,7 +504,10 @@ TABLOAD       CALL      TABPICK
               LD        HL,0080H
               LD        (AXDMAP),HL
               LD        A,(IX+6)
-              LD        (AREG),A
+              CP        2                              ; H19 parser uses Soroc renderer
+              JR        NZ,TABLD6502
+              LD        A,1
+TABLD6502     LD        (AREG),A
               LD        HL,0B80CH
               LD        (ADDR),HL
               LD        A,1
@@ -2893,11 +2899,15 @@ CEVICTS       DEFW      0
 
 
               ORG       06400H
-; VT100-to-Soroc translator, resident in MAIN (not the banked AUX TPA).
-; TERM VT100 = mode 0; TERM SOROC = mode 1. Never feed translated
-; bytes back through VTGATE: VTEMIT calls the physical B80F vector.
+; VT100/H19-to-Soroc translator in MAIN (not banked AUX TPA).
+; TERM VT100=0, SOROC=1, H19/H89/VT52=2 (VT52 is H19 subset).
+; Mode 2 uses 6502 Soroc VMODE=1 for translated escape sequences;
+; the distinct terminal personality lives only in tab IX+6.
+; Never feed translated bytes through VTGATE: VTEMIT uses B80F.
 ; Per-tab 8-byte state: parser, value, first argument, semicolon flag,
 ; saved row, saved column, private CSI flag, cooked CRLF suppression.
+; H19 uses parser states 4=row, 5=column, 6=one mode parameter,
+; and IX+2 as pending zero-based row. Save/restore remain IX+4/5.
 ; Only the Soroc display engine touches the hardware/virtual screen.
 VTISEN        PUSH      BC
               PUSH      IX
@@ -2964,6 +2974,9 @@ VTCHAR        PUSH      BC
               LD        A,C
               AND       07FH
               LD        B,A
+              CALL      VTISEN                         ; preserve IX and BC
+              CP        2
+              JP        Z,H19CHAR                      ; separate H19 escape decoder
               LD        A,(IX+0)
               OR        A
               JP        Z,VTIDLE
@@ -3278,6 +3291,135 @@ VTEMIT        PUSH      HL
               POP       HL
               RET
 
+
+; ---------------------------------------------------------------------------
+; Heathkit H19 / H89 (also VT52) decoder. Called with B=7-bit character,
+; C=original character including cooked bit, and IX=current terminal state.
+; Share VTLITERAL's CR/LF handling and Soroc output primitives with VT100.
+; ESC Y uses row+20h, column+20h, with BOTH parameter bytes consumed.
+; ESC x/y/r require a single parameter; a new ESC in their place
+; starts a new sequence (HITCH.COM emits ESC x ESC E).
+; ---------------------------------------------------------------------------
+H19CHAR       LD        A,(IX+0)
+              OR        A
+              JP        Z,H19IDLE
+              CP        1
+              JP        Z,H19ESC
+              CP        4
+              JP        Z,H19ROW
+              CP        5
+              JP        Z,H19COL
+              ; Consume an x/y/r configuration parameter, but a new
+              ; ESC cancels an incomplete command rather than eating it.
+              XOR       A
+              LD        (IX+0),A
+              LD        A,B
+              CP        01BH
+              JP        Z,H19START
+              JP        VTRET
+H19IDLE       LD        A,B
+              CP        01BH
+              JP        Z,H19START
+              JP        VTLITERAL                      ; shared normal output/CRLF
+H19START      LD        (IX+0),1
+              JP        VTRET
+
+H19ESC        XOR       A
+              LD        (IX+0),A
+              LD        (IX+1),A                        ; motion commands are single-step
+              LD        A,B
+              CP        01BH
+              JP        Z,H19START
+              CP        'Y'
+              JP        Z,H19ADR
+              CP        'E'
+              JP        Z,H19CLEAR
+              CP        'H'
+              JP        Z,H19HOME
+              CP        'J'
+              JP        Z,H19EOP
+              CP        'K'
+              JP        Z,H19EOL
+              CP        'A'
+              JP        Z,VTMOVEUP
+              CP        'B'
+              JP        Z,VTMOVEDOWN
+              CP        'C'
+              JP        Z,VTMOVERIGHT
+              CP        'D'
+              JP        Z,VTMOVELEFT
+              CP        'j'
+              JP        Z,VTSAVE
+              CP        'k'
+              JP        Z,VTRESTORE
+              CP        'p'
+              JP        Z,VTINVERSE
+              CP        'q'
+              JP        Z,H19NORM
+              CP        'l'
+              JP        Z,H19FLN
+              CP        'z'
+              JP        Z,H19RESET
+              CP        'x'                             ; H19 operating mode set
+              JP        Z,H19PARAM
+              CP        'y'                             ; H19 operating mode reset
+              JP        Z,H19PARAM
+              CP        'r'                             ; H19 baud rate parameter
+              JP        Z,H19PARAM
+              ; ESC F/G graphics, =/> keypad, [ hold etc: safely ignore.
+              ; Insert/delete line and character are not yet implemented.
+              JP        VTRET
+H19ADR        LD        (IX+0),4
+              JP        VTRET
+H19ROW        LD        A,B
+              SUB       020H                           ; H19 cursor coordinates are +$20
+              JR        NC,H19ROWOK
+              XOR       A
+H19ROWOK      CP        24
+              JR        C,H19ROWIN
+              LD        A,23
+H19ROWIN      LD        (IX+2),A
+              LD        (IX+0),5
+              JP        VTRET
+H19COL        XOR       A
+              LD        (IX+0),A
+              LD        A,B
+              SUB       020H
+              JR        NC,H19COLOK
+              XOR       A
+H19COLOK      CP        80
+              JR        C,H19COLIN
+              LD        A,79
+H19COLIN      LD        E,A
+              LD        D,(IX+2)
+              CALL      VTPOS
+              JP        VTRET
+H19PARAM      LD        (IX+0),6                     ; discard one mode byte
+              JP        VTRET
+H19CLEAR      CALL      VTCLEARALL
+              JP        VTRET
+H19HOME       LD        DE,0
+              CALL      VTPOS
+              JP        VTRET
+H19EOP        LD        A,'Y'                          ; Soroc erase to end of page
+              CALL      VTESCREQ
+              JP        VTRET
+H19EOL        CALL      VTCLREOL
+              JP        VTRET
+H19NORM     CALL      VTNORMA
+              JP        VTRET
+H19RESET      CALL      VTNORMA
+              CALL      VTCLEARALL
+              JP        VTRET
+H19FLN  CALL      VTGETXY
+              PUSH      DE
+              LD        E,0
+              CALL      VTPOS
+              CALL      VTCLREOL
+              POP       DE
+              CALL      VTPOS
+              JP        VTRET
+
 VTSTATES      DEFS      128
               ORG       07000H
 
@@ -3285,7 +3427,7 @@ AXBDOS        CALL      XSPRE                          ; skip physical keyboard 
               RET       C
               LD        A,C
               LD        (AXBADFN),A                    ; diagnostic: remember original BDOS C
-              CP        0F0H                           ; private TERM: 0 VT100 / 1 Soroc
+              CP        0F0H                           ; private TERM: 0 VT100 / 1 Soroc / 2 H19
               JP        Z,AXTMODE
               OR        A
               JP        Z,AUXBDOS0
@@ -3386,10 +3528,15 @@ AXBAD         LD        A,2
 ; TERM.COM must not switch to the 6502 directly from AUX RAM:
 ; the 6502 console lives at MAIN $B800. This dispatcher is called by
 ; LCGATE with MAIN RAM selected, and the original LC/stack are restored
-; automatically on return. Private BDOS $F0: E=0 VT100 / E=1 Soroc.
+; automatically on return. Private BDOS $F0: 0=VT100, 1=Soroc,
+; 2=H19/VT52. The 6502 video renderer must receive Soroc mode (1)
+; for H19: it cannot recognize the Z80-only personality value 2.
 AXTMODE       JP        SCHTMCHK
 AXTMRUN       CALL      VTSETMODE                      ; save active tab mode and reset CSI
-              LD        (AREG),A
+              CP        2                              ; H19 translator emits Soroc
+              JR        NZ,AXTM6502
+              LD        A,1
+AXTM6502      LD        (AREG),A
               LD        HL,0B80CH                      ; 6502 VSETMODE public entry
               LD        (ADDR),HL
               LD        A,1
@@ -3852,12 +3999,29 @@ CCPTERM       LD        HL,FILEBUF+2                   ; first argument, after l
               LD        HL,FILEBUF+2
               LD        DE,TMSOROC
               CALL      TMCHK
-              JP        NZ,CCPBAD                      ; reject bad / abbreviated mode names
-              LD        A,1                            ; Soroc
+              JR        Z,TMSR
+              LD        HL,FILEBUF+2
+              LD        DE,TMH19
+              CALL      TMCHK3
+              JR        Z,TMHT
+              LD        HL,FILEBUF+2
+              LD        DE,TMH89
+              CALL      TMCHK3
+              JR        Z,TMHT
+              LD        HL,FILEBUF+2
+              LD        DE,TMVT52
+              CALL      TMCHK4
+              JP        NZ,CCPBAD                      ; require complete terminal name
+TMHT          LD        A,2                            ; Heath H19/H89/VT52
+              JR        TMSET
+TMSR          LD        A,1                            ; Soroc
               JR        TMSET
 TMVT          XOR       A                              ; VT100
 TMSET         CALL      VTSETMODE                      ; update tab mode immediately
-              LD        (AREG),A
+              CP        2                              ; 6502 renderer requires Soroc
+              JR        NZ,TM6502
+              LD        A,1
+TM6502        LD        (AREG),A
               LD        HL,0B80CH                      ; 6502 VSETMODE, already in MAIN
               LD        (ADDR),HL
               LD        A,1
@@ -3867,6 +4031,10 @@ TMSET         CALL      VTSETMODE                      ; update tab mode immedia
 ; Check five letters and the delimiting space, against a literal.
 ; The CCP parser guarantees a trailing space after the argument.
 TMCHK         LD        B,5
+              JR        TMCHL
+TMCHK3        LD        B,3
+              JR        TMCHL
+TMCHK4        LD        B,4
 TMCHL         LD        A,(DE)
               CP        (HL)
               RET       NZ
@@ -3878,6 +4046,9 @@ TMCHL         LD        A,(DE)
               RET
 TMVT100       DEFM      'VT100'
 TMSOROC       DEFM      'SOROC'
+TMH19         DEFM      'H19'
+TMH89         DEFM      'H89'
+TMVT52        DEFM      'VT52'
 
 ; BDOS 30: Set CP/M file R/O attribute in ProDOS access byte.
 ; STAT enumerates wildcards and passes each resolved FCB individually.
@@ -4577,7 +4748,7 @@ TL_BLOCK      DEFM      ' [Blocked]$'
 ; Keep clear of the resident BDOS, which now reaches roughly $9760.
 ; Foreground runs original VSETMODE; background remembers the mode.
 SCHTMCHK      LD        A,E
-              CP        2
+              CP        3                              ; 0 VT100, 1 Soroc, 2 H19
               JP        NC,AXTMERR
               JP        AXTMRUN                        ; per-task 6502 mode is now virtual
 
@@ -5132,8 +5303,9 @@ C_WRITE       LD        A,(IOBYTE)
               LD        A,E
               CP        0AH
               JR        NZ,C_PUT
-              CALL      VTISEN                         ; Soroc swallows cooked LF
-              RET       NZ                             ; VT100 needs LF handling
+              CALL      VTISEN                         ; only native Soroc swallows LF
+              CP        1
+              RET       Z                              ; VT100 and H19 process cooked LF
               JR        C_PUT
 
 ; Shared low-level output path for cooked and direct console writes.
@@ -5151,8 +5323,9 @@ C_PUT         LD        A,80H                          ; cooked output, both bac
               LD        HL,COUT                        ; B803 cooked 6502 vector
 VTGATE        PUSH      AF                             ; retain raw/cooked flag in bit 7
               PUSH      HL
-              CALL      VTISEN                         ; zero => VT100 mode
-              JR        NZ,VTNOGATE                    ; branch BEFORE restoring flags
+              CALL      VTISEN                         ; 1=native Soroc, 0/2=translated
+              CP        1
+              JR        Z,VTNOGATE                     ; preserve saved output/flags
               POP       HL
               POP       AF
               JP        VTCHAR                         ; parse VT before 6502 handoff
@@ -7370,7 +7543,7 @@ PHOUT         LD        E,A
 ; - SAVE         - Save 256-byte pages of TPA (SAVE 7 FOO.COM)
 ; - TYPE         - Show text file on console (TYPE TEST.TXT)
 ; - BYE          - Confirm and exit to the ProDOS selector
-; - TERM VT100/SOROC - Set terminal personality (no .COM needed)
+; - TERM VT100/SOROC/H19/H89/VT52 - Set terminal personality (no .COM needed)
 ; - CACHE        - Show ProDOS handle-cache counters (CACHE RESET to zero)
 ; - CLS          - Reset video state, clear screen and home cursor
 ; - TAB          - [LIST|HELP|N [SUSPEND|RESUME|EXCLUSIVE|KILL]]
@@ -7449,6 +7622,12 @@ CCPS1         LD        HL,FCB1                        ; Clear FCB1
               CALL      CLRFCB                         ;
 
               CALL      PARSE                          ; Parse the command line
+              ; A bare ':' (also '.COM', A::, etc.) creates a blank FCB name.
+              ; FCB2PATH deliberately maps blank FCBs to the drive directory;
+              ; never attempt to load that directory as executable Z80 code.
+              LD        A,(PATHBUF2+1)
+              CP        ' '
+              JP        Z,CCPBADDRV                    ; Bad format; stay in CCP
               CALL      BUILTIN                        ; Check for built-in commands
               CP        0                              ; If zero, was a built-in command
               JP        Z,CCP                          ; Go again
@@ -7516,7 +7695,10 @@ RSTPATHBUF    PUSH      HL                             ; Preserve HL
 ; letter and a colon.  If so, reduces string length by 2 and advances HL two
 ; positions, sets B to the drive number.  If no drive is specified, sets B
 ; to the default drive.
-DRVLETTER     INC       HL                             ; Advance to second char
+DRVLETTER     LD        A,(HL)                         ; Pascal source length
+              CP        2                              ; Need at least D: before inspecting it
+              JR        C,DLSNODRV                     ; Don't read stale byte past ':' or '.'
+              INC       HL                             ; Advance to second char
               INC       HL                             ; ...
               LD        A,(HL)                         ; See if second char typed is a colon
               CP        ':'                            ;
@@ -7534,7 +7716,7 @@ DRVLETTER     INC       HL                             ; Advance to second char
               RET
 DLS1          DEC       HL                             ; Put HL back to the beginning
               DEC       HL                             ; ...
-              LD        B,0                            ; Use default drive
+DLSNODRV      LD        B,0                            ; Use default drive
               RET
 
 ; Handle the end of command/argument tokens. State B is 0..6:
