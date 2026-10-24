@@ -17,7 +17,7 @@
 ; BDOS TODOs
 ; ----------
 ; ProDOS handles: two-slot, pathname-keyed cache (see CACHE_* near $A200).
-; Logical CP/M open state is still S2=$7E, never a leaked ProDOS FRN.
+; Logical CP/M open state is S1=$A0|USER; S2 stays application-owned.
 ; TODO: Implement missing BDOS system calls:
 ;        - RS232 (A_READ, A_WRITE)
 ;        - Printer (LWRITE)
@@ -2099,7 +2099,7 @@ SBEMPTY       LD        DE,SUBFCB
               JP        NZ,SBERROR
               JP        SBDONE
 SBTRUNC                     ; Truncate an open ProDOS file to R0..R2 * 128 bytes.
-              ; IO_BEGIN resolves logical S2=$7E to a physical ProDOS FRN.
+              ; IO_BEGIN temporarily loans S2 to the physical ProDOS FRN.
               LD        IX,SUBFCB
               CALL      IO_BEGIN
               OR        A
@@ -2116,7 +2116,7 @@ SBSHIFT       ADD       HL,HL
               LD        (SEMLIE3),A
               LD        HL,SEMLI
               CALL      PRODOS
-              CALL      IO_END                         ; put back virtual S2 marker
+              CALL      IO_END                         ; restore the caller's S2
               PUSH      AF
               LD        DE,SUBFCB
               CALL      F_CLOSE
@@ -2685,20 +2685,15 @@ UD_OLEN       DEFB      0
 UD_STAT       DEFB      0
 UC_SAVE       DEFB      0
 
-; FCB file operations keep the USER at OPEN time in S1=$A0|USER.
-; A virtual open has S2=$7E, or S2=0 and a valid S1 tag (Pascal/M).
-; Only those FCBs use the bound USER; others use the current USER.
-; Returns A=0..15 and preserves BC, DE, HL, IX, IY.
+; The S1=$A0|USER tag binds logical OPEN to its original USER area.
+; S2 is application-owned, including during sequential/random record I/O.
+; Returns A=0..15; preserves BC, DE, HL, IX, IY.
 F2P_USER      PUSH      HL
               LD        HL,0EH
               ADD       HL,DE
-              CALL      FCBVOPEN                       ; Z if logically open
+              CALL      FCBVOPEN                       ; Z if S1 has our open/user tag
               JR        NZ,F2P_CUR
-F2P_LOCK      DEC       HL
-              LD        A,(HL)
-              AND       0F0H
-              CP        0A0H
-              JR        NZ,F2P_CUR
+              DEC       HL
               LD        A,(HL)
               AND       00FH
               POP       HL
@@ -2796,26 +2791,33 @@ CCPH1         DEFM      'DIR ERA REN TYPE SAVE'
               DEFB      13,'$'
 
               ORG       06100H
-; Test whether an FCB is logically open through the AUX gateway.
-; In:  HL=address of FCB S2 (FCB+0EH).
-; Out: Z if S2=$7E, or S2=0 and S1=$A0|USER; NZ otherwise.
-; Clobbers A/flags only, preserves HL and all other registers.
-; CP/M applications may clear S2 (notably SORCIM Pascal/M), while
-; physical ProDOS FCBs have nonzero FRNs instead of the virtual tag.
-FCBVOPEN      LD        A,(HL)
-              CP        07EH
-              RET       Z
-              OR        A
-              RET       NZ
-              DEC       HL
+; The S1 magic high nibble is the SOLE logical-open test. An application
+; may change S2 (extent + CP/M flags), so we must never classify it via S2.
+; In: HL=FCB+0EH. Out: Z if S1=$A0..$AF. Preserve HL and all except A/flags.
+FCBVOPEN      DEC       HL
               LD        A,(HL)
               INC       HL
               AND       0F0H
               CP        0A0H
               RET
 
-; For CP/M I/O, temporarily replace virtual S2 with the cached FRN;
-; IO_END restores $7E. Direct ProDOS directory/loader FCBs keep their FRNs.
+; Raw ProDOS FRNs in S2 are allowed ONLY in our internal directory FCB
+; and transient loader FCB. AUX application FCBs are staged at AXFCB;
+; their nonzero S2 can never be mistaken for a physical ProDOS handle.
+; In: DE=FCB start. Out: Z for internal raw FCB; preserve all regs.
+FCBRAW        PUSH      HL
+              LD        HL,DFCB
+              OR        A                              ; clear carry for 16-bit compare
+              SBC       HL,DE
+              JR        Z,FRAW_END
+              LD        HL,PATHBUF2
+              OR        A
+              SBC       HL,DE
+FRAW_END      POP       HL
+              RET
+
+; For logical CP/M I/O, briefly loan S2 to ProDOS as the physical FRN.
+; IO_END restores the application's exact S2 byte, even after I/O errors.
 IO_BEGIN      XOR       A
               LD        (IOVIRT),A
               PUSH      HL
@@ -2828,15 +2830,23 @@ IO_BEGIN      XOR       A
               POP       DE
               POP       HL
               JR        Z,IO_CACHE
+              PUSH      DE
+              PUSH      IX
+              POP       DE
+              CALL      FCBRAW                         ; no raw FRNs in application FCBs
+              POP       DE
+              JR        NZ,IO_BAD
               LD        A,(IX+0EH)
               OR        A
               JR        NZ,IO_PHYS
-              JR        IO_BAD                         ; unopened/untagged S2=0 FCB
+              JR        IO_BAD                         ; internal raw FCB not opened
 IO_PHYS       XOR       A
               RET
 IO_BAD        LD        A,9
               RET
-IO_CACHE      LD        A,1
+IO_CACHE      LD        A,(IX+0EH)
+              LD        (IOVS2),A                       ; preserve caller's S2
+              LD        A,1
               LD        (IOVIRT),A
               PUSH      IX
               PUSH      IX
@@ -2885,21 +2895,26 @@ IO_REOPEN                   ; Miss: keep the caller's extent/RC/CR across _F_OPE
               CALL      CACHEPUT
               XOR       A
               RET
-IO_FAIL       XOR       A
+IO_FAIL       LD        A,(IOVS2)
+              LD        (IX+0EH),A                     ; _F_OPEN may have touched S2
+              XOR       A
               LD        (IOVIRT),A
               LD        A,C
               RET
 
-; Preserve the BDOS status and keep the physical ProDOS handle cached.
+; Preserve BDOS status, leave the physical ProDOS handle in the cache.
 IO_END        PUSH      AF
               LD        A,(IOVIRT)
               OR        A
               JR        Z,IO_DONE
-              LD        (IX+0EH),07EH
+              LD        A,(IOVS2)
+              LD        (IX+0EH),A                     ; CP/M sees original S2
 IO_DONE       POP       AF
               LD        L,A
               RET
 IOVIRT        DEFB      0
+IOVS2         DEFB      0                              ; saved app extent S2 per BDOS call
+FOS2          DEFB      0                              ; saved S2 across fresh F_OPEN
 
 ; Increment wrapping 16-bit counter at HL. No file handles are touched.
 CINC16        INC       (HL)
@@ -5640,15 +5655,23 @@ F_OPEN                      ; Explicit CP/M OPEN replaces any cached handle for 
               POP       DE
               OR        A
               JP        NZ,FOERR
-              ; This is a new OPEN, even if the caller reused an old FCB.
-              ; Close old cached name first; then discard its user binding.
+              ; Fresh OPEN replaces the old user binding. _F_OPEN uses
+              ; S2 for ProDOS FRN: keep the application's original extent S2.
               PUSH      DE
               POP       IX
+              LD        A,(IX+0EH)
+              LD        (FOS2),A
               LD        (IX+0DH),0
               LD        (IX+0EH),0
               CALL      _F_OPEN
               OR        A
-              RET       NZ
+              JR        Z,FO_VOPEN
+              PUSH      AF
+              LD        A,(FOS2)
+              LD        (IY+0EH),A                     ; restore S2 even on OPEN failure
+              POP       AF
+              RET
+FO_VOPEN
               LD        A,(IY+0EH)                     ; New physical ProDOS reference
               CALL      GETIOADDR                      ; Find its newly allocated slot
               CALL      CACHEPUT                       ; Cache the pathname in PATHBUF
@@ -5661,8 +5684,9 @@ F_OPEN                      ; Explicit CP/M OPEN replaces any cached handle for 
               RRCA
               AND       00FH
               OR        0A0H
-              LD        (IY+0DH),A
-              LD        (IY+0EH),07EH                  ; Logical CP/M open marker (dBASE-safe)
+              LD        (IY+0DH),A                     ; S1 alone identifies logical open
+              LD        A,(FOS2)
+              LD        (IY+0EH),A                     ; preserve application-owned S2
               XOR       A
               LD        L,A
               RET
@@ -5768,7 +5792,15 @@ F_CLOSE       LD        H,D                            ; Pointer to FCB ...
               ADD       HL,BC                          ; Compute address
               CALL      FCBVOPEN                       ; same open test as I/O and F2P_USER
               JR        Z,FCVIRT
-              LD        A,(HL)                         ; Otherwise S2 is physical FRN/zero
+              ; Only our own directory/loader FCBs may contain a raw FRN.
+              ; Never CLOSE an arbitrary application S2 value as a ProDOS FRN.
+              CALL      FCBRAW
+              JR        Z,FC_RAW
+              LD        A,(HL)
+              OR        A
+              JR        Z,FCSUCC                       ; harmless CLOSE of unopened FCB
+              JR        FCERR                          ; untagged and nonzero != FRN
+FC_RAW        LD        A,(HL)
               JR        FCPHYS
 FCVIRT                      ; A virtual-close request must close the matching cache entry.
               ; Names, not FCB addresses, identify cache entries (AUX staging).
@@ -5783,9 +5815,8 @@ FCVIRT                      ; A virtual-close request must close the matching ca
               POP       HL
               OR        A
               JP        NZ,FCERR
-              LD        (HL),0                         ; Clear virtual S2
               DEC       HL
-              LD        (HL),0                         ; Clear S1 tag too: now really closed
+              LD        (HL),0                         ; close via S1, preserve CP/M S2
               JP        FCSUCC
 FCPHYS        CP        0                              ; If file reference number is zero ...
               JR        Z,FCSUCC                       ; ... Nothing to do, just return
