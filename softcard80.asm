@@ -2685,14 +2685,14 @@ UD_OLEN       DEFB      0
 UD_STAT       DEFB      0
 UC_SAVE       DEFB      0
 
-; FCB file operations keep the USER at OPEN time in S1=$A0+user.
-; S2=$7E denotes a virtual open; other FCBs use current USER.
+; FCB file operations keep the USER at OPEN time in S1=$A0|USER.
+; A virtual open has S2=$7E, or S2=0 and a valid S1 tag (Pascal/M).
+; Only those FCBs use the bound USER; others use the current USER.
 ; Returns A=0..15 and preserves BC, DE, HL, IX, IY.
 F2P_USER      PUSH      HL
               LD        HL,0EH
               ADD       HL,DE
-              LD        A,(HL)
-              CP        07EH
+              CALL      FCBVOPEN                       ; Z if logically open
               JR        NZ,F2P_CUR
 F2P_LOCK      DEC       HL
               LD        A,(HL)
@@ -2796,25 +2796,42 @@ CCPH1         DEFM      'DIR ERA REN TYPE SAVE'
               DEFB      13,'$'
 
               ORG       06100H
-; A CP/M FCB is logically open as S2=$7E.
-; Some CP/M software (SORCIM Pascal/M, including SuperCalc INSTALL)
-; deliberately clears S2 immediately after a successful OPEN. Recover
-; the open state from the S1=$A0|USER tag already installed by F_OPEN.
-; Do not accept an untagged S2=0 FCB, which really was never opened.
-; During I/O temporarily substitute the cached physical ProDOS FRN;
-; IO_END restores S2=$7E. Physical directory/loader FCBs are unchanged.
-IO_BEGIN      XOR       A
-              LD        (IOVIRT),A
-              LD        A,(IX+0EH)
+; Test whether an FCB is logically open through the AUX gateway.
+; In:  HL=address of FCB S2 (FCB+0EH).
+; Out: Z if S2=$7E, or S2=0 and S1=$A0|USER; NZ otherwise.
+; Clobbers A/flags only, preserves HL and all other registers.
+; CP/M applications may clear S2 (notably SORCIM Pascal/M), while
+; physical ProDOS FCBs have nonzero FRNs instead of the virtual tag.
+FCBVOPEN      LD        A,(HL)
               CP        07EH
-              JR        Z,IO_CACHE
+              RET       Z
               OR        A
-              JR        NZ,IO_PHYS
-              LD        A,(IX+0DH)             ; S1 tag survives Pascal/M's S2 clear
+              RET       NZ
+              DEC       HL
+              LD        A,(HL)
+              INC       HL
               AND       0F0H
               CP        0A0H
+              RET
+
+; For CP/M I/O, temporarily replace virtual S2 with the cached FRN;
+; IO_END restores $7E. Direct ProDOS directory/loader FCBs keep their FRNs.
+IO_BEGIN      XOR       A
+              LD        (IOVIRT),A
+              PUSH      HL
+              PUSH      DE
+              PUSH      IX
+              POP       HL
+              LD        DE,0EH
+              ADD       HL,DE
+              CALL      FCBVOPEN                       ; classify without changing IX/BC
+              POP       DE
+              POP       HL
               JR        Z,IO_CACHE
-              JR        IO_BAD
+              LD        A,(IX+0EH)
+              OR        A
+              JR        NZ,IO_PHYS
+              JR        IO_BAD                         ; unopened/untagged S2=0 FCB
 IO_PHYS       XOR       A
               RET
 IO_BAD        LD        A,9
@@ -2900,6 +2917,36 @@ COPENS        DEFW      0
 CHITS         DEFW      0
 CEVICTS       DEFW      0
 
+; Prepare a ProDOS sequential write at SMMLIP1..3.  ProDOS prohibits
+; SET_MARK beyond EOF, whereas CP/M accepts skipped/unwritten records.
+; On a gap, SET_EOF makes a sparse extension, as F_WRITERAND already does.
+; IX points to the physical-ref FCB. Returns A=0 or ProDOS error.
+SEQEXTEND     LD        A,(IX+0EH)
+              LD        (GEMLIN),A
+              LD        (SEMLIN),A
+              LD        HL,GEMLI
+              CALL      PRODOS                         ; GET_EOF
+              OR        A
+              RET       NZ
+              LD        A,(GEMLIE1)
+              LD        HL,SMMLIP1
+              SUB       (HL)
+              INC       HL
+              LD        A,(GEMLIE2)
+              SBC       A,(HL)
+              INC       HL
+              LD        A,(GEMLIE3)
+              SBC       A,(HL)
+              JR        NC,SEQX_OK                     ; EOF >= requested mark
+              LD        HL,(SMMLIP1)
+              LD        (SEMLIE1),HL
+              LD        A,(SMMLIP3)
+              LD        (SEMLIE3),A
+              LD        HL,SEMLI
+              CALL      PRODOS                         ; SET_EOF, return ProDOS status
+              RET
+SEQX_OK       XOR       A
+              RET
 
               ORG       06400H
 ; VT100/H19-to-Soroc translator in MAIN (not banked AUX TPA).
@@ -5719,18 +5766,9 @@ F_CLOSE       LD        H,D                            ; Pointer to FCB ...
               LD        L,E                            ; ... into HL
               LD        BC,0EH                         ; Offset to S2 field (reserved field)
               ADD       HL,BC                          ; Compute address
-              LD        A,(HL)                         ; Obtain file reference num from FCB S2
-              CP        07EH                           ; Virtual CP/M open marker
+              CALL      FCBVOPEN                       ; same open test as I/O and F2P_USER
               JR        Z,FCVIRT
-              OR        A
-              JR        NZ,FCPHYS
-              DEC       HL                             ; S2 was cleared: inspect S1 tag
-              LD        A,(HL)
-              INC       HL
-              AND       0F0H
-              CP        0A0H
-              JR        Z,FCVIRT                       ; Pascal/M's cleared S2
-              XOR       A                              ; Untagged, unopened FCB
+              LD        A,(HL)                         ; Otherwise S2 is physical FRN/zero
               JR        FCPHYS
 FCVIRT                      ; A virtual-close request must close the matching cache entry.
               ; Names, not FCB addresses, identify cache entries (AUX staging).
@@ -6008,6 +6046,11 @@ F_WRITE_GO
               LD        A,(IX+20H)                     ; Obtain sequential record number
               LD        B,(IX+0CH)                     ; Obtain extent from FCB
               CALL      EXRC2MARK                      ; Set full 24-bit ProDOS position
+              ; ProDOS SET_MARK refuses offsets past EOF.  CP/M sequential
+              ; writes may skip records, so extend logical EOF if necessary.
+              CALL      SEQEXTEND
+              OR        A
+              JP        NZ,FWERR
 
 ;;          ; DEBUG
 ;;          PUSH    HL
@@ -6126,13 +6169,8 @@ FMOPENMSG     DEFM      'Zapple-II OPEN-after-CREATE error: '
 ; would clobber a wildcard enumeration in progress (notably PIP).
 F_RENAME      CALL      DCHKRO                         ; Check source FCB drive
               JP        NZ,RODENY
-              PUSH      DE
-              LD        HL,16
-              ADD       HL,DE
-              EX        DE,HL
-              CALL      DCHKRO                         ; Check destination FCB drive
-              POP       DE
-              JP        NZ,RODENY
+              ; CP/M BDOS 23 ignores the drive byte at FCB+16.
+              ; The old and new filenames must stay on the source drive.
               LD        IX,PATHBUF                     ; Destination buffer 1
               CALL      FCB2PATH                       ; Populate PATHLEN and PATH for first file
               PUSH      DE
@@ -6147,7 +6185,9 @@ F_RENAME      CALL      DCHKRO                         ; Check source FCB drive
               ADD       HL,BC                          ; ...
               LD        D,H                            ; HL back to DE
               LD        E,L                            ; ...
-              CALL      FCB2PATH                       ; Populate PATHLEN and PATH for second file
+              CALL      FCB2PATH                       ; Encode second name, then override drive
+              LD        A,(PATH)                       ; FCB+0 is the sole BDOS 23 drive
+              LD        (PATH2),A                       ; ignore second FCB's drive byte
               LD        HL,FRNMLI                      ; Pass address of 6502 JSR instruction
               CALL      PRODOS                         ; Invoke ProDOS MLI
               CP        0                              ; See if there was an error
