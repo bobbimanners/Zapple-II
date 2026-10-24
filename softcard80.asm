@@ -1568,7 +1568,7 @@ SCHEN         DEFB      0                              ; enabled if >=2 sessions
 
 ; Reclaimed MAIN $4000-$6FFF: permanent CCP SAVE and helpers.
 ; No AUX LC snapshot is ever written here.
-; AUX56 CCP SAVE: dump full $0100-$DEFF transient image.
+; AUX56 CCP SAVE: dump transient pages from $0100 through $DDFF.
 ; Read the owning tab's ordinary AUX RAM and AUX LC in place.
 ; Select its RamWorks bank; never use a global high-memory snapshot.
 ; Only MAIN $AUXSTAGE is passed as the ProDOS write DMA buffer.
@@ -1593,7 +1593,7 @@ SVDEC         LD        A,(HL)
               ADD       A,A
               ADD       A,D
               ADD       A,C
-              CP        223                            ; legal pages: 0 through 222
+              CP        222                            ; legal pages: 0 through 221 (DDFF top)
               JP        NC,SVBAD
               LD        B,A
               INC       HL
@@ -3409,9 +3409,9 @@ AXTMERR       LD        A,0FFH
               LD        L,A
               RET
 
-; Require the full 36-byte FCB to lie below LC BIOS at $DF00.
+; Require the full 36-byte FCB to lie below BDOS at $DE00.
 AXCKFCB       LD        A,D
-              CP        0DEH
+              CP        0DDH
               JR        C,AXCKOK
               JR        NZ,AXCKBAD
               LD        A,E
@@ -3421,10 +3421,10 @@ AXCKOK        XOR       A
               RET
 AXCKBAD       LD        A,1
               RET
-; An entire 128-byte record must fit below $DF00.
+; An entire 128-byte record must fit below $DE00.
 AXCKDMA       LD        HL,(AXDMAP)
               LD        A,H
-              CP        0DEH
+              CP        0DDH
               JR        C,AXCKOK
               JR        NZ,AXCKBAD
               LD        A,L
@@ -3522,13 +3522,13 @@ AXAVEC        LD        A,(LCB1RO)
 
 ; CP/M BDOS 10: buffered line input into an AUX caller's buffer.
 ; Check the ACTUAL buffer capacity, not a blanket 260-byte region.
-; The AUX TPA ends at DEFFH; the LC BDOS gateway starts at DF00H.
+; The AUX TPA ends at DDFFH; BDOS stub starts at DE00H.
 ; For capacity N we may write N data bytes plus one CR at DE+2+N.
 ; 260-byte MAIN staging handles all legal one-byte capacities (0..255).
 AXLINE        LD        (AXLIP),DE
               LD        A,D
-              CP        0DFH
-              JP        NC,AXBAD                       ; buffer header must be below DF00H
+              CP        0DEH
+              JP        NC,AXBAD                       ; buffer header must be below DE00H
 AXLVALID      EX        DE,HL
               LD        DE,AXLBUF
               LD        BC,1
@@ -3541,8 +3541,8 @@ AXLVALID      EX        DE,HL
               INC       HL
               ADD       HL,BC                          ; address of final possible CR byte
               LD        A,H
-              CP        0DFH
-              JP        NC,AXBAD                       ; disallow touching DF00H+ gateway
+              CP        0DEH
+              JP        NC,AXBAD                       ; disallow touching DE00H+ BDOS page
               ; Only consume submitted input after XSUB was explicitly
               ; enabled from a script. XSREADY handles prior status polls.
               CALL      XSREADY
@@ -4259,7 +4259,7 @@ TB_EXCL
 ; LC entry points are absolute RUNTIME addresses, not source image labels.
 LCBASE        EQU       0DF00H
 LCBACK        EQU       03000H                         ; MAIN $3000-$3FFF: saved MAIN LC bank2
-LC_BDOS       EQU       LCBASE                         ; BDOS at DF00, TPA ends DEFF
+LC_BDOS       EQU       LCBASE-0100H                    ; $DE00, below conventional BIOS at $DF00
 SW80OFF       EQU       0E000H
 RDMAIN        EQU       0E002H
 RDAUX         EQU       0E003H
@@ -4318,7 +4318,7 @@ AUXLOAD       LD        HL,AUXSTAGE
               JR        Z,AUXLDONE
               JP        AUXRERR
 AUXREC        LD        HL,(AUXDEST)
-              LD        DE,LCBASE
+              LD        DE,LC_BDOS
               OR        A
               SBC       HL,DE
               JP        NC,AUX2BIG
@@ -4370,11 +4370,15 @@ AUXLDONE      LD        DE,PATHBUF2
               LD        (DMAADDR),HL
               LD        HL,0080H
               LD        (AXDMAP),HL
-              ; Replace top 256 bytes of AUX LC with the new LC gateway.
+              ; Install DE00 BDOS stub and DF00 BIOS gateway in AUX LC.
               LD        A,(LCB2RW)
               LD        A,(LCB2RW)
               XOR       A
               LD        (ZPAUX),A
+              LD        HL,LCBDJP                      ; three-byte BDOS jump at $DE00
+              LD        DE,LC_BDOS
+              LD        BC,3
+              LDIR
               LD        HL,LCIMG
               LD        DE,LCBASE
               LD        BC,LCLEN
@@ -4978,13 +4982,13 @@ BDOSWARM      DI                                       ; Make sure interrupts ar
               LD        (ROVEC),HL                     ; ...
               JP        CCP                            ; Start the CCP
 
-; The TPA is AUX 0100H..DEFFH. Derive KiB from its top at
+; The TPA is AUX 0100H..DDFFH. Derive KiB from its top at
 ; assembly time, then turn it into decimal at run time. 10 right shifts
 ; convert a byte count to KiB; valid for any sensible BDOS placement.
 ; We print two digits (CP/M's TPA cannot exceed 63 KiB).
 BPMSIGN       LD        DE,BPMSG
               CALL      C_WRITESTR
-              LD        HL,0DF00H
+              LD        HL,LC_BDOS
               LD        B,10
 BPMSHIFT      SRL       H
               RR        L
@@ -8323,14 +8327,15 @@ N2FMSTORE     LD        (HL),A                         ; Little endian, low byte
               RET
 
               ORG       0A080H
-; Auxiliary page zero: WBOOT -> LC DF06, BDOS -> LC DF00.
-AUXPZERO      DEFB      0C3H,006H,0DFH,0,0,0C3H,000H,0DFH
+; Auxiliary page zero: WBOOT -> LC DF03, BDOS -> LC DE00.
+AUXPZERO      DEFB      0C3H,003H,0DFH,0,0,0C3H,000H,0DEH
 AUXDEST       DEFW      0100H
 AUXEXCD       DEFB      0
 
-; AUX LC bank2 image at DF00. The BDOS vector is first for stack safety.
+; AUX LC BIOS jump table at DF00. BDOS JP lives at DE00.
+; Three-byte BDOS stub copied to AUX LC $DE00 before the BIOS image.
+LCBDJP        JP        LCGATE
 LCIMG
-              JP        LCGATE
               JP        LCNOP
               JP        LCWBOOT
               JP        LCBCST
@@ -8348,6 +8353,7 @@ LCIMG
               JP        LCBERR
               JP        LCBZERO
               JP        LCBTRAN
+              JP        LCGATE
 LIENT         XOR       A
               LD        SP,LCBASE
               LD        (WRAUX),A

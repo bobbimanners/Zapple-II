@@ -77,16 +77,23 @@ $(DISK_IMAGE): $(PRODOS65) $(PRODOS80)
 	$(CADIUS) createfolder "$@" "/$(DISK_VOLUME)/I"
 	$(CADIUS) createfolder "$@" "/$(DISK_VOLUME)/J"
 	$(CADIUS) createfolder "$@" "/$(DISK_VOLUME)/K"
+	$(CADIUS) createfolder "$@" "/$(DISK_VOLUME)/L"
+	$(CADIUS) createfolder "$@" "/$(DISK_VOLUME)/M"
+	$(CADIUS) createfolder "$@" "/$(DISK_VOLUME)/N"
+	$(CADIUS) createfolder "$@" "/$(DISK_VOLUME)/O"
+	$(CADIUS) createfolder "$@" "/$(DISK_VOLUME)/P"
 	cd cpm-apps/CPM-2.2 && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/A" .
 	cd cpm-apps/Utils && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/B" .
-	cd cpm-apps/TP3 && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/B" .
-	cd cpm-apps/WS3 && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/B" .
-	cd cpm-apps/Supercalc && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/B" .
-	cd cpm-apps/AztecC && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/C" .
-	cd cpm-apps/dBase-II && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/D" .
-	cd cpm-apps/HiTechC && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/E" .
-	cd cpm-apps/Fortran-80 && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/F" .
-	cd cpm-apps/Games && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/G" .
+	cd cpm-apps/TP3 && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/C" .
+	cd cpm-apps/WS3 && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/D" .
+	cd cpm-apps/Supercalc && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/E" .
+	cd cpm-apps/AztecC && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/F" .
+	cd cpm-apps/dBase-II && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/G" .
+	cd cpm-apps/HiTechC && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/H" .
+	cd cpm-apps/Fortran-80 && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/I" .
+	cd cpm-apps/Games && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/J" .
+	cd cpm-apps/BBC_BASIC && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/K" .
+	cd cpm-apps/WS4 && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/L" .
 
 # The original script launched MAME with its debugger enabled.
 # `make run` launches without -debug; `make debug` (or `make mame`) matches it.

@@ -1,5 +1,0 @@
-{Test}
-program test;
-begin
-  writeln('This is a test ...');
-end.
