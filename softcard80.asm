@@ -6221,8 +6221,12 @@ FCVIRT                      ; Flush on CP/M CLOSE; optional explicitly marked RC
               POP       HL
               OR        A
               JP        NZ,FCERR
-              DEC       HL
-              LD        (HL),0                         ; close via S1, preserve CP/M S2
+              ; CP/M-compatible post-CLOSE FCB reuse: CLOSE has flushed the
+              ; physical ProDOS handle through CACHECLS.  Keep the logical
+              ; S1=$A0|USER tag, so a later READ/WRITE through the same FCB
+              ; can reopen by pathname via IO_BEGIN.  dBASE II does this
+              ; after CREATE without another explicit BDOS OPEN.
+              ; Note: preserve S2, EX, RC and CR exactly as supplied.
               JP        FCSUCC
 FCPHYS        CP        0                              ; If file reference number is zero ...
               JR        Z,FCSUCC                       ; ... Nothing to do, just return
