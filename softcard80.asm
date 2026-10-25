@@ -14,6 +14,16 @@
 ;    http://www.easy68k.com/paulrsm/6502/PDOS8TRM.HTM
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+; BDOS TODOs
+; ----------
+; ProDOS handles: two-slot, pathname-keyed cache (see CACHE_* near $A200).
+; Logical CP/M open state is S1=$A0|USER; S2 stays application-owned.
+; TODO: Implement missing BDOS system calls:
+;        - RS232 (A_READ, A_WRITE)
+;        - Printer (LWRITE)
+; IOBYTE routes console, reader, punch and list to Apple firmware.
+; TODO: User number doesn't do anything
+;
 
 BDOSADDR      EQU       08100H                         ;
 STCKTOP       EQU       0A800H                         ; Stack still ends at $A800; base-69 uses its low region
@@ -319,6 +329,9 @@ TB_KILL       LD        A,B
               CALL      TB_FPTR
               LD        (HL),0
               LD        HL,SCHWAIT
+              ADD       HL,DE
+              LD        (HL),0
+              LD        HL,SHFLAGS                     ; a killed CCP must not auto-reload
               ADD       HL,DE
               LD        (HL),0
               LD        HL,CCPPROMS
@@ -936,8 +949,8 @@ TSKBIKEY      LD        A,0F2H                         ; deferred BIOS character
               LD        L,A
               RET
 
-TSKINIT       LD        HL,SCHWAIT
-              LD        DE,SCHWAIT+1
+TSKINIT       JP        SHINIT                       ; Stage 12 initialization out of the tight $0800 block
+TSKINI2       LD        DE,SCHWAIT+1
               LD        BC,15
               XOR       A
               LD        (HL),A
@@ -1176,7 +1189,7 @@ TSKRFIN       XOR       A
               LD        (DMAADDR),HL
               LD        HL,0080H
               LD        (AXDMAP),HL
-              CALL      SBWSET                         ; defer WBOOT until this tab has CCP
+              CALL      SHAFTER                      ; offload stage-12 continuation and WBOOT setup
               RET
 
 TSKMSG        DEFM      'Suspended (Open Apple+0-9/A-F/arrows)'
@@ -2845,6 +2858,168 @@ FC5POSOK      POP       AF
 FC5SKIP       XOR       A                             ; leave EOF untouched
 FC5DONE       JP        IO_END                        ; restores app S2, sets L=result
 
+              ORG       05C00H
+; Stage 12: optional file-loaded AUX CCP supervisor. MAIN CCP is still
+; fallback, and stays active for tabs which never launch CCP.COM.
+; SHFLAGS: 0 = ordinary MAIN CCP, 1 = AUX CCP.COM, 2 = launched child .COM.
+; A request is a BDOS $F7 call with DE -> 36-byte AUX FCB (COM extension).
+; No direct AUX->AUX replacement occurs; old transient exits AXGATE first.
+SHFLAGS       DEFS      16
+; This is an out-of-line replacement for TSKINIT's original first
+; instruction (LD HL,SCHWAIT, three bytes).  The jump occupies exactly
+; the same three bytes in the crowded $0800-$0AFF region.
+SHINIT        LD        HL,SHFLAGS
+              LD        DE,SHFLAGS+1
+              LD        BC,15
+              XOR       A
+              LD        (HL),A
+              LDIR
+              LD        HL,SCHWAIT
+              JP        TSKINI2
+SHPTR         LD        A,(TABMODE)
+              LD        E,A
+              LD        D,0
+              LD        HL,SHFLAGS
+              ADD       HL,DE
+              RET
+
+; Attach only for explicit CCP invocation from the existing MAIN CCP.
+; A drive selection and any arguments don't affect the test.
+SHCHECK       LD        HL,PATHBUF2+1
+              LD        DE,SHNAME
+              LD        B,11
+SHCMP         LD        A,(DE)
+              CP        (HL)
+              RET       NZ
+              INC       DE
+              INC       HL
+              DJNZ      SHCMP
+              CALL      SHPTR
+              LD        (HL),1
+              RET
+SHNAME        DEFM      'CCP     COM'
+SHFCB         DEFB      1                             ; always reload from drive A:
+              DEFM      'CCP     COM'
+              DEFS      24
+
+; Called with MAIN stack, either after original AUXRUN or TABRESUM.
+; On suspended status (AXQUIT=3) leave parked task untouched.
+SHSTEP        LD        A,(AXQUIT)
+              CP        3
+              RET       Z
+SHLOOP        CALL      SHPTR
+              LD        A,(HL)
+              OR        A
+              RET       Z
+              CP        2
+              JR        Z,SHCHILD
+              ; shell itself just returned (EXIT), or requested new .COM
+              LD        A,(AXQUIT)
+              CP        4
+              JR        Z,SHLAUNCH
+              ; Shell RET, BDOS 0 or failed load => fallback to MAIN CCP.
+SHSTOP        XOR       A
+              LD        (HL),A
+              RET
+SHLAUNCH      LD        (HL),2                     ; mark child before switching programs
+              CALL      AUXRUN                     ; F7 already staged child FCB in PATHBUF2
+              LD        A,(AXQUIT)
+              CP        3
+              RET       Z                           ; child's bank saved by existing scheduler
+              JP        SHLOOP                     ; child ended -> reload shell
+SHCHILD       CALL      SBWCLR                    ; child warm boot returns to file-loaded CCP
+              LD        HL,SHFCB
+              LD        DE,PATHBUF2
+              LD        BC,36
+              LDIR
+              ; Reset default CP/M FCBs/tail for interactive prompt.
+              CALL      SHNOARG
+              CALL      SHPTR
+              LD        (HL),1
+              CALL      AUXRUN
+              LD        A,(AXQUIT)
+              CP        3
+              RET       Z                           ; shell suspended normally
+              JP        SHLOOP
+; Clear the MAIN page-zero default FCBS/tail before executing a child.
+; This stage deliberately supports argumentless programs only.
+SHNOARG       LD        HL,FCB1
+              LD        (DMAADDR),HL
+              CALL      CLRFCB
+              LD        HL,FCB2
+              LD        (DMAADDR),HL
+              CALL      CLRFCB
+              XOR       A
+              LD        (FILEBUF),A
+              LD        (FILEBUF+1),A
+              LD        HL,FILEBUF
+              LD        (DMAADDR),HL
+              RET
+
+; Stage 13 private BDOS $F7 shell->child handoff.
+; AUX DE points to a *contiguous* 196-byte launch record:
+; [0..35] launch FCB, [36..51] default FCB1, [52..67] default FCB2,
+; [68..195] CP/M command tail including length byte and trailing CR.
+; This copy must complete before AXGATE replaces the AUX image.
+AXEXEC        PUSH      DE                            ; SHPTR uses DE as tab index
+              CALL      SHPTR
+              LD        A,(HL)
+              POP       DE
+              CP        1
+              JP        NZ,AXBAD                       ; only CCP may request a chain
+              CALL      AXCKFCB                        ; minimum 36-byte FCB bound
+              JP        NZ,AXBAD
+              LD        HL,195                          ; validate end of full parameter block
+              ADD       HL,DE
+              LD        A,H
+              CP        0DEH                           ; all input below AUX BDOS at DE00
+              JP        NC,AXBAD
+              LD        H,D                            ; AUX source pointer
+              LD        L,E
+              LD        DE,PATHBUF2                    ; MAIN executable FCB
+              LD        BC,36
+              CALL      LCA2M                          ; HL advances, DE advances
+              LD        A,(PATHBUF2+1)
+              CP        ' '
+              JP        Z,AXBAD
+              LD        DE,FCB1                        ; MAIN default FCB1 005Ch
+              LD        BC,16
+              CALL      LCA2M
+              LD        DE,FCB2                        ; MAIN default FCB2 006Ch
+              LD        BC,16
+              CALL      LCA2M
+              LD        DE,FILEBUF                     ; MAIN command tail 0080h
+              LD        BC,128
+              CALL      LCA2M
+              LD        HL,FILEBUF
+              LD        (DMAADDR),HL
+              LD        A,4
+              LD        (AXQUIT),A                     ; AXGATE returns to MAIN, then SHSTEP
+              XOR       A
+              LD        L,A
+              RET
+
+; TABRESUM lives in the $0800-$0AFF fixed block, with no spare bytes.
+; One CALL here replaces the two CALLs there, preserving its exact size.
+SHAFTER       CALL      SHSTEP
+              JP        SBWSET                       ; tail call: returns to TABRESUM
+
+; AUXRUN used to restore the drive saved before AXSTART, even when the
+; AUX CCP had selected another drive before issuing BDOS F7.  That made
+; implicit executable names (FCB drive=0) open on the original drive.
+; Keep the AUX CCP's current drive/user for a chain (AXQUIT=4), but
+; preserve AUXRUN's previous restore behavior for other exit paths.
+; Called with the pre-AXSTART CURDRV byte in A, after POP AF; preserve AF.
+SHDRKEEP      PUSH      AF
+              LD        A,(AXQUIT)
+              CP        4
+              JR        Z,SHDRSKP
+              POP       AF
+              LD        (CURDRV),A
+              RET
+SHDRSKP       POP       AF
+              RET
+
               ORG       05F00H
 ; CP/M 2.2 permits programs to read/write IOBYTE at 0003h directly.
 ; Each AUX transient has a private 0003h; resident BIOS uses MAIN 0003h.
@@ -2869,6 +3044,19 @@ AXIOSFX       LD        SP,(AXMSP)
               LD        A,(LCB1RO)
               XOR       A
               LD        (AXMODE),A
+              RET
+
+; Bind the AUX BDOS SEARCH FIRST enumeration to the USER active when
+; it starts, just as S8MSF already does for MAIN CCP searches.
+; S8SAVE snapshots S8USER and S8REST uses it to reopen the directory
+; on SEARCH NEXT. Without this, AUX DIR/PIP may switch to a stale USER
+; (typically 0) after returning the first result for USER 3, etc.
+; This replaces LD A,(LCB1RO) with an equal-sized CALL at AXSFIRST,
+; keeping fixed-location AUX dispatch code completely unchanged in size.
+S8AUXBIND     LD        A,(CURDRV)
+              AND       0F0H
+              LD        (S8USER),A
+              LD        A,(LCB1RO)                     ; preserve original LC bank switch
               RET
 
 ; Relocated resident routines: ample MAIN memory, separate from AUX TPA.
@@ -4089,6 +4277,8 @@ AXBDOS        CALL      XSPRE                          ; skip physical keyboard 
               RET       C
               LD        A,C
               LD        (AXBADFN),A                    ; diagnostic: remember original BDOS C
+              CP        0F7H                           ; AUX CCP: chain/load next .COM via MAIN supervisor
+              JP        Z,AXEXEC
               CP        0F0H                           ; private TERM: 0 VT100 / 1 Soroc / 2 H19
               JP        Z,AXTMODE
               OR        A
@@ -4458,7 +4648,7 @@ AXSFIRST      CALL      AXCKFCB
               LD        DE,AXSRCH
               LD        HL,AXDATA
               LD        (DMAADDR),HL
-              LD        A,(LCB1RO)
+              CALL      S8AUXBIND                     ; capture current USER at SEARCH FIRST
               CALL      F_SFIRST
               JP        AXSRDONE
 AXSNEXT       CALL      AXCKDMA
@@ -5110,7 +5300,11 @@ LCB1RO        EQU       0E088H
 ; Read records using an ordinary MAIN buffer, copy them to AUX.
 ; F_READ owns the file handle/FCB and is called BEFORE LC installation:
 ; ProDOS MLI must run with its normal language-card mapping.
-AUXRUN        LD        DE,PATHBUF2
+AUXRUN        XOR       A
+              LD        (AXQUIT),A                    ; never inherit an earlier tab's exit code
+              LD        A,6
+              LD        (AUXEXCD),A                   ; pessimistic: loader failure
+              LD        DE,PATHBUF2
               LD        HL,PATHBUF2
               LD        (DMAADDR),HL
               CALL      _F_OPEN
@@ -5265,7 +5459,7 @@ AUXLDONE      LD        DE,PATHBUF2
               PUSH      AF
               CALL      AXSTART
               POP       AF
-              LD        (CURDRV),A
+              CALL      SHDRKEEP                       ; keep AUX CCP's drive on F7 chain
               LD        A,(AXQUIT)
               CP        3
               JP        Z,AUXSUSP                      ; do NOT destroy the parked AUX LC image
@@ -5311,9 +5505,13 @@ AUXEXOK       PUSH      IX
               LD        E,13
               CALL      C_WRITE
               LD        A,(AUXEXCD)
-              CP        1                              ; AUX BDOS 0 -> true CP/M warm boot
-              JP        Z,BDOSWARM
-              RET
+              CP        1                              ; AUX BDOS 0 -> normal warm boot
+              RET       NZ
+              CALL      SHPTR
+              LD        A,(HL)
+              OR        A
+              RET       NZ                             ; CCP supervisor will reload CCP
+              JP        BDOSWARM
 ; Returning to the CCP after Ctrl-] must not restore the old AUX LC:
 ; the parked transient, including its LC gateway, lives in that bank.
 AUXSUSP       CALL      CACHEALL
@@ -5805,6 +6003,8 @@ BDOSINIT      DI
 ; Keep the existing BDOS reset semantics, but do not print BPMSIGN.
 BDOSWARM      DI                                       ; Make sure interrupts are off
               LD        SP,STCKTOP                     ; Discard transient's stack
+              CALL      SHPTR
+              LD        (HL),0                         ; fallback MAIN WBOOT ends AUX-shell mode
               XOR       A
               LD        (SBHALT),A                     ; recheck $$$.SUB on a new warm boot
               CALL      SBWCLR                         ; consume current tab's WBOOT request
@@ -5979,6 +6179,12 @@ C_WRITE       LD        A,(IOBYTE)
               AND       3
               CP        1
               JR        NZ,C_RAWPUT                    ; serial/BAT must retain LF
+              LD        A,E
+              CP        0AH
+              JR        NZ,C_PUT
+              CALL      VTISEN                         ; only native Soroc swallows LF
+              CP        1
+              RET       Z                              ; VT100 and H19 process cooked LF
               JR        C_PUT
 
 ; Shared low-level output path for cooked and direct console writes.
@@ -8646,9 +8852,12 @@ BIREQ         DEFB      0
 ; Only console BDOS calls are supported by the temporary LC gateway.
 RUNCOM        CALL      TSKACTIVE
               OR        A
-              JP        Z,AUXRUN
+              JR        Z,RCOFREE
               LD        DE,TSKBUSY
               JP        C_WRITESTR
+RCOFREE       CALL      SHCHECK                       ; attach supervisor only to CCP.COM
+              CALL      AUXRUN
+              JP        SHSTEP                        ; handle any CCP requested .COM chain
 
 RCOERR        LD        DE,NFMSG
               CALL      C_WRITESTR
