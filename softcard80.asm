@@ -8881,14 +8881,22 @@ TFL1          LD        HL,FILEBUF                     ; Write ^Z to buffer in c
               CP        0                              ; Check return code from F_READ
               JR        NZ,TFS1                        ; If non-zero jump out of loop
               CALL      TYPEBLK                        ; Display block on screen
+              JR        C,TFCANCEL                     ; ^C pressed while printing
               JR        TFL1                           ; Loop
 TFS1          CP        1                              ; Check return code from F_READ
               JR        NZ,TFLERR                      ; If not EOF (1), then error
               CALL      TYPEBLK                        ; Display last block on screen
+              JR        C,TFCANCEL                     ; ^C pressed while printing
               CALL      F_CLOSE                        ; Close the file
               LD        E,13                           ; Carriage return
               CALL      C_WRITE                        ;
               RET                                      ;
+; Aborted TYPE: discard the ^C in TYPEKEY, close our FCB and end line.
+; Don't WBOOT: other CP/M tabs and resident state must survive.
+TFCANCEL      CALL      F_CLOSE
+              LD        E,13
+              CALL      C_WRITE
+              RET
 TFOERR        LD        DE,NFMSG                       ; 'Not found' message
               CALL      C_WRITESTR                     ; ...
               RET                                      ;
@@ -8898,18 +8906,45 @@ TFLERR        CALL      F_CLOSE                        ; Close the file
               RET
 
 ; Display one 128-byte CP/M record, stopping at ^Z.
+; Carry SET means the foreground user pressed ^C, otherwise clear.
 ; C_WRITE preserves BC and DE, so only the pointer needs protection.
 TYPEBLK       LD        HL,FILEBUF
               LD        B,128
-TBL1          LD        A,(HL)
+TBL1          CALL      TYPEKEY                        ; Poll between characters
+              RET       C                              ; Caller closes the FCB
+              LD        A,(HL)
               CP        26
-              RET       Z
+              JR        Z,TBLDONE                      ; CP/M text EOF marker
               LD        E,A
               PUSH      HL
               CALL      C_WRITE
               POP       HL
               INC       HL
               DJNZ      TBL1
+TBLDONE       OR        A                              ; No abort: clear carry
+              RET
+
+; TYPE-specific ^C check. Don't modify the global console output path:
+; applications (and ^S/^Q flow control) retain their existing behaviour.
+; Only the foreground session with physical CRT input may take a key.
+; Apple II keyboard latch is $C000/$C010 (Z80 $E000/$E010).
+; Leave all other keys pending; consume only ^C.  Preserve BC/DE/HL.
+TYPEKEY       LD        A,(IOBYTE)
+              AND       3
+              CP        1                              ; CRT keyboard?
+              JR        NZ,TKNO
+              CALL      SCHISFG                        ; Avoid stealing foreground keys
+              JR        NZ,TKNO
+              LD        A,(0E000H)                     ; Key + strobe
+              BIT       7,A
+              JR        Z,TKNO                         ; No key waiting
+              AND       07FH
+              CP        3                              ; Ctrl-C
+              JR        NZ,TKNO                         ; Leave other keys pending
+              LD        A,(0E010H)                     ; Consume Ctrl-C strobe
+              SCF                                      ; Signal TYPE cancellation
+              RET
+TKNO          OR        A                              ; No ^C: clear carry
               RET
 
 ; AUX56 SAVEFILE/SVPAGES relocated to MAIN $4000 (free of AUX snapshot).
