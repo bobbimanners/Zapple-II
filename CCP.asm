@@ -1,4 +1,4 @@
-; Zapple-II AUX CCP 1.0.1 (Stage 22.1; session/user prompt + Z80ASM fix)
+; Zapple-II AUX CCP 1.1.1 (Stage 23.2; SAVE parser correction)
 ; Standard CP/M 2.2 BDOS for built-ins; private BDOS F7 for program chaining.
 ; Requires Stage 13 kernel: F7 copies launch FCB + FCB1 + FCB2 + command tail.
 ; Transient program memory is AUX; tab switches retain command and stack.
@@ -701,9 +701,58 @@ DOXSUB      LD      A,6
             JP      BXCMD
 DOBYE       LD      A,7
             JP      BXCMD
-DOSAVE      LD      DE,SAVEWARN
-            CALL    PRINT
-            JP      MAINLOOP
+; SAVE pages filename -- preserves the previous transient image in a
+; dedicated RamWorks screen bank before CCP.COM replaces low TPA.
+; F8/9 receives the ordinary normalized command tail followed by FCB2.
+; Check syntax before calling the native kernel SAVEFILE implementation.
+DOSAVE      LD      HL,(ARGPTR)
+            LD      B,0
+SVNUMLOOP   LD      A,(HL)
+            CP      ' '                         ; space ends the page count
+            JR      Z,SVNUMEND                  ; don't reject it as < '0'
+            CP      '0'
+            JP      C,SHOWBAD
+            CP      '9'+1
+            JR      NC,SVNUMEND
+            INC     B
+            LD      A,B
+            CP      4
+            JP      NC,SHOWBAD                   ; maximum three digits
+            INC     HL
+            JR      SVNUMLOOP
+SVNUMEND    LD      A,B
+            OR      A
+            JP      Z,SHOWBAD
+            LD      A,(HL)
+            CP      ' '
+            JP      NZ,SHOWBAD
+            CALL    SKSP
+            LD      A,(HL)
+            OR      A
+            JP      Z,SHOWBAD
+            LD      (SVFPTR),HL
+            XOR     A
+            LD      (ALLOWW),A
+            CALL    PARSENAME
+            JP      NZ,SHOWBAD
+            LD      HL,(SVFPTR)
+SVFEND      LD      A,(HL)
+            OR      A
+            JR      Z,SVFOK
+            CP      ' '
+            JR      Z,SVFTRAIL
+            INC     HL
+            JR      SVFEND
+SVFTRAIL    CALL    SKSP
+            LD      A,(HL)
+            OR      A
+            JP      NZ,SHOWBAD
+SVFOK       LD      HL,FCB
+            LD      DE,BXFCB
+            LD      BC,36
+            LDIR
+            LD      A,9
+            JP      BXCMD
 BXCMD       LD      (BXID),A
             CALL    BXBUILD
             LD      DE,BXID
@@ -1084,7 +1133,7 @@ OUT         PUSH    AF
             POP     AF
             RET
 
-BANNER      DEFM    'Zapple-II AUX CCP 1.0.1 (Stage 22.1)'
+BANNER      DEFM    'Zapple-II AUX CCP 1.1.1 (Stage 23.2)'
             DEFB    13,'$'
 KDIR        DEFM    'DIR'
             DEFB    0
@@ -1160,13 +1209,14 @@ HELPMSG     DEFM    'DIR ERA REN TYPE USER    CLS BANKS CACHE [RESET]'
             DEFB    13
             DEFM    'XSUB BYE EXIT  A:..P:  program [args]'
             DEFB    13
-            DEFM    'SAVE unavailable (AUX shell replaces old transient)'
+            DEFM    'SAVE n file.ext (after a transient)'
             DEFB    13,'$'
 SAVEWARN    DEFM    'SAVE unavailable: AUX CCP overwrote transient RAM'
             DEFB    13,'$'
 CMDPTR      DEFW    LINE
 ARGPTR      DEFW    LINE
 RENDST      DEFW    LINE
+SVFPTR      DEFW    LINE
 LNPTR       DEFW    LINE
 LNCOUNT     DEFB    0
 ALLOWW      DEFB    0
@@ -1187,4 +1237,5 @@ EXTAIL      DEFS    128
 INBUF       DEFS    82                          ; dedicated BDOS 10 input buffer
 BXID        DEFB    0
 BXTAIL      DEFS    80                          ; private F8 MAIN command tail
+BXFCB       DEFS    36                          ; F8/9 SAVE target, must follow BXTAIL
 TABCAN      DEFS    20                          ; TAB action-first canonical arguments

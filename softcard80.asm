@@ -14,6 +14,16 @@
 ;    http://www.easy68k.com/paulrsm/6502/PDOS8TRM.HTM
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+; BDOS TODOs
+; ----------
+; ProDOS handles: two-slot, pathname-keyed cache (see CACHE_* near $A200).
+; Logical CP/M open state is S1=$A0|USER; S2 stays application-owned.
+; TODO: Implement missing BDOS system calls:
+;        - RS232 (A_READ, A_WRITE)
+;        - Printer (LWRITE)
+; IOBYTE routes console, reader, punch and list to Apple firmware.
+; TODO: User number doesn't do anything
+;
 
 BDOSADDR      EQU       08100H                         ;
 STCKTOP       EQU       0A800H                         ; Stack still ends at $A800; base-69 uses its low region
@@ -325,6 +335,12 @@ TB_KILL       LD        A,B
               ADD       HL,DE
               LD        (HL),0
               LD        HL,CCPPROMS
+              ADD       HL,DE
+              LD        (HL),0
+              LD        HL,SVVALID                     ; kill discards this tab's SAVE image
+              ADD       HL,DE
+              LD        (HL),0
+              LD        HL,SVSFLAGS
               ADD       HL,DE
               LD        (HL),0
               ; Mark backing screen invalid, so the next selection clears it.
@@ -1547,6 +1563,47 @@ SCHEN         DEFB      0                              ; enabled if >=2 sessions
 ; Only MAIN $AUXSTAGE is passed as the ProDOS write DMA buffer.
 ; ================================================================
               ORG       04000H
+; F8/9 from AUX CCP: [ID][80-byte normalized tail][36-byte FCB].
+; MAIN page-zero FCB2 is prepared by the AUX filename parser.
+; Reject SAVE before any completed .COM; do NOT emit CCP.COM bytes.
+AXBSAVE      LD        HL,(AXBPTR)
+              LD        DE,116
+              ADD       HL,DE
+              LD        A,H
+              CP        0DEH
+              JP        NC,AXBAD
+              LD        HL,(AXBPTR)
+              LD        DE,81
+              ADD       HL,DE
+              LD        DE,FCB2
+              LD        BC,36
+              CALL      LCA2M
+              LD        HL,FCB2NAM
+              CALL      ISWILD
+              OR        A
+              JP        NZ,CCPBAD
+              LD        A,(FILEBUF+2)
+              CP        '0'
+              JR        NZ,AXBSREQ                    ; nonzero SAVE needs a prior transient
+              LD        A,(FILEBUF+3)
+              CP        ' '
+              JR        Z,AXBSRUN                    ; SAVE 0: empty file is allowed
+AXBSREQ      CALL      SVSFPTR
+              LD        A,(HL)
+              OR        A
+              JR        NZ,AXBSRUN
+              LD        DE,SVSMSG
+              CALL      C_WRITESTR
+              RET
+AXBSRUN      CALL      SAVEFILE
+              ; Native SAVEFILE restores bank 0. A syscall must instead
+              ; return to the active tab's physical RamWorks AUX bank.
+              LD        A,(TABMODE)
+              CALL      TABPHYS
+              JP        AXBANK
+SVSMSG        DEFM      'No previous .COM image to SAVE'
+              DEFB      13,'$'
+
 SAVEFILE      LD        HL,FILEBUF+2                   ; decimal pages (the first argument)
               LD        B,0
 SVDEC         LD        A,(HL)
@@ -1659,7 +1716,15 @@ SVPREP        XOR       A
 ; From $B000, use ALTZP to read the selected bank's live AUX LC.
 ; This routine itself executes in ordinary MAIN $4000 code and writes
 ; to MAIN $AUXSTAGE, so it does not execute from the switched LC.
-SVCOPY        LD        HL,(SVPTR)
+SVCOPY        LD        A,(AXMODE)                    ; AUX CCP or legacy MAIN CCP?
+              OR        A
+              JR        Z,SVCPLIVE                   ; legacy SAVE: direct live RAM
+              LD        HL,(SVPTR)
+              LD        DE,02100H                     ; first 8K ($0100..$20FF)
+              OR        A
+              SBC       HL,DE
+              JP        C,SVSREAD                     ; AUX CCP overwrote these pages
+SVCPLIVE      LD        HL,(SVPTR)
               LD        DE,0B000H
               XOR       A
               SBC       HL,DE
@@ -1708,6 +1773,78 @@ SVSTAT        DEFB      0
 ; SAVE validity belongs to the logical tab, not to a shared snapshot.
 ; Each tab's completed image remains in its own physical RamWorks bank.
 SVVALID       DEFS      16
+SVSFLAGS      DEFS      16                            ; saved low TPA, one per logical tab
+; Screen backing banks 2/5/10/15 each have their HGR data at $1000-$2FFF.
+; Unused ordinary AUX RAM at $3000-$AFFF contains four 8KB images.
+; TABMODE low two bits select the image slot within the backing bank.
+SVSADDR      LD        HL,(SVPTR)
+              LD        DE,02F00H                     ; $0100 -> $3000
+              ADD       HL,DE
+              LD        A,(TABMODE)
+              AND       3
+              ADD       A,A
+              ADD       A,A
+              ADD       A,A
+              ADD       A,A
+              ADD       A,A                          ; slot * $2000, high-byte delta 0,20,40,60
+              ADD       A,H
+              LD        H,A
+              RET
+SVSREAD      CALL      SVSADDR
+              PUSH      HL
+              CALL      VSSBANK
+              CALL      AXBANK                       ; select image bank (2,5,10,15)
+              POP       HL
+              LD        DE,AUXSTAGE
+              LD        BC,128
+              CALL      LCA2M                       ; 128 bytes screen-bank AUX -> MAIN
+              LD        HL,(SVPTR)
+              LD        DE,128
+              ADD       HL,DE
+              LD        (SVPTR),HL
+              LD        A,(TABMODE)
+              CALL      TABPHYS
+              CALL      AXBANK                       ; restore running program bank
+              RET
+SVSFPTR      LD        A,(TABMODE)
+              LD        L,A
+              LD        H,0
+              LD        DE,SVSFLAGS
+              ADD       HL,DE
+              RET
+; Called after a child exits, before the AUX CCP is reloaded. Staging
+; MAIN $1000-$2FFF is safe while no AUX program executes. Never use
+; this area in an ordinary running program or during a scheduler yield.
+SVSSNAP      LD        A,(VSOK)
+              OR        A
+              RET       Z                           ; requires 3+ physical RamWorks banks
+              LD        A,(TABMODE)
+              CALL      TABPHYS
+              CALL      AXBANK
+              LD        HL,0100H
+              LD        DE,01000H
+              LD        BC,02000H
+              CALL      LCA2M                       ; child AUX low 8K -> MAIN staging
+              CALL      VSSBANK
+              CALL      AXBANK
+              LD        HL,01000H
+              LD        A,(TABMODE)
+              AND       3
+              ADD       A,A
+              ADD       A,A
+              ADD       A,A
+              ADD       A,A
+              ADD       A,A
+              ADD       A,030H
+              LD        D,A
+              LD        E,0
+              LD        BC,02000H
+              CALL      AXM2A                       ; MAIN staging -> backing-bank AUX
+              XOR       A
+              CALL      AXBANK
+              CALL      SVSFPTR
+              LD        (HL),1
+              RET
 SVFLPTR       LD        A,(TABMODE)
               LD        L,A
               LD        H,0
@@ -1716,7 +1853,7 @@ SVFLPTR       LD        A,(TABMODE)
               RET
 SVCLEAR       LD        HL,SVVALID
               LD        DE,SVVALID+1
-              LD        BC,15
+              LD        BC,31                          ; clear SVVALID and SVSFLAGS
               XOR       A
               LD        (HL),A
               LDIR
@@ -2736,6 +2873,7 @@ BITABLE       DEFM      'DIR  '
 ; Test with disposable files before considering broader support.
 ; =====================================================================
 CLOSE_TRIM_ONE EQU       1
+; Stage 23: native SAVE bridge ID 9 and per-tab low TPA backup.
 ; Stage 19: safe native CCP builtin bridge from AUX CCP.COM.
 ; BDOS $F7 still chains via AXEXEC. $F8 accepts an 81-byte record
 ; from AUX DE: command ID then 80-byte normalized MAIN FILEBUF tail.
@@ -2756,6 +2894,7 @@ AXBUILT       PUSH      DE
               LD        A,D
               OR        A
               JP        Z,AXBAD                        ; invalid AUX address
+              LD        (AXBPTR),DE                     ; F8/9 also reads 36-byte FCB
               LD        HL,80
               ADD       HL,DE
               LD        A,H
@@ -2786,6 +2925,8 @@ AXBUILT       PUSH      DE
               JP        Z,AXBBYE
               CP        8
               JP        Z,AXBSESSION                  ; read active logical TABMODE for AUX prompt
+              CP        9
+              JP        Z,AXBSAVE                     ; native SAVE with preserved transient
               JP        CCPBAD
 ; Pure query: no scheduler mutation, no terminal switch, no AUX pointers.
 ; AXGATE returns both A and HL to the transient caller.
@@ -2813,6 +2954,7 @@ AXBNONE       LD        A,(FILEBUF)
 ; AXGATE has captured the full AUX CCP register+stack image.
 AXBTAB        JP        TBCMD
 AXBID         DEFB      0
+AXBPTR       DEFW      0
 
 ; Intercept TB_SWITCH (from either TAB n or TAB n EXCLUSIVE).
 ; The native MAIN CCP still takes its original direct path.
@@ -2965,6 +3107,8 @@ SHCMP         LD        A,(DE)
               DJNZ      SHCMP
               CALL      SHPTR
               LD        (HL),1
+              CALL      SVSFPTR                         ; fresh CCP, no completed child
+              LD        (HL),0
               RET
 SHNAME        DEFM      'CCP     COM'
 SHFCB         DEFB      1                             ; always reload from drive A:
@@ -2997,6 +3141,7 @@ SHLAUNCH      LD        (HL),2                     ; mark child before switching
               RET       Z                           ; child's bank saved by existing scheduler
               JP        SHLOOP                     ; child ended -> reload shell
 SHCHILD       CALL      SBWCLR                    ; child warm boot returns to file-loaded CCP
+              CALL      SVSSNAP                       ; preserve child low 8K BEFORE CCP reload
               ; Clear page-zero FCBs/tail FIRST, before building the
               ; executable FCB.  Never allow the stale child launch record
               ; to serve as the shell reload target.
@@ -3102,6 +3247,20 @@ SHDRKEEP      PUSH      AF
               LD        (CURDRV),A
               RET
 SHDRSKP       POP       AF
+              RET
+
+; Stage 23.1: this helper formerly lived inline at AUXFOUND ($7C00).
+; The $7C00-$7EBF region has only 5 free bytes in Stage 22.2.
+; Keep the original decision while relocating it to verified spare MAIN RAM.
+              ORG       05E80H
+SVNEWCHILD    CALL      SHPTR
+              LD        A,(HL)
+              CP        1                              ; SHFLAGS=1: automatic CCP reload
+              RET       Z                              ; keep previous transient snapshot
+              CALL      SVSFPTR
+              LD        (HL),0                          ; new child invalidates old low TPA
+              CALL      SVFLPTR
+              LD        (HL),0                          ; and its high-memory SAVE image
               RET
 
               ORG       05F00H
@@ -5570,10 +5729,7 @@ AUXRUN        XOR       A
               POP       AF
               OR        A
               JP        NZ,RCOERR
-AUXFOUND                    ; A newly launched program invalidates only its own tab's
-              ; previous SAVE image. The other tabs retain theirs.
-              CALL      SVFLPTR
-              LD        (HL),0
+AUXFOUND      CALL      SVNEWCHILD                    ; preserve valid SAVE snapshot on CCP reload
               ; The transient's RAM can now be in AUX bank 1 instead of
               ; the system/video bank 0. 6502 HANDLR temporarily uses bank
               ; zero for ALL MLI, keyboard and video requests.
