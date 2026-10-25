@@ -6036,7 +6036,13 @@ DSRET         LD        L,A                            ; Return code in L too
 ; ProDOS OPEN already checks existence; F_SFIRST is not needed here.
 F_OPEN                      ; Explicit CP/M OPEN replaces any cached handle for this name.
               ; This also initializes RC/CR from a fresh ProDOS GET_EOF.
+              ; A new OPEN must use the *current* USER, not a stale S1
+              ; binding retained across CLOSE for dBASE II compatibility.
+              ; Clear the old tag before the first FCB2PATH/CACHECLS.
               PUSH      DE
+              PUSH      DE
+              POP       IX
+              LD        (IX+0DH),0                     ; fresh FCB: no saved USER yet
               LD        IX,PATHBUF
               CALL      FCB2PATH
               CALL      CACHECLS
@@ -6052,7 +6058,6 @@ F_OPEN                      ; Explicit CP/M OPEN replaces any cached handle for 
               POP       IX
               XOR       A
               LD        (FOS2),A                      ; new OPEN starts at S2 extent zero
-              LD        (IX+0DH),0
               LD        (IX+0EH),0
               CALL      _F_OPEN
               OR        A
@@ -6547,6 +6552,11 @@ FWRO          LD        A,0FFH
 ; 0 for success, 0FFH if file could not be created
 F_MAKE        CALL      DCHKRO
               JP        NZ,RODENY
+              ; A fresh CREATE must not inherit S1's former USER binding.
+              ; F_OPEN below will establish the new $A0|USER tag on success.
+              PUSH      DE
+              POP       IX
+              LD        (IX+0DH),0
               LD        IX,PATHBUF                     ; Destination buffer
               CALL      FCB2PATH                       ; Populate PATHLEN and PATH
               LD        HL,FMMLI                       ; Pass address of 6502 JSR instruction
