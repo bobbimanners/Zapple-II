@@ -2752,6 +2752,91 @@ BITABLE       DEFM      'DIR  '
               DEFW      CCPUSER
 
 
+; =====================================================================
+; Stage 5: conservative CP/M 2.2 CLOSE EOF reconciliation.
+;
+; CP/M sets S2 bit 7 on OPEN. A program may explicitly clear it and
+; reduce RC to request a short file (e.g. $$$.SUB). On ProDOS the data
+; already reached disk during WRITE; CLOSE physically flushes via
+; CACHECLS.  Never infer an arbitrary new EOF from RC: that could
+; destroy a database whose FCB uses RC/EX for scratch bookkeeping.
+;
+; CLOSE_TRIM_ONE is deliberately 0 by default. When enabled, permit
+; ONLY an explicitly flagged, exactly one-record (128-byte) shrink,
+; and only when EX/S2/RC point exactly to that new EOF. Other CLOSEs
+; retain the full ProDOS file; a separate explicit truncate remains
+; preferable for larger reductions. Test on expendable files first.
+; =====================================================================
+CLOSE_TRIM_ONE EQU       0
+              ORG       05A00H
+; DE points at an S1-tagged CP/M FCB. Return A=0 on success / skip,
+; nonzero on failed read/truncate. Application S2 and CR restored.
+; On a successful trim, caller closes the cached ProDOS handle.
+FC5TRIM       LD        A,CLOSE_TRIM_ONE
+              OR        A
+              RET       Z                             ; safe default, no implicit shrink
+              PUSH      DE
+              POP       IX
+              LD        A,(IX+0EH)
+              BIT       7,A                           ; CP/M S2 modification flag
+              JR        Z,FC5DIRTY
+              XOR       A
+              RET                                     ; unchanged FCB, normal CLOSE
+FC5DIRTY
+              LD        A,(IX+0FH)
+              CP        080H
+              JP        NC,FC5SKIP                    ; RC 128/invalid: never trim
+              CALL      IO_BEGIN                      ; obtain physical FRN in S2
+              OR        A
+              RET       NZ                            ; can't reopen; caller reports failure
+              LD        A,(IX+0EH)
+              LD        (GEMLIN),A
+              LD        HL,GEMLI
+              CALL      PRODOS                        ; exact physical ProDOS byte EOF
+              OR        A
+              JP        NZ,FC5DONE                    ; preserve error, restore S2
+              LD        A,(IX+20H)
+              PUSH      AF                            ; application CR
+              LD        A,(IX+0FH)
+              LD        (IX+20H),A                     ; proposed next sequential rec
+              CALL      SEQMARK                       ; mark = (EX,S2,RC) * 128
+              LD        B,0                            ; preserve carry across CR restore
+              JR        NC,FC5POSOK
+              INC       B
+FC5POSOK      POP       AF
+              LD        (IX+20H),A                     ; don't modify caller CR
+              LD        A,B
+              OR        A
+              JP        NZ,FC5SKIP                    ; >16MiB / invalid extent
+              ; Prove that candidate EOF is exactly ONE 128-byte record
+              ; below the real EOF. This also rules out earlier extents.
+              LD        HL,(SMMLIP1)
+              LD        BC,0080H
+              ADD       HL,BC
+              LD        A,(SMMLIP3)
+              ADC       A,0
+              JP        C,FC5SKIP
+              LD        DE,(GEMLIE1)
+              OR        A
+              SBC       HL,DE
+              JP        NZ,FC5SKIP
+              LD        B,A
+              LD        A,(GEMLIE3)
+              CP        B
+              JP        NZ,FC5SKIP
+              ; A byte-precise ProDOS SET_EOF is now justified.
+              LD        A,(IX+0EH)
+              LD        (SEMLIN),A
+              LD        HL,(SMMLIP1)
+              LD        (SEMLIE1),HL
+              LD        A,(SMMLIP3)
+              LD        (SEMLIE3),A
+              LD        HL,SEMLI
+              CALL      PRODOS
+              JP        FC5DONE
+FC5SKIP       XOR       A                             ; leave EOF untouched
+FC5DONE       JP        IO_END                        ; restores application S2 + status
+
               ORG       05F00H
 ; CP/M 2.2 permits programs to read/write IOBYTE at 0003h directly.
 ; Each AUX transient has a private 0003h; resident BIOS uses MAIN 0003h.
@@ -2961,6 +3046,309 @@ SEQEXTEND     LD        A,(IX+0EH)
               CALL      PRODOS                         ; SET_EOF, return ProDOS status
               RET
 SEQX_OK       XOR       A
+              RET
+
+; BDOS 21 successful sequential-write FCB bookkeeping.
+; In: IX points to the CP/M FCB; CR must be 0..127.
+; Increase RC to include the written record, but never shorten an
+; existing extent on an overwrite.  Advance CR just as before.
+; At CR=127 the next extent is selected with CR=0 and RC=0; that
+; new extent's correct existing length still needs the future
+; extent-aware OPEN/rollover update for overwriting large files.
+; Changes A, B and flags only, apart from FCB EX/RC/CR.
+RCSEQWRITE    LD        A,(IX+20H)                     ; CR of record just written
+              INC       A                              ; number of records now used: 1..128
+              LD        B,A
+              LD        A,(IX+0FH)                     ; current extent RC
+              CP        B
+              JR        NC,RCSEQ_NEXT                  ; overwrote an existing record
+              LD        A,B
+              LD        (IX+0FH),A                     ; extend RC, maximum 128
+RCSEQ_NEXT    LD        A,B
+              CP        080H
+              JR        Z,RCSEQ_ROLL
+              LD        (IX+20H),A                     ; next CR
+              RET
+RCSEQ_ROLL    XOR       A
+              LD        (IX+20H),A                     ; next extent's first record
+              CALL      EXROLL                         ; wrap low 5 EX bits, carry S2
+              JP        RCNEXT                         ; existing next extent may be nonempty
+
+; Apply exact RC after a fresh CP/M OPEN (not internal raw _F_OPEN).
+; FOS2 preserves the caller's S2; _F_OPEN temporarily stores a ProDOS FRN.
+RCFRESHOPEN   PUSH      IY
+              POP       IX
+              LD        A,(FOS2)
+              CALL      RCEOFRC
+              LD        (IY+0FH),A
+              RET
+
+; A successful random WRITE must update RC for the target extent.
+; On a post-write GET_EOF failure, leave RC alone, report the already
+; successful write, and do not provoke a retry/duplicate write.
+RCRANDWRITE   LD        A,(IOVIRT)
+              OR        A
+              RET       Z                              ; skip internal raw FRN files
+              LD        A,(IX+0EH)                     ; temporary physical FRN
+              LD        (GEMLIN),A
+              LD        HL,GEMLI
+              CALL      PRODOS                         ; new EOF after successful WRITE
+              OR        A
+              RET       NZ                             ; leave RC unchanged on failure
+              LD        A,(IOVS2)                      ; now updated by RANDEXT
+              CALL      RCEOFRC
+              LD        (IX+0FH),A
+              RET
+
+; Stage 2: RC from ProDOS's exact 24-bit EOF, for the selected extent.
+; In: IX=application FCB, A=application S2 (not temporary ProDOS FRN).
+;     GEMLIE1..3 = exact ProDOS byte EOF from successful GET_EOF.
+; Out: A=0..128, the number of records present in EX/S2's extent.
+; EX bits 0..4 and S2 bits 0..5 form the logical extent number; S2 bit 7
+; is a CP/M flag and must not contribute to the extent address.
+; Calls may change A, BC, DE, HL, flags. IX and IY are preserved.
+; Use ceil(EOF/128) minus (extent * 128), then clamp to [0,128].
+; A 24-bit difference permits the full ProDOS 16-MiB range without wrap.
+RCEOFRC       PUSH      AF                             ; S2, before EOF conversion
+              LD        A,(GEMLIE1)
+              AND       07FH
+              LD        E,A                            ; nonzero fractional record?
+              LD        HL,(GEMLIE1)
+              LD        A,(GEMLIE3)
+              LD        B,7
+RCE_SHIFT     SRL       A                              ; A:HL = EOF >> 7
+              RR        H
+              RR        L
+              DJNZ      RCE_SHIFT
+              LD        C,A                            ; C:HL = floor(EOF/128)
+              LD        A,E
+              OR        A
+              JR        Z,RCE_BASE
+              INC       HL                             ; ceil for trailing short record
+              LD        A,H
+              OR        L
+              JR        NZ,RCE_BASE
+              INC       C                              ; carry into record-count byte 2
+RCE_BASE      POP       AF                             ; S2 from caller
+              LD        B,A
+              AND       00FH
+              RLCA
+              RLCA
+              RLCA
+              RLCA
+              LD        D,A                            ; base record bits 8..15: S2 low nibble
+              LD        A,(IX+0CH)
+              AND       01H
+              RRCA
+              LD        E,A                            ; base record bits 0..7: EX bit 0
+              LD        A,(IX+0CH)
+              SRL       A
+              AND       00FH
+              OR        D
+              LD        D,A                            ; base record bits 8..15
+              LD        A,B
+              SRL       A
+              SRL       A
+              SRL       A
+              SRL       A
+              AND       03H
+              LD        B,A                            ; base record bits 16..23
+              LD        A,L
+              SUB       E
+              LD        L,A
+              LD        A,H
+              SBC       A,D
+              LD        H,A
+              LD        A,C
+              SBC       A,B
+              JR        C,RCE_ZERO                     ; extent starts after EOF
+              OR        H
+              JR        NZ,RCE_FULL                    ; >=256 records, clip to 128
+              LD        A,L
+              CP        080H
+              RET       C                              ; 0..127 records
+RCE_FULL      LD        A,080H
+              RET
+RCE_ZERO      XOR       A
+              RET
+
+; Stage 3: form a ProDOS 24-bit mark from the *application's* extent.
+; EX[4:0], S2[5:0], CR[6:0] identify 128-byte records. IO_BEGIN
+; temporarily stores a physical FRN in FCB+0E; use IOVS2 instead.
+; Internal directory/loader FCBs have IOVIRT=0 and only EX/CR.
+; IX=FCB; out: SMMLIP1..3, carry on invalid CR / byte offset >=16MiB.
+SEQMARK       LD        A,(IX+20H)
+              BIT       7,A
+              JR        NZ,SQM_BAD
+              AND       01H
+              RRCA
+              LD        (SMMLIP1),A
+              LD        A,(IX+0CH)
+              AND       03H
+              RRCA
+              RRCA
+              LD        B,A                            ; EX bits 0..1 -> mark byte 1
+              LD        A,(IX+20H)
+              SRL       A
+              OR        B
+              LD        (SMMLIP2),A
+              LD        A,(IOVIRT)
+              OR        A
+              JR        NZ,SQM_VEX
+              LD        A,(IX+0CH)                     ; internal directory: legacy 8-bit EX
+              JR        SQM_XHI
+SQM_VEX       LD        A,(IX+0CH)
+              AND       01FH                           ; CP/M app: EX low five bits
+SQM_XHI       SRL       A
+              SRL       A
+              LD        B,A                            ; EX bits 2..4 -> byte 2 low bits
+              LD        A,(IOVIRT)
+              OR        A
+              JR        Z,SQM_RAW
+              LD        A,(IOVS2)
+              AND       03FH                           ; exclude CP/M S2 flags
+              BIT       5,A                            ; bit 5 exceeds ProDOS 16MiB
+              JR        NZ,SQM_BAD
+              ADD       A,A
+              ADD       A,A
+              ADD       A,A                            ; S2 bits 0..4 -> byte 2 bits 3..7
+              OR        B
+              JR        SQM_SET
+SQM_RAW       LD        A,B                            ; raw internal FCB has no S2 extent
+SQM_SET       LD        (SMMLIP3),A
+              OR        A                              ; clear carry
+              RET
+SQM_BAD       SCF
+              RET
+
+; At CR 127 rollover, advance only EX bits 0..4; if wrapping 31->0,
+; carry into IOVS2's low six bits while retaining S2 flag bits 6..7.
+; Never touch FCB+0E while it contains the ProDOS reference number.
+EXROLL        LD        A,(IOVIRT)
+              OR        A
+              JR        NZ,EXR_VIRT
+              INC       (IX+0CH)                       ; internal raw FCB: old 8-bit EX
+              RET
+EXR_VIRT      LD        A,(IX+0CH)
+              INC       A
+              AND       01FH
+              LD        B,A
+              LD        A,(IX+0CH)
+              AND       0E0H
+              OR        B
+              LD        (IX+0CH),A
+              LD        A,B
+              OR        A
+              RET       NZ
+              LD        A,(IOVIRT)
+              OR        A
+              RET       Z
+              LD        A,(IOVS2)
+              LD        C,A
+              AND       03FH
+              INC       A
+              AND       03FH
+              LD        B,A
+              LD        A,C
+              AND       0C0H
+              OR        B
+              LD        (IOVS2),A
+              RET
+
+; On moving into an existing extent, derive its RC from true ProDOS EOF.
+; Otherwise RC=0. Failure to re-read EOF must never turn a successful
+; sequential read/write into an error (nor cause the caller to retry it).
+RCNEXT        LD        (IX+0FH),0
+              LD        A,(IOVIRT)
+              OR        A
+              RET       Z
+              LD        A,(IX+0EH)
+              LD        (GEMLIN),A
+              LD        HL,GEMLI
+              CALL      PRODOS
+              OR        A
+              RET       NZ
+              LD        A,(IOVS2)
+              CALL      RCEOFRC
+              LD        (IX+0FH),A
+              RET
+
+; Successful random I/O: publish 17-bit random position into EX/S2/CR.
+; EX's high three bits and S2's high two flag bits are left unchanged.
+; IOVS2 (not the temporarily borrowed FCB S2) receives the S2 update.
+RANDEXT       LD        A,(IX+21H)
+              AND       07FH
+              LD        (IX+20H),A
+              LD        A,(IX+21H)
+              RLCA
+              AND       01H
+              LD        B,A
+              LD        A,(IX+22H)
+              ADD       A,A
+              AND       01EH
+              OR        B
+              LD        B,A
+              LD        A,(IX+0CH)
+              AND       0E0H
+              OR        B
+              LD        (IX+0CH),A
+              LD        A,(IOVIRT)
+              OR        A
+              RET       Z
+              LD        A,(IX+22H)
+              RRCA
+              RRCA
+              RRCA
+              RRCA
+              AND       00FH
+              LD        B,A
+              LD        A,(IX+23H)
+              AND       01H
+              RLCA
+              RLCA
+              RLCA
+              RLCA
+              OR        B
+              LD        B,A
+              LD        A,(IOVS2)
+              AND       0C0H
+              OR        B
+              LD        (IOVS2),A
+              RET
+
+; BDOS 36: convert the NEXT sequential position (EX/S2/CR) into
+; the 24-bit random record field; do not subtract one after a read.
+RNEXT36       PUSH      DE
+              POP       IX
+              LD        A,(IX+20H)
+              AND       07FH
+              LD        B,A
+              LD        A,(IX+0CH)
+              AND       01H
+              RRCA                                     ; EX bit 0 -> R0 bit 7
+              OR        B
+              LD        (IX+21H),A
+              LD        A,(IX+0CH)
+              RRCA                                     ; EX bits 1..4 -> R1 bits 0..3
+              AND       00FH
+              LD        B,A
+              LD        A,(IX+0EH)
+              RLCA
+              RLCA
+              RLCA
+              RLCA
+              AND       0F0H                           ; S2 bits 0..3 -> R1 bits 4..7
+              OR        B
+              LD        (IX+22H),A
+              LD        A,(IX+0EH)
+              RRCA
+              RRCA
+              RRCA
+              RRCA
+              AND       03H                            ; S2 bits 4..5 -> R2 bits 0..1
+              LD        (IX+23H),A
+              XOR       A
+              LD        L,A
               RET
 
               ORG       06400H
@@ -5655,12 +6043,15 @@ F_OPEN                      ; Explicit CP/M OPEN replaces any cached handle for 
               POP       DE
               OR        A
               JP        NZ,FOERR
-              ; Fresh OPEN replaces the old user binding. _F_OPEN uses
-              ; S2 for ProDOS FRN: keep the application's original extent S2.
+              ; A genuine CP/M 2.2 BDOS OPEN clears S2 on entry.
+              ; Do not preserve the application's incoming S2: programs
+              ; such as WINSTALL leave non-extent scratch ($C1/$C3) there.
+              ; Stage 3's EX/S2/CR positioning would otherwise seek beyond EOF.
+              ; _F_OPEN temporarily uses S2 for the ProDOS file reference.
               PUSH      DE
               POP       IX
-              LD        A,(IX+0EH)
-              LD        (FOS2),A
+              XOR       A
+              LD        (FOS2),A                      ; new OPEN starts at S2 extent zero
               LD        (IX+0DH),0
               LD        (IX+0EH),0
               CALL      _F_OPEN
@@ -5675,6 +6066,10 @@ FO_VOPEN
               LD        A,(IY+0EH)                     ; New physical ProDOS reference
               CALL      GETIOADDR                      ; Find its newly allocated slot
               CALL      CACHEPUT                       ; Cache the pathname in PATHBUF
+              ; The initial _F_OPEN RC assumes extent zero.  Recalculate for
+              ; the application's requested EX/S2 using the exact 24-bit EOF.
+              ; _F_OPEN needed S2 for the FRN, so use saved FOS2 instead.
+              CALL      RCFRESHOPEN                    ; RC for application's requested extent
               ; Reserve S1 ($0D) for the USER at OPEN time. PIP [Gn]
               ; switches USER again before reading this very same FCB.
               LD        A,(CURDRV)
@@ -5686,7 +6081,8 @@ FO_VOPEN
               OR        0A0H
               LD        (IY+0DH),A                     ; S1 alone identifies logical open
               LD        A,(FOS2)
-              LD        (IY+0EH),A                     ; preserve application-owned S2
+              OR        080H                          ; CP/M 2.2: S2 write flag set on OPEN
+              LD        (IY+0EH),A                     ; preserve extent/flags, advertise clean
               XOR       A
               LD        L,A
               RET
@@ -5802,7 +6198,17 @@ F_CLOSE       LD        H,D                            ; Pointer to FCB ...
               JR        FCERR                          ; untagged and nonzero != FRN
 FC_RAW        LD        A,(HL)
               JR        FCPHYS
-FCVIRT                      ; A virtual-close request must close the matching cache entry.
+FCVIRT                      ; Flush on CP/M CLOSE; optional explicitly marked RC shrink.
+              ; Never change S1/open state if the EOF check or close fails.
+              PUSH      HL
+              PUSH      DE
+              PUSH      IX
+              CALL      FC5TRIM
+              POP       IX
+              POP       DE
+              POP       HL
+              OR        A
+              JP        NZ,FCERR
               ; Names, not FCB addresses, identify cache entries (AUX staging).
               PUSH      HL
               PUSH      DE
@@ -5869,8 +6275,8 @@ F_SFIRST      LD        (TEMPWORD),DE                  ; Store pointer to search
               OR        A                              ; _F_OPEN returns status in A, not flags
               JR        NZ,FSFS2                       ; OPEN failed: return no match, no stale DFCB read
 
-FSFL1         LD        A,0FFH                         ; Init CDBEXT to 0FFH (see CHKDIRBLK)
-              LD        (CDBEXT),A                     ; ...
+FSFL1         LD        HL,0FFFFH                      ; first extent of next ProDOS dirent
+              LD        (CDBEXT),HL
               CALL      RDDIRBLK                       ; Read first 512 byte block
               CP        0                              ; See if it was an error
               JR        NZ,FSFS2                       ; If error, assume EOF & just return
@@ -5902,8 +6308,8 @@ FSNL1         LD        DE,(TEMPWORD)                  ; Get ptr to search FCB b
               CP        0                              ; See if it was a match
               JR        Z,FSNS1                        ; If so, return
 
-FSNNEW        LD        A,0FFH                         ; Init CDBEXT to 0FFH (see CHKDIRBLK)
-              LD        (CDBEXT),A                     ; ...
+FSNNEW        LD        HL,0FFFFH                      ; first extent in next ProDOS block
+              LD        (CDBEXT),HL
               CALL      RDDIRBLK                       ; Read next 512 byte block
               CP        0                              ; See if it was an error
               JR        NZ,FSNS2                       ; If error, assume EOF & just return
@@ -6015,9 +6421,8 @@ F_READ_GO
               LD        (SMMLIN),A                     ; Store in parameter list for SET_MARK
               LD        (FRMLIN),A                     ; Store in parameter list for READ
 
-              LD        A,(IX+20H)                     ; Obtain sequential record number
-              LD        B,(IX+0CH)                     ; Obtain extent from FCB
-              CALL      EXRC2MARK                      ; Set all three ProDOS position bytes
+              CALL      SEQMARK                        ; EX[4:0], S2[5:0], CR[6:0]
+              JP        C,FREOF                        ; beyond ProDOS 24-bit mark
               LD        HL,SMMLI                       ; Pass address of 6502 JSR instruction
               CALL      PRODOS                         ; Invoke ProDOS MLI - SET_MARK
               CP        4DH                            ; See if position was out of range
@@ -6045,8 +6450,9 @@ F_READ_GO
               CP        127                            ; Accumulator before increment
               JR        NZ,FRS1                        ; If not, then nothing else to do
               XOR       A                              ; Set sequential rec num to zero
-              LD        (IX+20H),A                     ; ...
-              INC       (IX+0CH)                       ; Increment the extent
+              LD        (IX+20H),A
+              CALL      EXROLL                         ; EX 31 -> 0, carry into saved S2
+              CALL      RCNEXT                         ; RC of next extent from actual EOF
 
 FRS1          XOR       A                              ; Zero for success
               JP        IO_END                         ; Close transient handle
@@ -6074,9 +6480,8 @@ F_WRITE_GO
               LD        (SMMLIN),A                     ; Store in parameter list for SET_MARK
               LD        (FWMLIN),A                     ; Store in parameter list for WRITE
 
-              LD        A,(IX+20H)                     ; Obtain sequential record number
-              LD        B,(IX+0CH)                     ; Obtain extent from FCB
-              CALL      EXRC2MARK                      ; Set full 24-bit ProDOS position
+              CALL      SEQMARK                        ; include saved S2 in 24-bit mark
+              JP        C,FWDF                         ; no room beyond $FFFFFF
               ; ProDOS SET_MARK refuses offsets past EOF.  CP/M sequential
               ; writes may skip records, so extend logical EOF if necessary.
               CALL      SEQEXTEND
@@ -6117,14 +6522,9 @@ F_WRITE_GO
               CP        0                              ; See if there was some other error
               JR        NZ,FWERR                       ; If so, return code 0FFH (h/w error)
 
-              LD        A,(IX+20H)                     ; Get sequential rec num from FCB
-              INC       (IX+20H)                       ; Increment sequential record number
-              CP        127                            ; Accumulator before increment
-              JR        NZ,FWS1                        ; If not, then nothing else to do
-              XOR       A                              ; Set sequential rec num to zero
-              LD        (IX+20H),A                     ; ...
-              INC       (IX+0CH)                       ; Increment the extent
-
+              ; ProDOS WRITE succeeded.  Advance CR and update RC for
+              ; the extent just written; do not change either on errors.
+              CALL      RCSEQWRITE
 FWS1          XOR       A                              ; Zero for success
               JP        IO_END                         ; Close transient handle
 FWBFCB        LD        A,9                            ; Invalid FCB return code
@@ -6708,11 +7108,7 @@ FRR_MARK_OK
               CP        0                              ; See if there was some other error
               JR        NZ,FRRERR                      ; If so, return code 0FFH (h/w error)
 
-              LD        L,(IX+21H)                     ; Load random record number (LSB)
-              LD        H,(IX+22H)                     ; Load random record number (MSB)
-              CALL      RECS2EXRC                      ; Puts extent in B, recs in A
-              LD        (IX+20H),A                     ; Update sequential record number
-              LD        (IX+0CH),B                     ; Update sequential extent number
+              CALL      RANDEXT                        ; publish EX/S2/CR after success
 
               XOR       A                              ; Zero for success
               JP        IO_END                         ; Close transient handle
@@ -6796,14 +7192,15 @@ FWRS1         LD        HL,SMMLI                       ; Pass address of 6502 JS
               CP        0                              ; See if there was some other error
               JR        NZ,FWRERR                      ; If so, return code 0FFH (h/w error)
 
-              LD        L,(IX+21H)                     ; Load random record number (LSB)
-              LD        H,(IX+22H)                     ; Load random record number (MSB)
-              CALL      RECS2EXRC                      ; Puts extent in B, recs in A
-              LD        (IX+20H),A                     ; Update sequential record number
-              LD        (IX+0CH),B                     ; Update sequential extent number
+              CALL      RANDEXT                        ; publish EX/S2/CR after success
 
+              ; The WRITE succeeded: ask ProDOS for its new EOF, then publish
+              ; an extent-correct RC.  Never report a failed post-write GET_EOF
+              ; as a failed WRITE (which could provoke a destructive retry).
+              ; Internal raw ProDOS FCBs do not carry virtual CP/M extents.
+              CALL      RCRANDWRITE                   ; compute RC without growing resident code
               XOR       A                              ; Zero for success
-              JP        IO_END                         ; Close transient handle
+              JP        IO_END                         ; Restore application-owned S2
 FWRBFCB       LD        A,9                            ; Invalid FCB return code
               JP        IO_END                         ; Close transient handle
 FWRDF         LD        A,2                            ; Disk fill return code
@@ -6909,20 +7306,10 @@ FSERRPOP      POP       DE                             ; Leave FCB unchanged on 
               LD        L,A
               RET
 
-; Update random access pointer
-; DE contains the pointer to the FCB to update
-; Sets the random access record of the FCB to the value of the last record
-; read or written sequentially
-F_RANDREC     PUSH      DE                             ; Copy pointer to FCB ...
-              POP       IX                             ; ... into IX
-              LD        A,(IX+20H)                     ; Obtain sequential record number
-              LD        B,(IX+0CH)                     ; Obtain extent from FCB
-              CALL      EXRC2RECS                      ; Leaves the length in records in HL
-              DEC       HL                             ; Because F_READ/F_WRITE advance this
-              LD        (IX+21H),L                     ; Store in random access pointer ...
-              LD        (IX+22H),H                     ; ... In little endian format
-              LD        (IX+23H),0                     ; Upper record-count byte
-              RET
+; BDOS 36: compute the NEXT sequential record position in R0..R2.
+; Do not subtract one: applications wanting the previous record do so
+; explicitly.  S2 belongs to the application outside ProDOS I/O.
+F_RANDREC     JP        RNEXT36                       ; extent-aware BDOS 36 relocated
 
 ; Selectively reset disk drives
 ; DE contains bitmap of drives to reset (bit 0 of E if A:, bit 7 of D is P:)
@@ -7218,64 +7605,63 @@ N2FADON
               INC       HL
               LD        B,(HL)                         ; EOF high byte
 
-              ; EX is one byte in this implementation. Saturate at
-              ; 256 * 128 records = 4 MiB, represented by EX=255 RC=128.
-              LD        A,B
-              CP        40H
-              JP        NC,N2FMAX
-
-              ; Compute ceil(EOF / 128) using EOF >> 7 plus one
-              ; for any nonzero fractional record. Result in HL.
-              LD        A,E
-              AND       7FH
-              LD        C,0
-              JR        Z,N2FALGN
-              INC       C
-N2FALGN       LD        A,E
-              RLCA
-              AND       1
-              LD        L,A
-              LD        A,D
-              ADD       A,A
-              OR        L
-              LD        L,A
-              LD        A,D
-              RLCA
-              AND       1
-              LD        H,A
-              LD        A,B
-              ADD       A,A
-              OR        H
-              LD        H,A
-              LD        A,C
-              OR        A
-              JR        Z,N2FROUND
-              INC       HL
-
-N2FROUND      PUSH      HL                             ; Save total records for exact boundary
-              CALL      RECS2EXRC                      ; B = quotient /128, A = remainder
-              POP       HL
-              LD        C,A
-              LD        A,H
-              OR        L
-              JR        Z,N2FSTORE                     ; Zero-length file
-              LD        A,C
-              OR        A
-              JR        NZ,N2FSTORE
-              DEC       B                              ; Exactly n*128 records: previous extent is full
-              LD        C,080H
-              JR        N2FSTORE
-
-N2FMAX        LD        B,0FFH                         ; Clip files >=4 MiB to largest EX/RC
-              LD        C,080H
-
-N2FSTORE      LD        HL,(DMAADDR)
+              ; ProDOS EOF is 24-bit. For nonempty files, EOF-1 identifies
+              ; the final occupied 128-byte record and its logical extent.
+              ;   extent = (EOF-1) >> 14          (0..1023)
+              ;   EX = extent & 31, S2 = extent >> 5
+              ;   RC = (((EOF-1) & $3FFF) >> 7) + 1
+              ; Subtracting one handles exact 16K boundaries (RC=128).
+              ; At EOF=0 return the single empty extent (EX=S2=RC=0).
+              LD        HL,(DMAADDR)
               PUSH      HL
               POP       IX
-              LD        (IX+0CH),B
-              LD        (IX+0FH),C
-              LD        A,C
-              CALL      N2FMAP
+              LD        A,B
+              OR        D
+              OR        E
+              JR        Z,N2FZERO
+              LD        A,E
+              OR        A
+              JR        NZ,N2FDECLO
+              LD        A,D
+              OR        A
+              JR        NZ,N2FDECMID
+              DEC       B
+N2FDECMID     DEC       D
+N2FDECLO      DEC       E
+              ; low five bits of extent = (B[2:0]<<2) | D[7:6]
+              LD        A,D
+              RLCA
+              RLCA
+              AND       03H
+              LD        C,A
+              LD        A,B
+              AND       07H
+              ADD       A,A
+              ADD       A,A
+              OR        C
+              LD        (IX+0CH),A
+              ; high five bits of extent = B[7:3]
+              LD        A,B
+              SRL       A
+              SRL       A
+              SRL       A
+              LD        (IX+0EH),A
+              ; records in last extent = ((D[5:0]<<1) | E[7]) + 1
+              LD        A,D
+              ADD       A,A
+              AND       07EH
+              LD        C,A
+              LD        A,E
+              RLCA
+              AND       01H
+              OR        C
+              INC       A
+              JR        N2FPUTRC
+N2FZERO       LD        (IX+0CH),0
+              LD        (IX+0EH),0
+              XOR       A
+N2FPUTRC      LD        (IX+0FH),A
+              CALL      N2FMAP                        ; eight 16-bit fake blocks max
               RET
 
 ; Generate a synthetic CP/M 2.2 allocation map in the directory FCB.
@@ -7391,89 +7777,149 @@ CHKDIRENT     LD        B,0                            ; Hardcode drive A: MATCH
 CDES1         LD        A,0FFH                         ; Deleted entry
               RET
 
-; Search a 512 byte block of a ProDOS directory for a matching file entry
-; Used by F_SFIRST and F_SNEXT
-; DE is the address of the FCB describing the file to look for
-; If the extent field of this FCB is '?' then all extents are returned
-; CDBPTR points to the next ProDOS file entry to parse
-; CDBCOUNT is set to the number of file entries already parsed in this block
-; Returns A=0 if entry matches, A=FFH if no match
-; Always reload the ProDOS directory pointer at the top of the loop.
-; EX='?' processing uses HL for the synthetic FCB in DMAADDR; if a
-; candidate does not match, CDBS2 loops here without advancing CDBPTR.
-; Never pass that DMA address to CHKDIRENT as a ProDOS dir entry.
+; Search a 512-byte ProDOS directory block, returning synthetic 32-byte
+; CP/M 2.2 extents (EXM=0). The caller's search FCB remains untouched.
+; A ProDOS file is one directory entry but may span 1024 logical CP/M
+; extents; track the current extent index in CDBEXT (16 bits).
+; FFFF means this dirent has not yet emitted its highest extent.
+; Once extent zero has been returned, the next SEARCH NEXT advances to
+; the following ProDOS dirent. This includes zero-length files.
+; For a concrete search EX 0..31, return that exact (S2=0) extent once.
+; For EX='?', enumerate EVERY extent, highest first, including zero.
 CHKDIRBLK
-CDBL1         LD        HL,(CDBPTR)                    ; Reload each iteration, including EX='?' retries
-              CALL      CHKDIRENT                      ; Match the file entry at HL, build FCB
-              PUSH      AF                             ; Stash return code for now
-              PUSH      DE                             ; Copy pointer to search FCB ...
-              POP       IX                             ; ... into IX
-              LD        A,(IX+0CH)                     ; Get extent field of search FCB
-              CP        '?'                            ; Is it '?'
-              JP        NZ,CDBS1                       ; If not, we can advance to next entry
+CDBL1         LD        HL,(CDBPTR)
+              CALL      CHKDIRENT                      ; fill DMA synthetic FCB
+              OR        A
+              JR        NZ,CDB_NEXT                    ; deleted/name mismatch
+              PUSH      DE
+              POP       IX                             ; search FCB
+              LD        A,(IX+0CH)
+              CP        '?'
+              JR        Z,CDB_WILD
+              CP        020H                           ; only EX 0..31 can match S2=0
+              JR        NC,CDB_NEXT
+              CALL      CDB_EXACT                      ; requested extent in A
+              OR        A
+              JR        NZ,CDB_NEXT
+              CALL      CDB_ADV                        ; exact match: don't repeat forever
+              JR        CDB_MATCH
 
-              LD        A,(CDBEXT)                     ; Load CDBEXT
-              CP        0FFH                           ; If it is 0FFH, means this is first ...
-              JR        Z,CDBS0                        ; ... time we have looked at this dirent
-              JR        CDBS01                         ; Not the first extent for this dirent
+CDB_WILD      LD        HL,(CDBEXT)
+              LD        A,H
+              AND       L
+              CP        0FFH
+              JR        Z,CDB_FIRST
+              LD        A,H
+              OR        L
+              JR        Z,CDB_NEXT                    ; extent zero was already emitted
+              DEC       HL
+              LD        (CDBEXT),HL
+              LD        DE,(DMAADDR)
+              PUSH      DE
+              POP       IY
+              CALL      CDB_STOREFULL                  ; earlier extent is complete
+              JR        CDB_MATCH
 
-              ; First extent for directory entry (highest numbered extent)
-              ; This extent may contain 1-128 records
-CDBS0         LD        HL,(DMAADDR)                   ; Address of FCB created by CHKDIRENT
-              PUSH      HL                             ; Copy address of FCB ...
-              POP       IY                             ; ... into IY
-              LD        A,(IY+0CH)                     ; Get num extents for this entry minus one
-              LD        (CDBEXT),A                     ; Store it for next time
-              LD        (IY+0CH),A                     ; Store it in the FCB returned to caller
-              CP        0                              ; If CDBEXT will be zero next time
-              JR        Z,CDBS1                        ; ... we can advance to next entry
-              JP        CDBS2                          ; Return FCB for this extent (it match)
-
-              ; Not the first extent for directory entry
-              ; Always has 128 records
-CDBS01        LD        HL,(DMAADDR)                   ; CHKDIRENT has rebuilt FCB
+CDB_FIRST     LD        HL,(DMAADDR)
               PUSH      HL
-              POP       IY                             ; Use the current output FCB
-              LD        B,080H                         ; Earlier extents have 128 records
-              LD        (IY+0FH),B                     ; Store in RC
-              DEC       A                              ; Decrement extent counter
-              LD        (CDBEXT),A                     ; Store it for next time
-              LD        (IY+0CH),A                     ; Store it in EX
-              PUSH      AF                             ; Keep extent number across N2FMAP
-              PUSH      DE                             ; N2FMAP clobbers DE (search FCB pointer)
-              LD        A,080H                         ; Full extent => eight 2 KB blocks
-              CALL      N2FMAP
-              POP       DE                             ; Restore search FCB pointer for CDBL1
-              POP       AF
-              CP        0                              ; If CDBEXT will be zero next time
-              JR        Z,CDBS1                        ; ... we can advance to next entry
-              JR        CDBS2                          ; Return FCB for this extent (it match)
+              POP       IY
+              CALL      CDB_GETEXT                    ; highest logical extent from EX/S2
+              LD        (CDBEXT),HL
+              JR        CDB_MATCH                     ; keep last-extent RC and block map
 
-CDBS1         LD        HL,(CDBPTR)                    ; Pointer to file entry
-              LD        BC,FILEENTSZ                   ; Advance to next file entry
-              ADD       HL,BC                          ; ...
-              LD        (CDBPTR),HL                    ; Store the pointer
-              LD        A,(CDBCOUNT)                   ; File entry counter
-              INC       A                              ; Increment count of file entries
-              LD        (CDBCOUNT),A                   ; Store the counter
-              LD        A,0FFH                         ; Initialize CDBEXT to 0FFH ...
-              LD        (CDBEXT),A                     ; ... to start processing next dirent
-
-CDBS2         POP       AF                             ; Get return code back in A
-              CP        0                              ; Was it a match?
-              JR        Z,CDBS3                        ; If so, we are done
-              LD        A,(CDBCOUNT)                   ; Get the counter back
-              CP        ENTPERBLK                      ; Done all of them in this block?
-              JP        NZ,CDBL1                       ; If not, loop
-              LD        A,0FFH                         ; No match
-              RET                                      ;
-CDBS3         XOR       A                              ; Match
+CDB_NEXT      CALL      CDB_ADV
+              LD        A,(CDBCOUNT)
+              CP        ENTPERBLK
+              JP        C,CDBL1
+              LD        A,0FFH
+              RET
+CDB_MATCH     XOR       A
               RET
 
-; The following variables are used to preserve state between calls
-CDBPTR        DEFW      0000H                          ; Stores pointer to next file entry
-CDBCOUNT      DEFB      0                              ; Stores file entry counter
-CDBEXT        DEFB      0                              ; Stores extent number
+; Advance the ProDOS pointer once; reset synthetic-extent enumeration.
+; For an exact-extent match this must happen before returning the entry.
+CDB_ADV       LD        HL,(CDBPTR)
+              LD        BC,FILEENTSZ
+              ADD       HL,BC
+              LD        (CDBPTR),HL
+              LD        A,(CDBCOUNT)
+              INC       A
+              LD        (CDBCOUNT),A
+              LD        HL,0FFFFH
+              LD        (CDBEXT),HL
+              RET
+
+; EX/S2 from current synthetic FCB -> HL logical extent number 0..1023.
+; IY points to the synthetic entry at DMAADDR. May clobber DE.
+CDB_GETEXT    LD        A,(IY+0EH)
+              AND       01FH
+              LD        L,A
+              LD        H,0
+              ADD       HL,HL
+              ADD       HL,HL
+              ADD       HL,HL
+              ADD       HL,HL
+              ADD       HL,HL
+              LD        A,(IY+0CH)
+              AND       01FH
+              LD        E,A
+              LD        D,0
+              ADD       HL,DE
+              RET
+
+; For an earlier (always full) extent store EX/S2 and RC=128;
+; its synthetic allocation map contains eight 2KB blocks.
+; Input HL=index 0..1023, IY points to output FCB.
+CDB_STOREFULL LD        A,L
+              AND       01FH
+              LD        (IY+0CH),A
+              LD        A,H
+              ADD       A,A
+              ADD       A,A
+              ADD       A,A
+              LD        B,A
+              LD        A,L
+              SRL       A
+              SRL       A
+              SRL       A
+              SRL       A
+              SRL       A
+              OR        B
+              LD        (IY+0EH),A
+              LD        A,080H
+              LD        (IY+0FH),A
+              JP        N2FMAP
+
+; Non-wildcard EX 0..31: return exactly that extent in S2=0,
+; unless the file is too short to have it. Never report the highest
+; extent of an unrelated size: ordinary CP/M searches usually use EX=0.
+; Input A=requested EX; output A=0 if present, FF if beyond EOF.
+CDB_EXACT     LD        B,A
+              LD        HL,(DMAADDR)
+              PUSH      HL
+              POP       IY
+              LD        A,(IY+0EH)
+              OR        A
+              JR        NZ,CDB_EXFULL                  ; file extends past 512KB
+              LD        A,(IY+0CH)
+              CP        B
+              JR        C,CDB_EXMISS
+              JR        Z,CDB_EXLAST                   ; final extent: keep its RC/map
+CDB_EXFULL    PUSH      BC
+              LD        A,080H
+              LD        (IY+0FH),A
+              CALL      N2FMAP
+              POP       BC
+CDB_EXLAST    LD        (IY+0CH),B
+              LD        (IY+0EH),0                     ; CP/M search S2 is zero
+              XOR       A
+              RET
+CDB_EXMISS    LD        A,0FFH
+              RET
+
+CDBPTR        DEFW      0000H                          ; next ProDOS dir entry
+CDBCOUNT      DEFB      0                              ; entries consumed in block
+CDBEXT        DEFW      0FFFFH                         ; 10-bit logical extent or sentinel
 
 ; Find IOBUF address for a file reference number
 ; Scan only FRN1..FRN2: third 1K region is spare, fourth is stack.
@@ -7502,28 +7948,6 @@ GIAFOUND      LD        A,C                            ; Return slot 1 or 2 in A
               ADD       A,H
               LD        H,A
               POP       AF
-              RET
-
-; Form 24-bit ProDOS byte mark from CP/M extent B and record A.
-; Valid record numbers are 0..127.  Byte offset = (B*128+A)*128.
-; Updates SET_MARK parameter directly, avoiding any 16-bit overflow.
-EXRC2MARK     LD        C,A
-              AND       1
-              RRCA                                     ; bit 0 becomes bit 7
-              LD        (SMMLIP1),A
-              LD        A,C
-              SRL       A
-              LD        C,A
-              LD        A,B
-              RRCA
-              RRCA
-              AND       0C0H                           ; B bits 0..1 become byte-1 bits 6..7
-              OR        C
-              LD        (SMMLIP2),A
-              LD        A,B
-              SRL       A
-              SRL       A
-              LD        (SMMLIP3),A
               RET
 
 ; Form 24-bit ProDOS byte mark from random FCB record R0/R1/R2.
@@ -7559,7 +7983,7 @@ RAND2MARK     LD        A,(IX+23H)
 RAND_MARK_BAD SCF
               RET
 
-; Convert pos in extent/recs format to a linear position in 128 byte records
+; Legacy 16-bit extent/recs conversion (not used by BDOS 36).
 ; Extent number is passed in B
 ; Records within the extent is passed in A
 ; Returns the length in records in HL - HL = (B*128)+A
