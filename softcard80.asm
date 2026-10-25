@@ -3175,6 +3175,52 @@ SHRMSG        DEFM      '[AUX reload: '
               DEFB      '$'
 
 ; Relocated resident routines: ample MAIN memory, separate from AUX TPA.
+; Stage 20: cheap OA hotkey probe at safe syscall-return boundaries.
+; The keyboard latch $C000 and OA switch $C061 are memory-mapped;
+; unlike CMD=3, the no-key path never enters 6502 firmware.
+; Only the foreground CRT may inspect the keyboard. Never consume
+; an ordinary key, Ctrl-C, or an invalid Open-Apple combination.
+; TSKKEY's existing decoder handles 0..9, A..F, and both arrows.
+; Preserve BC/HL, and restore the 6502 XREG scratch byte even when
+; the decoded key queues a switch or beeps for the current tab.
+              ORG       05FA0H
+SCHHOT        LD        A,(0E000H)                     ; $C000: common fast path
+              BIT       7,A
+              RET       Z                              ; one memory lookup; no key
+              PUSH      BC
+              LD        B,A                            ; retain key; don't clear strobe
+              LD        A,(0E061H)                     ; Apple II $C061 OA keydown
+              BIT       7,A
+              JR        Z,SHNOTOA                      ; ordinary key is untouched
+              CALL      SCHISFG
+              JR        NZ,SHNOTOA                     ; background must not take input
+              LD        A,(IOBYTE)
+              AND       3
+              CP        1                              ; CRT keyboard only
+              JR        NZ,SHNOTOA
+              LD        A,(TABREQ)
+              CP        0FFH
+              JR        NZ,SHNOTOA                     ; switch already queued
+              PUSH      HL
+              LD        A,(XREG)                       ; TSKKEY checks 6502 XREG bit 7
+              LD        C,A                            ; preserve original XREG in C
+              LD        A,080H                         ; synthesize sampled OA bit
+              LD        (XREG),A
+              LD        A,B
+              AND       07FH                           ; ASCII + arrows as usual
+              CALL      TSKKEY                         ; preserves caller's BC
+              PUSH      AF                             ; preserve queued-switch carry
+              LD        A,C
+              LD        (XREG),A                        ; restore 6502 scratch register
+              POP       AF
+              POP       HL
+              POP       BC
+              RET       NC                             ; not a switch; leave ordinary key
+              LD        A,(0E010H)                     ; valid OA switch: consume strobe
+              RET
+SHNOTOA       POP       BC
+              RET
+
               ORG       06000H
 ; Short CCP help plus explicit blocked-input label for TAB LIST.
 CCPHELP       LD        DE,CCPH1
@@ -5888,6 +5934,13 @@ SCHTICK       LD        A,(AXQUIT)
               LD        A,(SCHEN)
               OR        A
               RET       Z
+              ; Sample OA hotkeys at EVERY completed AUX BDOS/BIOS call.
+              ; Only a valid hotkey queues a cooperative switch; ordinary
+              ; keys are left in $C000 for the foreground application.
+              CALL      SCHHOT
+              LD        A,(AXQUIT)                     ; hotkey requested a switch?
+              OR        A
+              RET       NZ
               LD        A,(SCHQLEFT)
               DEC       A
               LD        (SCHQLEFT),A
