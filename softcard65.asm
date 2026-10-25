@@ -354,8 +354,9 @@ RWCOUNT       DB        1                              ; Filled by disposable lo
 * Cursor address parameters are consumed even when malformed.
 * Cooked CR implies newline (existing CCP convention); cooked CR+LF
 * advances once. Raw BIOS CR only returns to column 0; LF goes down.
-* Soroc ESC '(' / ESC ')' select inverse/normal video (SoftCard).
-* Soroc protected fields, graphics and auxiliary port are not emulated.
+* Soroc ESC ')' starts a protected field; ESC '(' ends it.
+* Represent protected fields with inverse video (IQ-120 used dim intensity).
+* Full protect-mode navigation, graphics and auxiliary port are not emulated.
 ***************************************************
 
 * CLS restores a known text-screen state but preserves Soroc/VT100 mode.
@@ -537,12 +538,12 @@ VSEQ          CPX       #1
 * ESC sequences. Unrecognised commands are silently consumed.
 VESCCMD       LDY       #0
               STY       VSTATE
-              CMP       #'('                           ; Microsoft SoftCard Soroc: inverse ON
+              CMP       #')'                           ; IQ-120 start WRITE PROTECT (dim)
               BNE       :SINV1
-              LDA       #1
+              LDA       #1                             ; inverse approximates dim protected text
               STA       VATTR
               RTS
-:SINV1        CMP       #')'                           ; Inverse OFF
+:SINV1        CMP       #'('                           ; IQ-120 end WRITE PROTECT
               BNE       :SINV2
               LDA       #0
               STA       VATTR
@@ -552,6 +553,8 @@ VESCCMD       LDY       #0
               JMP       VPOS
 :SINV3        CMP       #'*'
               BNE       :S1
+              LDA       #0                             ; full screen clear resets write protection
+              STA       VATTR
               JMP       VCLEAR
 :S1           CMP       #'+'
               BNE       :S2
@@ -954,7 +957,7 @@ VMODE         DB        1                              ; 0 VT100 via Z80, 1 Soro
 VSTATE        DB        0                              ; 0 idle, 1 ESC, 2 coord1, 3 coord2
 VCOORD        DB        0
 VCRP          DB        0                              ; Suppress second half of CR/LF pair
-VATTR         DB        0                              ; Soroc ESC '(' inverse on, ESC ')' normal
+VATTR         DB        0                              ; IQ-120 ESC ')' protect on, ESC '(' off
 VKMOD         DB        0                              ; last blocking key's Open Apple state (outside saved video)
 VPHY          DB        1                              ; running session owns physical screen
 VVBANK        DB        2                              ; reserved RamWorks snapshot bank

@@ -3736,10 +3736,12 @@ VTSGR         LD        A,(IX+1)
               JP        NZ,VTRET                       ; attributes not implemented
 VTNORMCALL    CALL      VTNORMA
               JP        VTRET
-VTINVERSE     LD        A,'('
+; Render ANSI/H19 inverse with the Soroc write-protect video approximation.
+; The real IQ-120 uses ESC ')' to START protected text and ESC '(' to END.
+VTINVERSE     LD        A,')'
               CALL      VTATTR
               JP        VTRET
-VTNORMA       LD        A,')'
+VTNORMA       LD        A,'('
 VTATTR        JP        VTESCREQ
 VTSAVE        CALL      VTGETXY
               LD        (IX+4),D
@@ -3889,6 +3891,206 @@ H19FLN  CALL      VTGETXY
               JP        VTRET
 
 VTSTATES      DEFS      128
+
+; =====================================================================
+; Stage 8: per-session CP/M Search First/Next state.
+; Save ONLY the 13 bytes that F_SNEXT examines from the search FCB;
+; the raw ProDOS directory handle is closed after every search call.
+; 21 bytes per tab: 13 search fields, EX, CR, count, extent (2),
+; bound drive, bound USER nibble, valid byte. 16 * 21 = 336 bytes.
+; Each Search Next reopens the same ProDOS directory and rereads the
+; previous 512-byte block into the shared DIRBUF before continuing.
+; This also protects a CCP DIR while background applications enumerate.
+; =====================================================================
+              ORG       06B00H
+S8PTR         LD        HL,S8TABLE
+              LD        A,(TABMODE)
+              OR        A
+              RET       Z
+              LD        B,A
+              LD        DE,21
+S8PTLO        ADD       HL,DE
+              DJNZ      S8PTLO
+              RET
+
+S8SAVE        CALL      S8PTR
+              PUSH      HL
+              EX        DE,HL
+              LD        HL,AXSRCH
+              LD        BC,13
+              LDIR
+              POP       HL
+              LD        BC,13
+              ADD       HL,BC
+              LD        A,(DFCBEX)
+              LD        (HL),A
+              INC       HL
+              LD        A,(DFCBSR)
+              LD        (HL),A
+              INC       HL
+              LD        A,(CDBCOUNT)
+              LD        (HL),A
+              INC       HL
+              LD        DE,(CDBEXT)
+              LD        (HL),E
+              INC       HL
+              LD        (HL),D
+              INC       HL
+              LD        A,(DFCBDRV)                    ; bind implicit drive to current drive
+              OR        A
+              JR        NZ,S8DRIVE
+              LD        A,(CURDRV)
+              AND       00FH
+              INC       A
+S8DRIVE       LD        (HL),A
+              INC       HL
+              LD        A,(S8USER)                     ; keep original USER across SEARCH NEXT
+              LD        (HL),A
+              INC       HL
+              LD        (HL),1
+              RET
+
+S8INVAL       CALL      S8PTR
+              LD        DE,20
+              ADD       HL,DE
+              LD        (HL),0
+              RET
+
+; Save successful enumeration / invalidate unsuccessful enumeration.
+; Close the raw directory FRN even if the search has further matches.
+; Return the original BDOS search status in A (and L in caller).
+S8EXIT        LD        (S8STATUS),A
+              OR        A
+              JR        NZ,S8BAD
+              CALL      S8SAVE
+              JR        S8CLOSE
+S8BAD         CALL      S8INVAL
+S8CLOSE       LD        DE,DFCB
+              CALL      F_CLOSE
+              LD        A,(S8STATUS)
+              RET
+
+; Restore search FCB, bound drive/user and directory block bookmark.
+; _F_OPEN allocates a NEW raw ProDOS FRN; rewind by exactly four 128-byte
+; records to reconstruct the directory block containing the last hit.
+; Reposition CDBPTR using count * 39 from DIRBUF+4 (works for header).
+S8REST        CALL      S8PTR
+              PUSH      HL
+              LD        DE,20
+              ADD       HL,DE
+              LD        A,(HL)
+              POP       HL
+              OR        A
+              JP        Z,S8FAIL
+              PUSH      HL
+              LD        DE,AXSRCH
+              LD        BC,13
+              LDIR
+              POP       HL
+              LD        DE,13
+              ADD       HL,DE
+              LD        A,(HL)
+              LD        (S8EX),A
+              INC       HL
+              LD        A,(HL)
+              LD        (S8CR),A
+              INC       HL
+              LD        A,(HL)
+              LD        (S8COUNT),A
+              INC       HL
+              LD        E,(HL)
+              INC       HL
+              LD        D,(HL)
+              LD        (S8EXT),DE
+              INC       HL
+              LD        A,(HL)
+              LD        (DFCBDRV),A
+              INC       HL
+              LD        A,(HL)
+              LD        (S8USER),A
+              LD        HL,AXSRCH
+              LD        (TEMPWORD),HL
+              LD        A,(CURDRV)
+              LD        (S8CUR),A
+              AND       00FH
+              LD        B,A
+              LD        A,(S8USER)
+              OR        B
+              LD        (CURDRV),A
+              LD        DE,DFCB
+              CALL      _F_OPEN
+              PUSH      AF
+              LD        A,(S8CUR)
+              LD        (CURDRV),A
+              POP       AF
+              OR        A
+              JP        NZ,S8FAIL
+              LD        A,(S8EX)
+              LD        (DFCBEX),A
+              LD        A,(S8CR)
+              CP        4
+              JR        NC,S8CRPOS
+              LD        A,(DFCBEX)
+              DEC       A
+              LD        (DFCBEX),A
+              LD        A,(S8CR)
+              ADD       A,124                          ; record 0->124 in previous extent
+              JR        S8SETP
+S8CRPOS       SUB       4
+S8SETP        LD        (DFCBSR),A
+              LD        HL,AXDATA
+              LD        (DMAADDR),HL
+              CALL      RDDIRBLK
+              OR        A
+              JP        NZ,S8FAIL
+              LD        A,(S8COUNT)
+              LD        (CDBCOUNT),A
+              LD        HL,(S8EXT)
+              LD        (CDBEXT),HL
+              LD        A,(S8COUNT)
+              LD        B,A
+              LD        HL,DIRBUF+4
+              LD        DE,FILEENTSZ
+              OR        A
+              JR        Z,S8POSOK
+S8POSLO       ADD       HL,DE
+              DJNZ      S8POSLO
+S8POSOK       LD        (CDBPTR),HL
+              XOR       A
+              RET
+S8FAIL        LD        A,0FFH
+              RET
+
+; The CCP's DIR is an in-memory MAIN search, not an AUX BDOS call.
+; It uses the same slot snapshots, and returns the entry in FILEBUF.
+S8MSF         LD        HL,FCB1
+              LD        DE,AXSRCH
+              LD        BC,13
+              LDIR
+              LD        DE,AXSRCH
+              LD        A,(CURDRV)
+              AND       0F0H
+              LD        (S8USER),A
+              CALL      F_SFIRST
+              JP        S8EXIT
+S8MSN         CALL      S8REST
+              OR        A
+              JR        Z,S8MSOK
+              JP        S8EXIT                         ; invalidate and close on reopen error
+S8MSOK        LD        HL,FILEBUF
+              LD        (DMAADDR),HL
+              CALL      F_SNEXT
+              JP        S8EXIT
+
+S8STATUS      DEFB      0
+S8CUR         DEFB      0
+S8USER        DEFB      0
+S8EX          DEFB      0
+S8CR          DEFB      0
+S8COUNT       DEFB      0
+S8EXT         DEFW      0
+S8TABLE       DEFS      336
+
               ORG       07000H
 
 AXBDOS        CALL      XSPRE                          ; skip physical keyboard wait if XSUB
@@ -4251,8 +4453,8 @@ AXLDONE       LD        (HL),13
               LD        L,A
               RET
 
-; Search First: FCB (36 bytes) copied to a persistent MAIN search FCB;
-; F_SNEXT retains TEMPWORD -> AXSRCH and CDBPTR between calls.
+; Auxiliary searches use a per-tab bookmark. The raw directory handle and
+; shared DIRBUF are released between calls, so other tabs cannot disturb it.
 AXSFIRST      CALL      AXCKFCB
               JP        NZ,AXBAD
               CALL      AXCKDMA
@@ -4269,11 +4471,15 @@ AXSFIRST      CALL      AXCKFCB
               JP        AXSRDONE
 AXSNEXT       CALL      AXCKDMA
               JP        NZ,AXBAD
+              LD        A,(LCB1RO)
+              CALL      S8REST                         ; reopen directory at saved cursor
+              OR        A
+              JP        NZ,AXSRDONE
               LD        HL,AXDATA
               LD        (DMAADDR),HL
-              LD        A,(LCB1RO)
               CALL      F_SNEXT
-AXSRDONE      LD        (AXSTAT),A
+AXSRDONE      CALL      S8EXIT                        ; snapshot/invalidate and release FRN
+              LD        (AXSTAT),A
               LD        A,(LCB2RW)
               LD        A,(LCB2RW)
               LD        A,(AXSTAT)
@@ -5100,7 +5306,17 @@ AUXLDONE      LD        DE,PATHBUF2
               LD        A,(AXBADFN)
               LD        C,A
               CALL      PRHEX                          ; original call in [XX] format
-AUXEXOK       LD        E,13
+; A finished .COM may leave Soroc's write-protect/inverse mode active,
+; or leave an unfinished terminal escape sequence in the 6502 renderer.
+; Reset ONLY this session's terminal state, without clearing the display.
+; Do not do this at AUXSUSP: parked programs must keep their attributes.
+AUXEXOK       PUSH      IX
+              CALL      TABPICK
+              LD        A,(IX+6)                      ; preserve VT100/Soroc/H19 personality
+              CALL      TMSET                         ; reset Z80 parser + 6502 VATTR/VSTATE
+              POP       IX
+              CALL      VSSTSAVE                      ; commit neutral terminal state for this tab
+              LD        E,13
               CALL      C_WRITE
               LD        A,(AUXEXCD)
               CP        1                              ; AUX BDOS 0 -> true CP/M warm boot
@@ -5997,8 +6213,10 @@ S_BDOSVER     LD        B,0                            ; System is 8080 CP/M
 
 ; Reset disks
 ; Makes A: drive the default
-DRV_ALLRST    LD        HL,0000H                       ; Reset clears the software R/O vector
+DRV_ALLRST    LD        HL,0000H                       ; Clear all software R/O bits
               LD        (ROVEC),HL
+              LD        HL,0001H                       ; A: is selected and logged in after reset
+              LD        (LOGVEC),HL
               LD        A,(CURDRV)                     ; Contains both user & current drive
               AND       0F0H                           ; Set drive to 0, meaning A:
               LD        (CURDRV),A                     ; Store in CURDRV
@@ -6006,6 +6224,9 @@ DRV_ALLRST    LD        HL,0000H                       ; Reset clears the softwa
               LD        (DMAADDR),BC                   ; Reset DMA address
               LD        HL,FLMLI                       ; Pass address of 6502 JSR instruction
               CALL      PRODOS                         ; Invoke ProDOS MLI to flush all files
+              PUSH      AF
+              CALL      S8INVAL                        ; reset invalidates this tab's search
+              POP       AF
               RET
 
 ; Select disk
@@ -6323,6 +6544,7 @@ FSFS2         JR        FSNS2                          ; Shared EOF cleanup (als
 
 ; Search for next match of filename in directory
 ; The address of the FCB describing the file to look for is in TEMPWORD
+; Caller restores DIRBUF/DFCB via S8REST if another tab ran in between.
 ; Returns error codes in A and L: 0 for success, 0FFH for not found
 ; The matching FCB is always in slot 0, so success return code always 0
 F_SNEXT       LD        A,(CDBCOUNT)                   ; Entries already consumed
@@ -7357,6 +7579,21 @@ DRV_RESET     LD        A,E
               LD        A,(ROVEC+1)
               AND       B
               LD        (ROVEC+1),A
+              ; A selective reset also invalidates the login bits.
+              ; Preserve the requested DE mask (and other drive bits).
+              LD        A,E
+              CPL
+              LD        B,A
+              LD        A,(LOGVEC)
+              AND       B
+              LD        (LOGVEC),A
+              LD        A,D
+              CPL
+              LD        B,A
+              LD        A,(LOGVEC+1)
+              AND       B
+              LD        (LOGVEC+1),A
+              CALL      S8INVAL                        ; reset invalidates this tab's search
               XOR       A
               LD        L,A
               RET
@@ -8462,13 +8699,11 @@ DIRECT        LD        A,(FCB1NAM)
               LD        (DMAADDR),HL
               LD        E,13
               CALL      C_WRITE
-              LD        DE,FCB1
-              CALL      F_SFIRST
+              CALL      S8MSF                         ; CCP also shares the BDOS scanner
               OR        A
               JR        NZ,DIRDONE
 DIRLOOP       CALL      PRDIRENT
-              LD        DE,FCB1
-              CALL      F_SNEXT
+              CALL      S8MSN
               OR        A
               JR        Z,DIRLOOP
 DIRDONE       LD        A,(DIRCOL)
