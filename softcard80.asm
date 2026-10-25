@@ -2775,6 +2775,86 @@ BITABLE       DEFM      'DIR  '
 ; Test with disposable files before considering broader support.
 ; =====================================================================
 CLOSE_TRIM_ONE EQU       1
+; Stage 19: safe native CCP builtin bridge from AUX CCP.COM.
+; BDOS $F7 still chains via AXEXEC. $F8 accepts an 81-byte record
+; from AUX DE: command ID then 80-byte normalized MAIN FILEBUF tail.
+; MAIN handlers run without replacing the AUX shell or changing disks.
+              ORG       05900H
+AXF7F8        CP        0F7H
+              JP        Z,AXEXEC
+              CP        0F8H
+              JP        Z,AXBUILT
+              JP        AXBAD
+AXBUILT       PUSH      DE
+              CALL      SHPTR
+              LD        A,(HL)
+              POP       DE
+              CP        1
+              JP        NZ,AXBAD                       ; shell only
+              LD        A,D
+              OR        A
+              JP        Z,AXBAD                        ; invalid AUX address
+              LD        HL,80
+              ADD       HL,DE
+              LD        A,H
+              CP        0DEH
+              JP        NC,AXBAD                       ; record must fit AUX TPA
+              LD        H,D
+              LD        L,E
+              LD        DE,AXBID
+              LD        BC,1
+              CALL      LCA2M                          ; fetch command ID
+              LD        DE,FILEBUF
+              LD        BC,80
+              CALL      LCA2M                          ; fetch length + normalized args
+              LD        A,(AXBID)
+              CP        1
+              JP        Z,AXBCLS
+              CP        2
+              JP        Z,AXBBANKS
+              CP        3
+              JP        Z,CCPCACHE
+              CP        4
+              JP        Z,CCPTERM
+              CP        5
+              JP        Z,AXBTAB
+              CP        6
+              JP        Z,AXBXSUB
+              CP        7
+              JP        Z,AXBBYE
+              JP        CCPBAD
+AXBCLS        CALL      AXBNONE
+              RET       NZ
+              JP        CCPCLS
+AXBBANKS      CALL      AXBNONE
+              RET       NZ
+              JP        CCPBANKS
+AXBXSUB       CALL      AXBNONE
+              RET       NZ
+              JP        CCPXSUB
+AXBBYE        CALL      AXBNONE
+              RET       NZ
+              JP        CCPBYE
+AXBNONE       LD        A,(FILEBUF)
+              OR        A
+              RET       Z
+              JP        CCPBAD
+; TAB switches cannot safely run from inside an active AUX BDOS
+; gateway. LIST and HELP are read-only and can use native TBCMD.
+AXBTAB        LD        A,(FILEBUF)
+              OR        A
+              JP        Z,TBCMD
+              LD        A,(FILEBUF+2)
+              CP        'L'
+              JP        Z,TBCMD
+              CP        'H'
+              JP        Z,TBCMD
+              LD        DE,AXBTMSG
+              JP        C_WRITESTR
+AXBTMSG       DEFM      'TAB n: use Open-Apple+n (AUX shell)'
+              DEFB      13,'$'
+AXBID         DEFB      0
+
               ORG       05A00H
 ; DE points at an S1-tagged CP/M FCB. Return A=0 on success / skip,
 ; nonzero on failed read/truncate. Application S2 and CR restored.
@@ -2928,12 +3008,27 @@ SHLAUNCH      LD        (HL),2                     ; mark child before switching
               RET       Z                           ; child's bank saved by existing scheduler
               JP        SHLOOP                     ; child ended -> reload shell
 SHCHILD       CALL      SBWCLR                    ; child warm boot returns to file-loaded CCP
-              LD        HL,SHFCB
-              LD        DE,PATHBUF2
-              LD        BC,36
-              LDIR
-              ; Reset default CP/M FCBs/tail for interactive prompt.
+              ; Clear page-zero FCBs/tail FIRST, before building the
+              ; executable FCB.  Never allow the stale child launch record
+              ; to serve as the shell reload target.
               CALL      SHNOARG
+              ; Reconstruct reload FCB in-place; do not depend on its
+              ; previous contents or the just-completed child FCB.
+              LD        HL,PATHBUF2
+              LD        B,36
+              XOR       A
+SHRZERO       LD        (HL),A
+              INC       HL
+              DJNZ      SHRZERO
+              LD        A,1                            ; A:CCP.COM, independent of current drive
+              LD        (PATHBUF2),A
+              LD        HL,SHNAME
+              LD        DE,PATHBUF2+1
+              LD        BC,11
+              LDIR
+              ; Temporary launch audit: print actual reload target. If
+              ; PIP still starts, the fault lies deeper in AUXRUN/loader.
+              ; Stage 18 reload target audit disabled after successful test.
               CALL      SHPTR
               LD        (HL),1
               CALL      AUXRUN
@@ -3058,6 +3153,26 @@ S8AUXBIND     LD        A,(CURDRV)
               LD        (S8USER),A
               LD        A,(LCB1RO)                     ; preserve original LC bank switch
               RET
+
+; Stage 18: trace the *actual* executable FCB used for shell reload.
+; Lives in spare $5F60-$5FFF.  No AUX CCP changes required.
+              ORG       05F60H
+SHRTRACE      LD        DE,SHRMSG
+              CALL      C_WRITESTR
+              LD        HL,PATHBUF2+1
+              LD        B,11
+SHRTLOOP      PUSH      HL
+              PUSH      BC
+              LD        E,(HL)
+              CALL      C_WRITE
+              POP       BC
+              POP       HL
+              INC       HL
+              DJNZ      SHRTLOOP
+              LD        E,13
+              JP        C_WRITE
+SHRMSG        DEFM      '[AUX reload: '
+              DEFB      '$'
 
 ; Relocated resident routines: ample MAIN memory, separate from AUX TPA.
               ORG       06000H
@@ -4278,7 +4393,7 @@ AXBDOS        CALL      XSPRE                          ; skip physical keyboard 
               LD        A,C
               LD        (AXBADFN),A                    ; diagnostic: remember original BDOS C
               CP        0F7H                           ; AUX CCP: chain/load next .COM via MAIN supervisor
-              JP        Z,AXEXEC
+              JP        NC,AXF7F8                     ; F7 launch or F8 native CCP builtin
               CP        0F0H                           ; private TERM: 0 VT100 / 1 Soroc / 2 H19
               JP        Z,AXTMODE
               OR        A

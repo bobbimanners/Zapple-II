@@ -1,4 +1,4 @@
-; Zapple-II AUX CCP 0.3 (Stage 13)
+; Zapple-II AUX CCP 0.8 (Stage 19; native builtin bridge)
 ; Standard CP/M 2.2 BDOS for built-ins; private BDOS F7 for program chaining.
 ; Requires Stage 13 kernel: F7 copies launch FCB + FCB1 + FCB2 + command tail.
 ; Transient program memory is AUX; tab switches retain command and stack.
@@ -75,6 +75,38 @@ CSEOL       LD      (ARGPTR),HL
             LD      DE,KEXIT
             CALL    MATCH
             JP      Z,DOEXIT
+            LD      HL,(CMDPTR)
+            LD      DE,KCLS
+            CALL    MATCH
+            JP      Z,DOCLS
+            LD      HL,(CMDPTR)
+            LD      DE,KBANKS
+            CALL    MATCH
+            JP      Z,DOBANKS
+            LD      HL,(CMDPTR)
+            LD      DE,KCACHE
+            CALL    MATCH
+            JP      Z,DOCACHE
+            LD      HL,(CMDPTR)
+            LD      DE,KTERM
+            CALL    MATCH
+            JP      Z,DOTERM
+            LD      HL,(CMDPTR)
+            LD      DE,KTAB
+            CALL    MATCH
+            JP      Z,DOTAB
+            LD      HL,(CMDPTR)
+            LD      DE,KXSUB
+            CALL    MATCH
+            JP      Z,DOXSUB
+            LD      HL,(CMDPTR)
+            LD      DE,KBYE
+            CALL    MATCH
+            JP      Z,DOBYE
+            LD      HL,(CMDPTR)
+            LD      DE,KSAVE
+            CALL    MATCH
+            JP      Z,DOSAVE
             JP      DOEXEC
 
 PROMPT      LD      C,25
@@ -86,57 +118,33 @@ PROMPT      LD      C,25
             LD      A,'>'
             JP      OUT
 
-; A plain AUX line editor. The entire line and its stack remain per tab.
-READLINE    LD      HL,LINE
-            LD      (LNPTR),HL
-            XOR     A
-            LD      (LNCOUNT),A
-RLNEXT      LD      C,1
+; Reuse the kernel's BDOS 10 editor (raw input, BS/DEL, no double echo).
+; Convert the returned CP/M [max][count][characters][CR] buffer to
+; the original NUL-terminated, uppercase LINE used by the parser.
+READLINE    LD      DE,INBUF
+            LD      A,78
+            LD      (DE),A
+            LD      C,10
             CALL    0005H
-            AND     07FH
-            CP      13
+            LD      A,(INBUF+1)
+            LD      B,A
+            LD      HL,INBUF+2
+            LD      DE,LINE
+RLCOPY      LD      A,B
+            OR      A
             JR      Z,RLDONE
-            CP      8
-            JR      Z,RLBS
-            CP      127
-            JR      Z,RLBS
-            CP      32
-            JR      C,RLNEXT
-            PUSH    AF
-            LD      A,(LNCOUNT)
-            CP      78
-            JR      NC,RLFULL
-            POP     AF
+            LD      A,(HL)
             CP      'a'
             JR      C,RLKEEP
             CP      'z'+1
             JR      NC,RLKEEP
             SUB     32
-RLKEEP      LD      HL,(LNPTR)
-            LD      (HL),A
+RLKEEP      LD      (DE),A
+            INC     DE
             INC     HL
-            LD      (LNPTR),HL
-            LD      A,(LNCOUNT)
-            INC     A
-            LD      (LNCOUNT),A
-            JR      RLNEXT
-RLFULL      POP     AF
-            JR      RLNEXT
-RLBS        LD      A,(LNCOUNT)
-            OR      A
-            JR      Z,RLNEXT
-            DEC     A
-            LD      (LNCOUNT),A
-            LD      HL,(LNPTR)
-            DEC     HL
-            LD      (LNPTR),HL
-            LD      A,' '
-            CALL    OUT
-            LD      A,8
-            CALL    OUT
-            JR      RLNEXT
-RLDONE      LD      HL,(LNPTR)
-            LD      (HL),0
+            DJNZ    RLCOPY
+RLDONE      XOR     A
+            LD      (DE),A
             RET
 SKSP        LD      A,(HL)
             CP      ' '
@@ -570,6 +578,71 @@ DOEXIT      LD      DE,GOODBYE
             CALL    PRINT
             RET
 
+; Stage 19: private BDOS $F8 bridge to the MAIN-only CCP handlers.
+; Record is 1-byte command ID followed by 80 bytes of normalized
+; FILEBUF tail (length, leading space, argument(s), trailing space, NUL).
+; MAIN dispatch checks that this request originates in an AUX shell.
+DOCLS       LD      A,1
+            JP      BXCMD
+DOBANKS     LD      A,2
+            JP      BXCMD
+DOCACHE     LD      A,3
+            JP      BXCMD
+DOTERM      LD      A,4
+            JP      BXCMD
+DOTAB       LD      A,5
+            JP      BXCMD
+DOXSUB      LD      A,6
+            JP      BXCMD
+DOBYE       LD      A,7
+            JP      BXCMD
+DOSAVE      LD      DE,SAVEWARN
+            CALL    PRINT
+            JP      MAINLOOP
+BXCMD       LD      (BXID),A
+            CALL    BXBUILD
+            LD      DE,BXID
+            LD      C,0F8H
+            CALL    0005H
+            JP      MAINLOOP
+BXBUILD     LD      HL,BXTAIL
+            LD      B,80
+            XOR     A
+BXZERO      LD      (HL),A
+            INC     HL
+            DJNZ    BXZERO
+            LD      HL,(ARGPTR)
+            LD      A,(HL)
+            OR      A
+            RET     Z
+            LD      DE,BXTAIL+1
+            LD      A,' '
+            LD      (DE),A
+            INC     DE
+            LD      B,1
+BXCOPY      LD      A,(HL)
+            OR      A
+            JR      Z,BXFIN
+            LD      C,A
+            LD      A,B
+            CP      76
+            JR      NC,BXFIN
+            LD      A,C
+            LD      (DE),A
+            INC     HL
+            INC     DE
+            INC     B
+            JR      BXCOPY
+BXFIN       LD      A,' '
+            LD      (DE),A
+            INC     DE
+            INC     B
+            XOR     A
+            LD      (DE),A
+            LD      A,B
+            LD      (BXTAIL),A
+            RET
+
 ; Plain 8.3 filename parser with drive prefix and '?'/'*' wildcard support.
 ; Input HL: token (NUL, space or '=' terminates). Output FCB (36 bytes).
 ; ALLOWW=1 permits '?'/'*', 0 requires exact name. Z=success.
@@ -840,7 +913,11 @@ EXTCOPY     LD      A,(HL)
             INC     DE
             INC     B
             JR      EXTCOPY
-EXTDONE     LD      A,13
+EXTDONE     LD      A,' '                    ; match MAIN CCP's trailing delimiter
+            LD      (DE),A
+            INC     DE
+            INC     B
+            XOR     A                             ; matching MAIN CCP's NUL terminator
             LD      (DE),A
             LD      A,B
             LD      (EXTAIL),A
@@ -872,8 +949,8 @@ EXF2START   CALL    SKSP
             LD      DE,EXF2
             LD      BC,16
             LDIR
-EXNOTAIL    LD      A,13
-            LD      (EXTAIL+1),A               ; overwritten only if no args? see below
+EXNOTAIL    LD      A,0
+            LD      (EXTAIL+1),A               ; NUL when no args
             LD      A,(EXTAIL)
             OR      A
             JR      Z,EXGO
@@ -902,7 +979,7 @@ OUT         PUSH    AF
             POP     AF
             RET
 
-BANNER      DEFM    'Zapple-II AUX CCP 0.4 (Stage 14)'
+BANNER      DEFM    'Zapple-II AUX CCP 0.8 (Stage 19)'
             DEFB    13,'$'
 KDIR        DEFM    'DIR'
             DEFB    0
@@ -917,6 +994,22 @@ KUSER       DEFM    'USER'
 KHELP       DEFM    'HELP'
             DEFB    0
 KEXIT       DEFM    'EXIT'
+            DEFB    0
+KCLS        DEFM    'CLS'
+            DEFB    0
+KBANKS      DEFM    'BANKS'
+            DEFB    0
+KCACHE      DEFM    'CACHE'
+            DEFB    0
+KTERM       DEFM    'TERM'
+            DEFB    0
+KTAB        DEFM    'TAB'
+            DEFB    0
+KXSUB       DEFM    'XSUB'
+            DEFB    0
+KBYE        DEFM    'BYE'
+            DEFB    0
+KSAVE       DEFM    'SAVE'
             DEFB    0
 DIRHDR      DEFM    'Directory of '
             DEFB    '$'
@@ -941,9 +1034,15 @@ GOODBYE     DEFM    'Returning to MAIN CCP'
             DEFB    13,'$'
 EXFAIL      DEFM    'Program launch failed (requires Stage 13 kernel)'
             DEFB    13,'$'
-HELPMSG     DEFM    'DIR [d:][pattern]  TYPE file  ERA pattern  REN new=old'
+HELPMSG     DEFM    'DIR ERA REN TYPE USER    CLS BANKS CACHE [RESET]'
             DEFB    13
-            DEFM    'USER [0-15]  A:..P:  HELP  EXIT  program [args]'
+            DEFM    'TERM VT100/SOROC/H19/H89/VT52   TAB [LIST/HELP]'
+            DEFB    13
+            DEFM    'XSUB BYE EXIT  A:..P:  program [args]'
+            DEFB    13
+            DEFM    'SAVE unavailable (AUX shell replaces old transient)'
+            DEFB    13,'$'
+SAVEWARN    DEFM    'SAVE unavailable: AUX CCP overwrote transient RAM'
             DEFB    13,'$'
 CMDPTR      DEFW    LINE
 ARGPTR      DEFW    LINE
@@ -964,3 +1063,7 @@ EXPAR       DEFS    36
 EXF1        DEFS    16
 EXF2        DEFS    16
 EXTAIL      DEFS    128
+
+INBUF       DEFS    82                          ; dedicated BDOS 10 input buffer
+BXID        DEFB    0
+BXTAIL      DEFS    80                          ; private F8 MAIN command tail
