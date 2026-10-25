@@ -2761,13 +2761,14 @@ BITABLE       DEFM      'DIR  '
 ; CACHECLS.  Never infer an arbitrary new EOF from RC: that could
 ; destroy a database whose FCB uses RC/EX for scratch bookkeeping.
 ;
-; CLOSE_TRIM_ONE is deliberately 0 by default. When enabled, permit
-; ONLY an explicitly flagged, exactly one-record (128-byte) shrink,
-; and only when EX/S2/RC point exactly to that new EOF. Other CLOSEs
-; retain the full ProDOS file; a separate explicit truncate remains
-; preferable for larger reductions. Test on expendable files first.
+; Stage 7 enables guarded CLOSE reconciliation for exactly ONE record.
+; The caller must explicitly clear S2 bit 7, and EX/S2/RC must describe
+; a new EOF exactly 128 bytes below an existing record-aligned EOF.
+; No cross-extent or arbitrary RC truncation is attempted.  Keep this
+; switch at 0 for a completely non-truncating safety baseline.
+; Test with disposable files before considering broader support.
 ; =====================================================================
-CLOSE_TRIM_ONE EQU       0
+CLOSE_TRIM_ONE EQU       1
               ORG       05A00H
 ; DE points at an S1-tagged CP/M FCB. Return A=0 on success / skip,
 ; nonzero on failed read/truncate. Application S2 and CR restored.
@@ -2795,6 +2796,11 @@ FC5DIRTY
               CALL      PRODOS                        ; exact physical ProDOS byte EOF
               OR        A
               JP        NZ,FC5DONE                    ; preserve error, restore S2
+              ; Do not lose any partial final record: an RC-based shrink
+              ; is only unambiguous when the existing EOF is 128-aligned.
+              LD        A,(GEMLIE1)
+              AND       07FH
+              JP        NZ,FC5SKIP
               LD        A,(IX+20H)
               PUSH      AF                            ; application CR
               LD        A,(IX+0FH)
@@ -2832,10 +2838,19 @@ FC5POSOK      POP       AF
               LD        A,(SMMLIP3)
               LD        (SEMLIE3),A
               LD        HL,SEMLI
-              CALL      PRODOS
+              CALL      PRODOS                        ; trim exactly one record
+              OR        A
+              JP        NZ,FC5DONE                    ; never mark failed trim clean
+              ; CLOSE committed the explicit metadata adjustment.  Mark
+              ; the *saved* CP/M S2 clean so a second CLOSE cannot apply
+              ; the same shortening request again.  Do not touch S1.
+              LD        A,(IOVS2)
+              OR        080H
+              LD        (IOVS2),A
+              XOR       A
               JP        FC5DONE
 FC5SKIP       XOR       A                             ; leave EOF untouched
-FC5DONE       JP        IO_END                        ; restores application S2 + status
+FC5DONE       JP        IO_END                        ; restores app S2, sets L=result
 
               ORG       05F00H
 ; CP/M 2.2 permits programs to read/write IOBYTE at 0003h directly.
@@ -6203,7 +6218,7 @@ F_CLOSE       LD        H,D                            ; Pointer to FCB ...
               JR        FCERR                          ; untagged and nonzero != FRN
 FC_RAW        LD        A,(HL)
               JR        FCPHYS
-FCVIRT                      ; Flush on CP/M CLOSE; optional explicitly marked RC shrink.
+FCVIRT                      ; Flush and guarded one-record RC shrink on CLOSE.
               ; Never change S1/open state if the EOF check or close fails.
               PUSH      HL
               PUSH      DE
@@ -6231,7 +6246,8 @@ FCVIRT                      ; Flush on CP/M CLOSE; optional explicitly marked RC
               ; S1=$A0|USER tag, so a later READ/WRITE through the same FCB
               ; can reopen by pathname via IO_BEGIN.  dBASE II does this
               ; after CREATE without another explicit BDOS OPEN.
-              ; Note: preserve S2, EX, RC and CR exactly as supplied.
+              ; Preserve EX/RC/CR; on a successful one-record trim FC5TRIM
+              ; sets only S2's bit-7 clean flag (S1 remains bound).
               JP        FCSUCC
 FCPHYS        CP        0                              ; If file reference number is zero ...
               JR        Z,FCSUCC                       ; ... Nothing to do, just return
