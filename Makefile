@@ -8,6 +8,9 @@ CADIUS   ?= cadius
 MAME     ?= mame
 
 # Sources and generated binaries.
+CCP_SRC     ?= CCP.asm
+CCP_RAW     := CCP.bin
+CPM_CCP     := cpm-apps/CPM-2.2/CCP.COM
 SRC65       ?= softcard65.asm
 SRC80       ?= softcard80.asm
 RAW65       := softcard65
@@ -29,13 +32,14 @@ MAME_DEBUG_FLAGS ?= -debug -w
 MAME_EXTRA       ?=
 
 .DEFAULT_GOAL := all
-.PHONY: all z80 6502 disk run debug mame clean help
+.PHONY: all z80 6502 ccp disk run debug mame clean help
 
-# `make` assembles both CPUs and updates the disk; it does not start MAME.
+# `make` assembles both CPUs and CCP, then updates the disk; it does not start MAME.
 all: disk
 
 z80: $(PRODOS80)
 6502: $(PRODOS65)
+ccp: $(CPM_CCP)
 
 # Merlin32 names its output after the source basename without an extension.
 # Move it to Cadius's <filename>#<type><load-address> convention.
@@ -54,12 +58,25 @@ $(PRODOS80): $(SRC80)
 	@test -f "$(RAW80)" || { echo 'Error: Z80asm did not create $(RAW80)' >&2; exit 1; }
 	mv -f "$(RAW80)" "$@"
 
+# Udo Munk's Z80ASM writes an origin record (FF 00 01 for ORG 0100H)
+# before the actual image. A CP/M .COM must start with the code at 0100H,
+# so verify and strip those three bytes before putting it on drive A.
+$(CPM_CCP): $(CCP_SRC)
+	@echo 'Assembling CP/M CCP: $<'
+	@mkdir -p "$(dir $@)"
+	@rm -f "$(CCP_RAW)"
+	$(Z80ASM) -o$(CCP_RAW) "$<"
+	@test -f "$(CCP_RAW)" || { echo 'Error: Z80asm did not create $(CCP_RAW)' >&2; exit 1; }
+	@test "$$(head -c 3 "$(CCP_RAW)" | od -An -tx1 | tr -d ' \n')" = ff0001 || { echo 'Error: unexpected CCP binary header (expected FF 00 01)' >&2; exit 1; }
+	@tail -c +4 "$(CCP_RAW)" > "$@.tmp" && mv -f "$@.tmp" "$@"
+	@rm -f "$(CCP_RAW)"
+
 # Update a temporary COPY of the ProDOS image, then publish it only after
 # both Cadius operations succeed. Retain the .po extension for Cadius.
 # Tracking the image itself as the target makes `make disk` incremental.
 disk: $(DISK_IMAGE)
 
-$(DISK_IMAGE): $(PRODOS65) $(PRODOS80)
+$(DISK_IMAGE): $(PRODOS65) $(PRODOS80) $(CPM_CCP)
 	echo 'Creating $@ with Cadius...'
 	$(CADIUS) createvolume "$@" "$(DISK_VOLUME)" 4096KB
 	$(CADIUS) addfile "$@" "/$(DISK_VOLUME)" prodos.242/PRODOS*
@@ -107,15 +124,16 @@ mame: debug
 
 # Never delete the source files, ProDOS image, or hard-disk images.
 clean:
-	rm -f "$(PRODOS65)" "$(PRODOS80)" "$(RAW65)" "$(RAW80)" _FileInformation.txt
+	rm -f "$(PRODOS65)" "$(PRODOS80)" "$(RAW65)" "$(RAW80)" "$(CPM_CCP)" "$(CCP_RAW)" _FileInformation.txt
 
 help:
 	@printf '%s\n' \
-	  'make          Assemble both CPUs and update zapple2.po (only if changed)' \
+	  'make          Assemble both CPUs + CCP; update zapple2.po if changed' \
 	  'make z80      Assemble softcard80.asm only' \
 	  'make 6502     Assemble softcard65.asm only' \
+	  'make ccp      Assemble CCP.asm to cpm-apps/CPM-2.2/CCP.COM' \
 	  'make disk     Update the ProDOS image from changed binaries' \
 	  'make run      Update image, then launch MAME without debugger' \
 	  'make debug    Update image, then launch MAME with -debug -w' \
 	  'make mame     Alias for make debug (original script behavior)' \
-	  'make clean    Remove generated binaries; preserve disk images'
+	  'make clean    Remove generated binaries (including CCP.COM); preserve disk images'
