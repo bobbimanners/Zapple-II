@@ -494,6 +494,7 @@ TABLOAD       CALL      TABPICK
               LD        HL,0080H
               LD        (AXDMAP),HL
               LD        A,(IX+6)
+              LD        (VTMODEC),A                   ; manual foreground tab switch
               CP        2                              ; H19 parser uses Soroc renderer
               JR        NZ,TABLD6502
               LD        A,1
@@ -543,6 +544,8 @@ TI_NEXT       XOR       A
               XOR       A
               LD        (HL),A
               LDIR
+              LD        A,1
+              LD        (VTMODEC),A                   ; TABINIT restores Soroc default
               RET
 
 ; Map a logical tab A to its manual hold flag; preserves B.
@@ -3367,16 +3370,13 @@ RNEXT36       PUSH      DE
 ; H19 uses parser states 4=row, 5=column, 6=one mode parameter,
 ; and IX+2 as pending zero-based row. Save/restore remain IX+4/5.
 ; Only the Soroc display engine touches the hardware/virtual screen.
-VTISEN        PUSH      BC
-              PUSH      IX
-              PUSH      DE
-              CALL      TABPICK
-              LD        A,(IX+6)
-              POP       DE
-              POP       IX
-              POP       BC
+; Stage 11 output acceleration: terminal personality is cached for the
+; currently running tab.  The old VTISEN walked TABCTXS (7 bytes/tab)
+; on EVERY character.  Keep this in sync on switch and TERM requests.
+VTISEN        LD        A,(VTMODEC)
               OR        A
               RET
+VTMODEC       DEFB      1                              ; cold-start Soroc
 
 ; In: A=terminal mode. Preserves all caller registers and A.
 VTSETMODE     PUSH      AF
@@ -3387,6 +3387,8 @@ VTSETMODE     PUSH      AF
               LD        C,A                            ; TABPICK does not touch C
               CALL      TABPICK
               LD        (IX+6),C
+              LD        A,C
+              LD        (VTMODEC),A                   ; update running terminal fast path
               ; Clear parser state when explicitly selecting a terminal.
               CALL      VTPTR
               XOR       A
@@ -5441,6 +5443,8 @@ SCHSAVE       CALL      TABPICK
               LD        (IX+5),H
               RET
 SCHLOAD       CALL      TABPICK
+              LD        A,(IX+6)
+              LD        (VTMODEC),A                   ; cooperative task switch
               LD        A,(IX+0)
               LD        (CURDRV),A
               LD        A,(IX+1)
@@ -5469,6 +5473,7 @@ STBG          POP       AF
               CALL      TABPICK
               POP       AF
               LD        (IX+6),A
+              LD        (VTMODEC),A                   ; TERM in background task
               POP       IX
               POP       DE
               POP       BC
@@ -8686,10 +8691,15 @@ DIRECT        LD        A,(FCB1NAM)
               CALL      S8MSF                         ; CCP also shares the BDOS scanner
               OR        A
               JR        NZ,DIRDONE
-DIRLOOP       CALL      PRDIRENT
+DIRLOOP       CALL      TYPEKEY                        ; ^C / Open Apple hotkeys
+              JR        C,DIRABORT
+              CALL      PRDIRENT
               CALL      S8MSN
               OR        A
               JR        Z,DIRLOOP
+              JR        DIRDONE
+DIRABORT      CALL      S8INVAL                       ; discard unfinished search bookmark
+              ; Stage 8 S8EXIT already closed the physical directory FRN.
 DIRDONE       LD        A,(DIRCOL)
               OR        A
               RET       Z
@@ -8924,27 +8934,41 @@ TBL1          CALL      TYPEKEY                        ; Poll between characters
 TBLDONE       OR        A                              ; No abort: clear carry
               RET
 
-; TYPE-specific ^C check. Don't modify the global console output path:
-; applications (and ^S/^Q flow control) retain their existing behaviour.
-; Only the foreground session with physical CRT input may take a key.
-; Apple II keyboard latch is $C000/$C010 (Z80 $E000/$E010).
-; Leave all other keys pending; consume only ^C.  Preserve BC/DE/HL.
-TYPEKEY       LD        A,(IOBYTE)
+; CCP output poll shared by TYPE and DIR. ^C cancels immediately.
+; Open-Apple tab shortcuts queue a switch through the existing TSKSTAT
+; keyboard path; the current CCP command cancels cleanly, then CCPL1
+; performs the actual switch with its MAIN CCP stack active.
+; Never consume ordinary keys. Do NOT run SCHMAIN inside CCP commands.
+; Physical keyboard is $C000/$C061/$C010 (Z80 $E000/$E061/$E010).
+; Carry=1 on ^C or queued tab switch, 0 otherwise. Preserve BC/DE/HL.
+TYPEKEY       LD        A,(TABREQ)
+              CP        0FFH                           ; switch already queued?
+              JR        NZ,TKABORT
+              LD        A,(IOBYTE)
               AND       3
               CP        1                              ; CRT keyboard?
               JR        NZ,TKNO
-              CALL      SCHISFG                        ; Avoid stealing foreground keys
+              CALL      SCHISFG                        ; foreground must own keyboard
               JR        NZ,TKNO
-              LD        A,(0E000H)                     ; Key + strobe
+              LD        A,(0E000H)                     ; key + strobe
               BIT       7,A
-              JR        Z,TKNO                         ; No key waiting
+              JR        Z,TKNO
               AND       07FH
               CP        3                              ; Ctrl-C
-              JR        NZ,TKNO                         ; Leave other keys pending
-              LD        A,(0E010H)                     ; Consume Ctrl-C strobe
-              SCF                                      ; Signal TYPE cancellation
+              JR        NZ,TKAPPLE
+              LD        A,(0E010H)                     ; consume ^C only
+TKABORT       SCF
               RET
-TKNO          OR        A                              ; No ^C: clear carry
+TKAPPLE       LD        A,(0E061H)                     ; Open-Apple modifier
+              BIT       7,A
+              JR        Z,TKNO                         ; ordinary key: leave pending
+              PUSH      HL
+              CALL      TSKSTAT                        ; existing 6502 key peek + TSKKEY
+              LD        A,L                            ; F3 = different tab queued
+              POP       HL
+              CP        0F3H
+              JR        Z,TKABORT
+TKNO          OR        A                              ; clear carry
               RET
 
 ; AUX56 SAVEFILE/SVPAGES relocated to MAIN $4000 (free of AUX snapshot).
