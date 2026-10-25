@@ -14,16 +14,6 @@
 ;    http://www.easy68k.com/paulrsm/6502/PDOS8TRM.HTM
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-; BDOS TODOs
-; ----------
-; ProDOS handles: two-slot, pathname-keyed cache (see CACHE_* near $A200).
-; Logical CP/M open state is S1=$A0|USER; S2 stays application-owned.
-; TODO: Implement missing BDOS system calls:
-;        - RS232 (A_READ, A_WRITE)
-;        - Printer (LWRITE)
-; IOBYTE routes console, reader, punch and list to Apple firmware.
-; TODO: User number doesn't do anything
-;
 
 BDOSADDR      EQU       08100H                         ;
 STCKTOP       EQU       0A800H                         ; Stack still ends at $A800; base-69 uses its low region
@@ -5984,12 +5974,6 @@ C_WRITE       LD        A,(IOBYTE)
               AND       3
               CP        1
               JR        NZ,C_RAWPUT                    ; serial/BAT must retain LF
-              LD        A,E
-              CP        0AH
-              JR        NZ,C_PUT
-              CALL      VTISEN                         ; only native Soroc swallows LF
-              CP        1
-              RET       Z                              ; VT100 and H19 process cooked LF
               JR        C_PUT
 
 ; Shared low-level output path for cooked and direct console writes.
