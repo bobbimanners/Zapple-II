@@ -401,8 +401,8 @@ TBAUTOSW      LD        A,(TABREQ)
               LD        (TABREQ),A
               CALL      TB_SWITCH
               JR        TBAUTOSW
-TB_SWITCH     CALL      CUOFF                          ; do not snapshot the cursor glyph
-              PUSH      BC
+TB_SWITCH     JP        TB_SWGATE                     ; defer if called from AUX BDOS F8
+TB_SWCONT     PUSH      BC
               LD        A,B
               CALL      TBCLEARH                       ; switching always wakes a held tab
               POP       BC
@@ -1110,7 +1110,9 @@ TASKSAVE      LD        (TSKBC),BC
               JR        Z,TSKWAIT
               CP        0F2H                           ; raw BIOS CONIN deferred
               JR        Z,TSKWAIT
-              CP        0FAH                           ; BDOS 10 read deferred
+              CP        0FAH                           ; BDOS 10 before first key
+              JR        Z,TSKWAIT
+              CP        0FBH                           ; BDOS 10 with partial line
               JR        NZ,TSKNOWT
 TSKWAIT       CALL      SCHBLCK                        ; background must not retry VGET
 TSKNOWT       LD        A,1
@@ -1218,38 +1220,7 @@ TSKSIZE       EQU       TSKEND-TSKBUFF
 ; On resume, complete a parked input call *before* returning to AUX.
 ; AXRES carries a private marker only when suspended in keyboard I/O.
 ; No synthetic NUL/CR is sent to MBASIC, WordStar or the CCP.
-AXRETRY       LD        A,(AXRES)
-              CP        0F1H
-              JR        Z,ARCOOK
-              CP        0F2H
-              JR        Z,ARBIOS
-              CP        0FAH
-              JR        Z,ARLINE
-              CP        0F6H
-              JR        Z,ARRAW
-              CP        0F3H
-              JR        Z,ARSTAT
-              JP        AXGO
-ARCOOK        CALL      TSKCIN
-              JR        ARDONE
-ARBIOS        CALL      TSKBIRD
-              JR        ARDONE
-ARLINE        LD        DE,(AXLIP)
-              CALL      AXLINE
-              JR        ARDONE
-ARRAW         LD        E,0FFH
-              CALL      AUXBDOS6
-              JR        ARDONE
-ARSTAT        CALL      TSKSTAT                        ; retry actual BIOS/BDOS status request
-ARDONE        LD        (AXRES),A
-              LD        (AXRHL),HL
-              LD        A,(AXQUIT)
-              CP        3
-              CALL      Z,TASKSAVE
-              LD        A,(AXQUIT)
-              OR        A
-              JP        NZ,AXFIN
-              JP        AXGO
+AXRETRY       JP        AXRETRYX                      ; overflow-safe trampoline
 
 ; CCP-only MouseText print. A='A'/$41 (Open Apple), 'H'/$48 (left),
 ; 'U'/$55 (right). The stock VPUT path forces normal or inverse ASCII,
@@ -1536,7 +1507,7 @@ TC_NUM        CALL      TABDECODE
               CP        ' '
               JP        NZ,CCPBAD
               LD        A,(FILEBUF+4)
-              OR        A
+              OR        A                              ; TAB n ends with NUL after the SP
               JP        Z,TB_SWITCH
               LD        HL,FILEBUF+4
               LD        DE,TCSUSP
@@ -1553,7 +1524,7 @@ TC_NUM        CALL      TABDECODE
               LD        HL,FILEBUF+4
               LD        DE,TCKILL
               CALL      TCMATCH
-              JP        Z,TB_KILL
+              JP        Z,TB_SAFE_KILL
               JP        CCPBAD
 TCMATCH       LD        A,(HL)
               CP        ' '                            ; any unambiguous prefix accepted
@@ -2778,6 +2749,7 @@ CLOSE_TRIM_ONE EQU       1
 ; Stage 19: safe native CCP builtin bridge from AUX CCP.COM.
 ; BDOS $F7 still chains via AXEXEC. $F8 accepts an 81-byte record
 ; from AUX DE: command ID then 80-byte normalized MAIN FILEBUF tail.
+; ID 8 is a pure query for the current TABMODE (session), returning A=L.
 ; MAIN handlers run without replacing the AUX shell or changing disks.
               ORG       05900H
 AXF7F8        CP        0F7H
@@ -2822,7 +2794,14 @@ AXBUILT       PUSH      DE
               JP        Z,AXBXSUB
               CP        7
               JP        Z,AXBBYE
+              CP        8
+              JP        Z,AXBSESSION                  ; read active logical TABMODE for AUX prompt
               JP        CCPBAD
+; Pure query: no scheduler mutation, no terminal switch, no AUX pointers.
+; AXGATE returns both A and HL to the transient caller.
+AXBSESSION    LD        A,(TABMODE)
+              LD        L,A
+              RET
 AXBCLS        CALL      AXBNONE
               RET       NZ
               JP        CCPCLS
@@ -2839,21 +2818,41 @@ AXBNONE       LD        A,(FILEBUF)
               OR        A
               RET       Z
               JP        CCPBAD
-; TAB switches cannot safely run from inside an active AUX BDOS
-; gateway. LIST and HELP are read-only and can use native TBCMD.
-AXBTAB        LD        A,(FILEBUF)
-              OR        A
-              JP        Z,TBCMD
-              LD        A,(FILEBUF+2)
-              CP        'L'
-              JP        Z,TBCMD
-              CP        'H'
-              JP        Z,TBCMD
-              LD        DE,AXBTMSG
-              JP        C_WRITESTR
-AXBTMSG       DEFM      'TAB n: use Open-Apple+n (AUX shell)'
-              DEFB      13,'$'
+; Stage 21: native parser may inspect/edit tab bookkeeping during F8.
+; A display/context switch itself is deferred by TB_SWGATE, after
+; AXGATE has captured the full AUX CCP register+stack image.
+AXBTAB        JP        TBCMD
 AXBID         DEFB      0
+
+; Intercept TB_SWITCH (from either TAB n or TAB n EXCLUSIVE).
+; The native MAIN CCP still takes its original direct path.
+; From AUX, never perform bank/display switching inside AXGATE.
+TB_SWGATE     LD        A,(AXMODE)
+              OR        A
+              JR        NZ,TB_SWDEFER
+              CALL      CUOFF
+              JP        TB_SWCONT
+TB_SWDEFER    LD        A,(SCHFG)
+              CP        B
+              JP        Z,UNIMP                         ; current-tab request just beeps
+              LD        A,(TABREQ)
+              CP        0FFH
+              JP        NZ,CCPBAD                       ; don't overwrite pending OA request
+              LD        A,B
+              LD        (TABREQ),A
+              LD        A,3
+              LD        (AXQUIT),A                      ; TASKSAVE at AXGATE, then TBAUTOSW
+              RET
+
+; Never KILL the visible/current tab: AUX CCP is still executing in
+; that bank, so erasing its TSKFLAGS/SHFLAGS would orphan the stack.
+TB_SAFE_KILL  LD        A,(SCHFG)
+              CP        B
+              JP        Z,TB_NOBG
+              LD        A,(TABMODE)
+              CP        B
+              JP        Z,TB_NOBG
+              JP        TB_KILL
 
               ORG       05A00H
 ; DE points at an S1-tagged CP/M FCB. Return A=0 on success / skip,
@@ -4685,7 +4684,15 @@ AXAVEC        LD        A,(LCB1RO)
 ; The AUX TPA ends at DDFFH; BDOS stub starts at DE00H.
 ; For capacity N we may write N data bytes plus one CR at DE+2+N.
 ; 260-byte MAIN staging handles all legal one-byte capacities (0..255).
-AXLINE        LD        (AXLIP),DE
+; Stage 22.2: when OA+tab interrupts a partly typed line, save its
+; characters in the calling tab's AUX BDOS-10 buffer before parking.
+; AXLINER (called only by AXRETRY) restores the count + characters
+; after that tab is selected again, with no re-echo or lost input.
+AXLINE        XOR       A                              ; fresh BDOS 10 call
+              JR        AXLENTRY
+AXLINER       LD        A,1                            ; resuming an interrupted line
+AXLENTRY      LD        (AXLRESUME),A
+              LD        (AXLIP),DE
               LD        A,D
               CP        0DEH
               JP        NC,AXBAD                       ; buffer header must be below DE00H
@@ -4705,31 +4712,55 @@ AXLVALID      EX        DE,HL
               JP        NC,AXBAD                       ; disallow touching DE00H+ BDOS page
               ; Only consume submitted input after XSUB was explicitly
               ; enabled from a script. XSREADY handles prior status polls.
+              ; Never start a fresh XSUB line when resuming partial input.
+              LD        A,(AXLRESUME)
+              OR        A
+              JR        NZ,AXLSETUP
               CALL      XSREADY
               OR        A
               JP        NZ,AXLSUB
-              LD        A,(AXLBUF)
-              LD        C,A                            ; restore capacity after disk calls
-              LD        B,C                            ; capacity for line editor
+AXLSETUP      LD        A,(AXLBUF)
+              LD        B,A                            ; capacity for line editor
               LD        C,0                            ; bytes entered
               LD        HL,AXLBUF+2
+              LD        A,(AXLRESUME)
+              OR        A
+              JR        Z,AXLNEXT                      ; new line, start empty
+              ; Saved [max][count][partial text] lives in this tab's AUX
+              ; buffer, so another tab's BDOS 10 cannot overwrite it.
+              PUSH      BC
+              PUSH      HL
+              LD        HL,(AXLIP)
+              LD        DE,AXLBUF
+              LD        C,B
+              LD        B,0
+              INC       BC
+              INC       BC                             ; capacity + 2 header bytes
+              CALL      LCA2M
+              POP       HL
+              POP       BC
+              LD        A,(AXLBUF+1)                  ; saved partial line count
+              CP        B
+              JR        C,AXLCOUNTOK                   ; count below capacity
+              JR        Z,AXLCOUNTOK                   ; count equals capacity
+              ; The saved count was larger than the current capacity.
+              ; Discard invalid input rather than writing beyond staging.
+              JP        AXBAD
+AXLCOUNTOK    LD        C,A
+              LD        E,C
+              LD        D,0
+              ADD       HL,DE                          ; resume at end of partial text
 AXLNEXT       PUSH      BC
               PUSH      HL
               CALL      BIOSCONIN
               POP       HL
               POP       BC
               AND       07FH
-              ; For BDOS 10, park only at the beginning of a line.
-              ; Once characters have been entered, don't discard the line.
-              PUSH      AF
-              LD        A,C
-              OR        A
-              JR        NZ,AXLNOKEY
-              POP       AF
+              ; Always process OA+tab, even when the line is nonempty.
+              ; Previously TSKKEY was bypassed when C>0, making shortcuts
+              ; unusable during command entry or any BDOS 10 edit.
               CALL      TSKKEY
-              JP        C,AXLSKEY
-              JR        AXLKEY
-AXLNOKEY      POP       AF
+              JP        C,AXLPARK
 AXLKEY        CP        13
               JR        Z,AXLDONE
               CP        3
@@ -4773,6 +4804,26 @@ AXLBS         LD        A,C
               POP       HL
               POP       BC
               JR        AXLNEXT
+; Queue a manual tab switch without losing a partly entered BDOS 10
+; line. We must checkpoint to the caller's per-tab AUX buffer because
+; AXLBUF is a single shared MAIN staging buffer reused by other tabs.
+; TSKKEY already set TABREQ/AXQUIT=3, and preserved BC and HL.
+AXLPARK       LD        A,C
+              LD        (AXLBUF+1),A
+              PUSH      BC
+              PUSH      HL
+              LD        HL,AXLBUF
+              LD        DE,(AXLIP)
+              LD        B,0
+              INC       BC
+              INC       BC                             ; copy max/count/data[0..count)
+              CALL      AXM2A
+              POP       HL
+              POP       BC
+              LD        A,0FBH                         ; checkpointed-line marker
+              LD        L,A
+              RET
+
 AXLCAN        LD        A,1
               LD        (LCQUIT),A
               XOR       A
@@ -4981,6 +5032,48 @@ AXM2A         LD        A,(LCB2RW)
               RET
 
 ; ================================================================
+
+; Stage 22.2 deferred AUX input dispatcher relocated from MAIN $08xx.
+; This area has spare room; keep the stable AXRETRY entry at $08xx.
+AXRETRYX      LD        A,(AXRES)
+              CP        0F1H
+              JR        Z,ARCOOK
+              CP        0F2H
+              JR        Z,ARBIOS
+              CP        0FAH
+              JR        Z,ARLINE                       ; parked before reading any key
+              CP        0FBH
+              JR        Z,ARLRES                       ; parked with a partial line
+              CP        0F6H
+              JR        Z,ARRAW
+              CP        0F3H
+              JR        Z,ARSTAT
+              JP        AXGO
+ARCOOK        CALL      TSKCIN
+              JR        ARDONE
+ARBIOS        CALL      TSKBIRD
+              JR        ARDONE
+ARLINE        LD        DE,(AXLIP)
+              CALL      AXLINE                        ; no partial text was checkpointed
+              JR        ARDONE
+ARLRES        LD        DE,(AXLIP)
+              CALL      AXLINER                       ; restore saved partial BDOS 10 line
+              JR        ARDONE
+ARRAW         LD        E,0FFH
+              CALL      AUXBDOS6
+              JR        ARDONE
+ARSTAT        CALL      TSKSTAT                        ; retry actual BIOS/BDOS status request
+ARDONE        LD        (AXRES),A
+              LD        (AXRHL),HL
+              LD        A,(AXQUIT)
+              CP        3
+              CALL      Z,TASKSAVE
+              LD        A,(AXQUIT)
+              OR        A
+              JP        NZ,AXFIN
+              JP        AXGO
+
+
               ORG       07590H
 TCLIST        DEFM      'LIST '
               DEFB      0
@@ -5000,7 +5093,7 @@ TB_HELP       LD        DE,TB_HELPMSG
 
 
 ; Small command summary; keep clear of the $7600 command table.
-TB_HELPMSG    DEFM      'TAB [LIST], TAB n [SUSP/RES/EXCL/KILL]'
+TB_HELPMSG    DEFM      'TAB n [SUSP/RES/EXCL/KILL], TAB LIST/HELP'
               DEFB      13,'$'
 
               ORG       07600H
@@ -5231,6 +5324,7 @@ AXSRCH        DEFS      36
 AXDATA        DEFS      128
 AXLIP         DEFW      0
 AXLBUF        DEFS      260
+AXLRESUME     DEFB      0                              ; set only on AXRETRY BDOS 10
 AXBADFN       DEFB      0                              ; last AUX BDOS function for diagnostics
 BDOSFN        DEFB      0                              ; last MAIN BDOS function for diagnostics
 

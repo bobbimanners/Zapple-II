@@ -1,4 +1,4 @@
-; Zapple-II AUX CCP 0.8 (Stage 19; native builtin bridge)
+; Zapple-II AUX CCP 1.0.1 (Stage 22.1; session/user prompt + Z80ASM fix)
 ; Standard CP/M 2.2 BDOS for built-ins; private BDOS F7 for program chaining.
 ; Requires Stage 13 kernel: F7 copies launch FCB + FCB1 + FCB2 + command tail.
 ; Transient program memory is AUX; tab switches retain command and stack.
@@ -109,11 +109,39 @@ CSEOL       LD      (ARGPTR),HL
             JP      Z,DOSAVE
             JP      DOEXEC
 
-PROMPT      LD      C,25
+; Match the legacy CCP prompt exactly: [0]A:>, [1]A3:>, [F]B12:>.
+; Private BDOS F8/id 8 returns the logical TABMODE session in A and L.
+; MAIN owns TABMODE and it cannot be read directly from AUX TPA.
+; BDOS 25 queries drive; BDOS 32/E=FFh queries the active USER.
+PROMPT      LD      A,8
+            LD      (BXID),A
+            LD      DE,BXID
+            LD      C,0F8H
+            CALL    0005H
+            AND     0FH
+            CP      10
+            JR      C,PRMDIG
+            ADD     A,37H                       ; hex A..F
+            JR      PRMCHAR
+PRMDIG      ADD     A,30H                       ; hex 0..9
+PRMCHAR     PUSH    AF
+            LD      A,'['
+            CALL    OUT
+            POP     AF
+            CALL    OUT
+            LD      A,']'
+            CALL    OUT
+            LD      C,25
             CALL    0005H
             ADD     A,'A'
             CALL    OUT
-            LD      A,':'
+            LD      E,0FFH
+            LD      C,32
+            CALL    0005H
+            OR      A
+            JR      Z,PRMEND
+            CALL    PRINTNUM
+PRMEND      LD      A,':'
             CALL    OUT
             LD      A,'>'
             JP      OUT
@@ -590,7 +618,84 @@ DOCACHE     LD      A,3
             JP      BXCMD
 DOTERM      LD      A,4
             JP      BXCMD
-DOTAB       LD      A,5
+; Stage 21: accept both TAB n ACTION and TAB ACTION n.
+; Stage 19's private BDOS F8 already forwards the standard normalized
+; tail to the native TBCMD parser; only action-first input needs reordering.
+DOTAB       LD      HL,(ARGPTR)
+            LD      DE,TBSWITCH
+            CALL    TBHEAD
+            JP      Z,TBVSWITCH
+            LD      HL,(ARGPTR)
+            LD      DE,TBSUSPEND
+            CALL    TBHEAD
+            JP      Z,TBVSUSPEND
+            LD      HL,(ARGPTR)
+            LD      DE,TBRESUME
+            CALL    TBHEAD
+            JP      Z,TBVRESUME
+            LD      HL,(ARGPTR)
+            LD      DE,TBEXCLUSIVE
+            CALL    TBHEAD
+            JP      Z,TBVEXCLUSIVE
+            LD      HL,(ARGPTR)
+            LD      DE,TBKILL
+            CALL    TBHEAD
+            JP      Z,TBVKILL
+            LD      A,5
+            JP      BXCMD
+; On match HL points at the separating space before the argument.
+TBHEAD      LD      A,(DE)
+            OR      A
+            JR      Z,TBHEND
+            CP      (HL)
+            RET     NZ
+            INC     HL
+            INC     DE
+            JR      TBHEAD
+TBHEND      LD      A,(HL)
+            CP      ' '
+            RET
+TBVSWITCH   LD      DE,TBEMPTY
+            JP      TBREORDER
+TBVSUSPEND  LD      DE,TBSUSPEND
+            JP      TBREORDER
+TBVRESUME   LD      DE,TBRESUME
+            JP      TBREORDER
+TBVEXCLUSIVE LD     DE,TBEXCLUSIVE
+            JP      TBREORDER
+TBVKILL     LD      DE,TBKILL
+; HL=space following action; DE=action string, or NUL for SWITCH.
+; Numeric selector is a single 0..9/A..F character, range checked
+; by the native TABDECODE routine in the kernel.
+TBREORDER   INC     HL
+            CALL    SKSP
+            LD      A,(HL)
+            OR      A
+            JP      Z,SHOWBAD
+            LD      (TABCAN),A
+            INC     HL
+            CALL    SKSP
+            LD      A,(HL)
+            OR      A
+            JP      NZ,SHOWBAD
+            LD      A,(DE)
+            OR      A
+            JR      NZ,TBRVERB
+            LD      (TABCAN+1),A
+            JR      TBRDONE
+TBRVERB     LD      A,' '
+            LD      (TABCAN+1),A
+            LD      HL,TABCAN+2
+TBRCOPY     LD      A,(DE)
+            LD      (HL),A
+            OR      A
+            JR      Z,TBRDONE
+            INC     HL
+            INC     DE
+            JR      TBRCOPY
+TBRDONE     LD      HL,TABCAN
+            LD      (ARGPTR),HL
+            LD      A,5
             JP      BXCMD
 DOXSUB      LD      A,6
             JP      BXCMD
@@ -818,7 +923,7 @@ VALIDCHAR   CP      '!'
             JR      Z,VINVALID
             CP      ':'
             JR      Z,VINVALID
-            CP      ';'
+            CP      03BH                    ; semicolon literal (Udo Munk Z80ASM-safe)
             JR      Z,VINVALID
             CP      '<'
             JR      Z,VINVALID
@@ -979,7 +1084,7 @@ OUT         PUSH    AF
             POP     AF
             RET
 
-BANNER      DEFM    'Zapple-II AUX CCP 0.8 (Stage 19)'
+BANNER      DEFM    'Zapple-II AUX CCP 1.0.1 (Stage 22.1)'
             DEFB    13,'$'
 KDIR        DEFM    'DIR'
             DEFB    0
@@ -1005,6 +1110,17 @@ KTERM       DEFM    'TERM'
             DEFB    0
 KTAB        DEFM    'TAB'
             DEFB    0
+TBSWITCH    DEFM    'SWITCH'
+            DEFB    0
+TBSUSPEND   DEFM    'SUSPEND'
+            DEFB    0
+TBRESUME    DEFM    'RESUME'
+            DEFB    0
+TBEXCLUSIVE DEFM    'EXCLUSIVE'
+            DEFB    0
+TBKILL      DEFM    'KILL'
+            DEFB    0
+TBEMPTY     DEFB    0
 KXSUB       DEFM    'XSUB'
             DEFB    0
 KBYE        DEFM    'BYE'
@@ -1036,7 +1152,11 @@ EXFAIL      DEFM    'Program launch failed (requires Stage 13 kernel)'
             DEFB    13,'$'
 HELPMSG     DEFM    'DIR ERA REN TYPE USER    CLS BANKS CACHE [RESET]'
             DEFB    13
-            DEFM    'TERM VT100/SOROC/H19/H89/VT52   TAB [LIST/HELP]'
+            DEFM    'TERM VT100/SOROC/H19/H89/VT52   TAB LIST/HELP'
+            DEFB    13
+            DEFM    'TAB SWITCH n, SUSPEND n, RESUME n, EXCLUSIVE n, KILL n'
+            DEFB    13
+            DEFM    'Also: TAB n [SUSPEND/RESUME/EXCLUSIVE/KILL]'
             DEFB    13
             DEFM    'XSUB BYE EXIT  A:..P:  program [args]'
             DEFB    13
@@ -1067,3 +1187,4 @@ EXTAIL      DEFS    128
 INBUF       DEFS    82                          ; dedicated BDOS 10 input buffer
 BXID        DEFB    0
 BXTAIL      DEFS    80                          ; private F8 MAIN command tail
+TABCAN      DEFS    20                          ; TAB action-first canonical arguments
