@@ -555,14 +555,52 @@ PRINTNUM    CP      10
 NUMSINGLE   ADD     A,'0'
             JP      OUT
 
-; Diagnostics only: query local AUX history without bank transfers.
-; HIST itself will be counted as a command, so 1 is expected in a fresh tab.
-DOHIST      LD      DE,HISTMSG
-            CALL    PRINT
-            LD      A,(EDCOUNT)
-            CALL    PRINTNUM
-            LD      DE,HISTEND
-            CALL    PRINT
+; Display the current tab's history, oldest entry first.
+; The editor has already appended HIST before command dispatch.
+; History is a 10-slot circular buffer: EDHEAD is the NEXT write slot.
+; No F8 transfer or bank switching is necessary here.
+DOHIST      LD      A,(EDCOUNT)
+            OR      A
+            JP      Z,MAINLOOP
+            LD      (HLEFT),A
+            LD      B,A
+            LD      A,(EDHEAD)
+            SUB     B                       ; oldest = (head - count) % 10
+            JR      NC,HISTINIT
+            ADD     A,10
+HISTINIT    LD      (HINDEX),A
+            LD      A,1
+            LD      (HNUMBER),A
+HISTLINE    LD      A,(HNUMBER)
+            CALL    PRINTNUM                ; chronological number, 1..10
+            LD      A,':'
+            CALL    OUT
+            LD      A,' '
+            CALL    OUT
+            LD      A,(HINDEX)
+            CALL    EDGETPTR                ; HL = address of slot
+            LD      B,75                    ; bound reads even if damaged
+HISTCHAR    LD      A,(HL)
+            OR      A
+            JR      Z,HISTNEXT
+            CALL    OUT                     ; prints '$' correctly too
+            INC     HL
+            DJNZ    HISTCHAR
+HISTNEXT    LD      A,13
+            CALL    OUT
+            LD      A,(HINDEX)
+            INC     A
+            CP      10
+            JR      C,HISTINDEX
+            XOR     A
+HISTINDEX   LD      (HINDEX),A
+            LD      A,(HNUMBER)
+            INC     A
+            LD      (HNUMBER),A
+            LD      A,(HLEFT)
+            DEC     A
+            LD      (HLEFT),A
+            JP      NZ,HISTLINE
             JP      MAINLOOP
 DOHELP      LD      DE,HELPMSG
             CALL    PRINT
@@ -1095,7 +1133,7 @@ OUT         PUSH    AF
             POP     AF
             RET
 
-BANNER      DEFM    'Zapple-II AUX CCP 1.6.9 (Stage 28.9 guarded restore)'
+BANNER      DEFM    'Zapple-II AUX CCP 1.6.11 (Stage 28.11)'
             DEFB    13,'$'
 KDIR        DEFM    'DIR'
             DEFB    0
@@ -1151,9 +1189,6 @@ FAILMSG     DEFM    'File operation failed'
 ERASK       DEFM    'Erase wildcard matches (Y/N)? $'
 EXFAIL      DEFM    'Program launch failed (requires Stage 13 kernel)'
             DEFB    13,'$'
-HISTMSG     DEFM    'AUX history count: $'
-HISTEND     DEFM    '/10'
-            DEFB    13,'$'
 HELPMSG     DEFM    'DIR ERA REN TYPE USER    CLS BANKS CACHE [RESET]'
             DEFB    13
             DEFM    'TERM VT100/SOROC/H19/H89/VT52   TAB LIST/HELP'
@@ -1168,7 +1203,7 @@ HELPMSG     DEFM    'DIR ERA REN TYPE USER    CLS BANKS CACHE [RESET]'
             DEFB    13
             DEFM    'Edit: ^S/^D left/right, ^G DEL, ^Q^S/^Q^D BOL/EOL'
             DEFB    13
-            DEFM    'History: ^E/^X or Up/Down, ^Y clears line'
+            DEFM    'History: HIST lists, ^E/^X or Up/Down recalls, ^Y clears'
             DEFB    13,'$'
 SAVEWARN    DEFM    'SAVE unavailable: AUX CCP overwrote transient RAM'
             DEFB    13,'$'
@@ -1602,6 +1637,9 @@ EDADDSLOT      LD      (EDHEAD),A
 ;
 ; No history slot crosses a bank. Dedicated AUX per-tab memory survives
 ; cooperative tab switches, not CCP re-execution after a .COM program.
+HINDEX      DEFB    0           ; HIST output state (not persisted)
+HNUMBER     DEFB    0
+HLEFT       DEFB    0
 EDLEN       DEFB    0
 EDPOS       DEFB    0
 EDNAV       DEFB    0
