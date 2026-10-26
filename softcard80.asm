@@ -3286,13 +3286,16 @@ SHAFTER       CALL      SHSTEP
 ; AUXRUN used to restore the drive saved before AXSTART, even when the
 ; AUX CCP had selected another drive before issuing BDOS F7.  That made
 ; implicit executable names (FCB drive=0) open on the original drive.
-; Keep the AUX CCP's current drive/user for a chain (AXQUIT=4), but
-; preserve AUXRUN's previous restore behavior for other exit paths.
+; Keep the live drive/user state on cooperative suspension (AXQUIT=3)
+; as well as on CCP program chaining (AXQUIT=4). Otherwise a CCP that
+; started on A: but switched to B: reverts to A: when parked, breaking
+; a running TYPE and later commands using the current drive.
+; Preserve AUXRUN's previous restore behavior on actual exit paths.
 ; Called with the pre-AXSTART CURDRV byte in A, after POP AF; preserve AF.
 SHDRKEEP      PUSH      AF
               LD        A,(AXQUIT)
-              CP        4
-              JR        Z,SHDRSKP
+              CP        3
+              JR        NC,SHDRSKP                  ; suspension or chaining: keep CURDRV
               POP       AF
               LD        (CURDRV),A
               RET
