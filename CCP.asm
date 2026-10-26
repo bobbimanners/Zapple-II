@@ -1,11 +1,12 @@
-; Zapple-II AUX CCP 1.5 (Stage 26; SUBMIT/XSUB restoration)
+; Zapple-II AUX CCP 1.6 (Stage 28; compact history and WordStar editor)
 ; Standard CP/M 2.2 BDOS for built-ins; private BDOS F7 for program chaining.
 ; Requires Stage 13 kernel: F7 copies launch FCB + FCB1 + FCB2 + command tail.
 ; Transient program memory is AUX; tab switches retain command and stack.
 ; F7 parameter block: 36-byte COM FCB, 16-byte default FCB1,
 ; 16-byte default FCB2, 128-byte command tail (CP/M 0080h format).
             ORG     0100H
-START       LD      DE,BANNER
+START       CALL    EDRESTORE                  ; safe no-op on a fresh tab
+            LD      DE,BANNER
             CALL    PRINT
 MAINLOOP    CALL    PROMPT
             CALL    READLINE
@@ -71,6 +72,10 @@ CSEOL       LD      (ARGPTR),HL
             LD      DE,KHELP
             CALL    MATCH
             JP      Z,DOHELP
+            LD      HL,(CMDPTR)
+            LD      DE,KHIST
+            CALL    MATCH
+            JP      Z,DOHIST
             LD      HL,(CMDPTR)
             LD      DE,KCLS
             CALL    MATCH
@@ -158,7 +163,9 @@ RLSUBCALL   LD      (BXTAIL),HL                 ; address of BDOS 10 count byte
             CALL    0005H                      ; ask MAIN for next $$$.SUB record
             DEC     A                          ; only A=1 means a valid record
             JR      Z,RLHAVE                    ; already echoed by CCPSUB
-RLKEYBD     LD      DE,INBUF                  ; physical BDOS 10 (proven Stage 25.2 editor)
+RLKEYBD     JP      EDSTART
+; Original BDOS 10 path retained for reference and XSUB-independent editing.
+RLKEYOLD    LD      DE,INBUF                  ; physical BDOS 10 (proven Stage 25.2 editor)
             LD      A,78
             LD      (DE),A
             LD      C,10
@@ -548,6 +555,15 @@ PRINTNUM    CP      10
 NUMSINGLE   ADD     A,'0'
             JP      OUT
 
+; Diagnostics only: query local AUX history without bank transfers.
+; HIST itself will be counted as a command, so 1 is expected in a fresh tab.
+DOHIST      LD      DE,HISTMSG
+            CALL    PRINT
+            LD      A,(EDCOUNT)
+            CALL    PRINTNUM
+            LD      DE,HISTEND
+            CALL    PRINT
+            JP      MAINLOOP
 DOHELP      LD      DE,HELPMSG
             CALL    PRINT
             JP      MAINLOOP
@@ -1079,7 +1095,7 @@ OUT         PUSH    AF
             POP     AF
             RET
 
-BANNER      DEFM    'Zapple-II AUX CCP 1.5 (Stage 26)'
+BANNER      DEFM    'Zapple-II AUX CCP 1.6.9 (Stage 28.9 guarded restore)'
             DEFB    13,'$'
 KDIR        DEFM    'DIR'
             DEFB    0
@@ -1092,6 +1108,8 @@ KREN        DEFM    'REN'
 KUSER       DEFM    'USER'
             DEFB    0
 KHELP       DEFM    'HELP'
+            DEFB    0
+KHIST       DEFM    'HIST'
             DEFB    0
 KCLS        DEFM    'CLS'
             DEFB    0
@@ -1133,6 +1151,9 @@ FAILMSG     DEFM    'File operation failed'
 ERASK       DEFM    'Erase wildcard matches (Y/N)? $'
 EXFAIL      DEFM    'Program launch failed (requires Stage 13 kernel)'
             DEFB    13,'$'
+HISTMSG     DEFM    'AUX history count: $'
+HISTEND     DEFM    '/10'
+            DEFB    13,'$'
 HELPMSG     DEFM    'DIR ERA REN TYPE USER    CLS BANKS CACHE [RESET]'
             DEFB    13
             DEFM    'TERM VT100/SOROC/H19/H89/VT52   TAB LIST/HELP'
@@ -1144,6 +1165,10 @@ HELPMSG     DEFM    'DIR ERA REN TYPE USER    CLS BANKS CACHE [RESET]'
             DEFM    'XSUB BYE  A:..P:  program [args]'
             DEFB    13
             DEFM    'SAVE n file.ext (after a transient)'
+            DEFB    13
+            DEFM    'Edit: ^S/^D left/right, ^G DEL, ^Q^S/^Q^D BOL/EOL'
+            DEFB    13
+            DEFM    'History: ^E/^X or Up/Down, ^Y clears line'
             DEFB    13,'$'
 SAVEWARN    DEFM    'SAVE unavailable: AUX CCP overwrote transient RAM'
             DEFB    13,'$'
@@ -1178,3 +1203,467 @@ TABCAN      DEFS    20                          ; TAB action-first canonical arg
 ; both INBUF and LINE have 124 bytes reserved in Stage 25.2.
 RLSUBPTR    LD      HL,INBUF+1
             JP      RLSUBCALL
+
+; Stage 28 command editor. No MAIN kernel changes are required.
+; BDOS 6 / E=FF reads raw keys, so the supervisor still sees OA+hotkeys.
+; Everything below belongs to the executing AUX session (independent history).
+; Apple II: LEFT=08h, RIGHT=15h, UP=0Bh, DOWN=0Ah.
+; WordStar: ^S/^D left/right, ^E/^X history, ^G delete,
+;           ^Q^S start of line, ^Q^D end of line; DEL backspaces.
+; Apple II's left arrow and ^H both produce 08h, so both move left.
+; ^Y clears the line; ^C cancels without killing the CCP.
+; History holds 10 entries of 75 chars (+ NUL in each 76-byte slot).
+; Interactive editing still accepts up to 118 characters; history truncates
+; commands longer than 75 chars so four tab histories fit in $0400-$0FFF.
+;
+EDSTART     XOR     A
+            LD      (EDLEN),A
+            LD      (EDPOS),A
+            LD      (EDNAV),A
+            LD      (EDPREFIX),A
+            LD      (LINE),A
+EDWAIT      LD      E,0FFH
+            LD      C,6
+            CALL    0005H
+            OR      A
+            JR      Z,EDWAIT
+            CP      3
+            JP      Z,EDCANCEL
+            LD      B,A
+            LD      A,(EDPREFIX)
+            OR      A
+            JR      Z,EDNORMKEY
+            XOR     A
+            LD      (EDPREFIX),A
+            LD      A,B
+            CP      13H                    ; ^Q ^S = beginning of line
+            JP      Z,EDBOL
+            CP      04H                    ; ^Q ^D = end of line
+            JP      Z,EDEOL
+            JP      EDWAIT
+EDNORMKEY   LD      A,B
+            CP      13
+            JP      Z,EDENTER
+            CP      11H                    ; ^Q prefix
+            JR      NZ,EDOTHER
+            LD      A,1
+            LD      (EDPREFIX),A
+            JR      EDWAIT
+EDOTHER     CP      08H                    ; Apple II left arrow / ^H (same scan code)
+            JP      Z,EDLEFT                ; DEL still backspaces
+            CP      7FH                    ; Delete key
+            JP      Z,EDBACK
+            CP      13H                    ; ^S: left
+            JP      Z,EDLEFT
+            CP      04H                    ; ^D: right
+            JP      Z,EDRIGHT
+            CP      15H                    ; right arrow
+            JP      Z,EDRIGHT
+            CP      07H                    ; ^G: delete under cursor
+            JP      Z,EDDELETE
+            CP      05H                    ; ^E: previous history
+            JP      Z,EDUP
+            CP      0BH                    ; up arrow
+            JP      Z,EDUP
+            CP      18H                    ; ^X: next history
+            JP      Z,EDDOWN
+            CP      0AH                    ; down arrow
+            JP      Z,EDDOWN
+            CP      19H                    ; ^Y: clear line
+            JP      Z,EDCLEAR
+            CP      01H                    ; ^A: beginning (additional shortcut)
+            JP      Z,EDBOL
+            CP      06H                    ; ^F: end (additional shortcut)
+            JP      Z,EDEOL
+            CP      ' '
+            JP      C,EDWAIT
+            CP      07FH
+            JP      NC,EDWAIT
+            JP      EDINSERT
+;
+; Position changes only. Output existing character on right movement so
+; Soroc needs no terminal-specific ESC sequences or cursor-addressing.
+EDLEFT      LD      A,(EDPOS)
+            OR      A
+            JP      Z,EDWAIT
+            DEC     A
+            LD      (EDPOS),A
+            LD      A,08H
+            CALL    OUT
+            JP      EDWAIT
+EDRIGHT     LD      A,(EDPOS)
+            LD      B,A
+            LD      A,(EDLEN)
+            CP      B
+            JP      Z,EDWAIT
+            LD      A,B
+            LD      E,A
+            LD      D,0
+            LD      HL,LINE
+            ADD     HL,DE
+            LD      A,(HL)
+            CALL    OUT
+            LD      A,(EDPOS)
+            INC     A
+            LD      (EDPOS),A
+            JP      EDWAIT
+EDBOL       LD      A,(EDPOS)
+            LD      B,A
+            CALL    EDBS
+            XOR     A
+            LD      (EDPOS),A
+            JP      EDWAIT
+EDEOL       LD      A,(EDPOS)
+            LD      B,A
+            LD      A,(EDLEN)
+            SUB     B
+            LD      B,A
+            LD      HL,LINE
+            LD      A,(EDPOS)
+            LD      E,A
+            LD      D,0
+            ADD     HL,DE
+            CALL    EDSFX
+            LD      A,(EDLEN)
+            LD      (EDPOS),A
+            JP      EDWAIT
+;
+; Insert at cursor, always in insert mode. Shift includes the terminating NUL.
+EDINSERT    LD      (EDCHAR),A
+            LD      A,(EDLEN)
+            CP      118
+            JP      NC,EDWAIT
+            LD      E,A
+            LD      D,0
+            LD      HL,LINE
+            ADD     HL,DE                 ; HL -> old NUL
+            PUSH    HL
+            POP     DE
+            INC     DE                    ; DE -> shifted NUL
+            LD      B,A
+            LD      A,(EDPOS)
+            LD      C,A
+            LD      A,B
+            SUB     C
+            INC     A
+            LD      C,A
+            LD      B,0
+            LDDR                          ; backwards copy, safe overlap
+            LD      A,(EDPOS)
+            LD      E,A
+            LD      D,0
+            LD      HL,LINE
+            ADD     HL,DE
+            LD      A,(EDCHAR)
+            LD      (HL),A
+            LD      A,(EDLEN)
+            INC     A
+            LD      (EDLEN),A
+            LD      A,(EDPOS)
+            INC     A
+            LD      (EDPOS),A
+            DEC     A                     ; original edit offset
+            LD      E,A
+            LD      D,0
+            LD      HL,LINE
+            ADD     HL,DE
+            LD      C,A
+            LD      A,(EDLEN)
+            SUB     C
+            LD      B,A
+            CALL    EDSFX                ; rewrite inserted char and rest
+            LD      A,(EDLEN)
+            LD      B,A
+            LD      A,(EDPOS)
+            LD      C,A
+            LD      A,B
+            SUB     C
+            LD      B,A
+            CALL    EDBS                 ; put cursor after inserted char
+            JP      EDWAIT
+;
+; DEL (^G) removes the character under the cursor, then redraws tail.
+EDDELETE    LD      A,(EDPOS)
+            LD      B,A
+            LD      A,(EDLEN)
+            CP      B
+            JP      Z,EDWAIT
+            LD      A,B
+            LD      E,A
+            LD      D,0
+            LD      HL,LINE
+            ADD     HL,DE
+            PUSH    HL
+            POP     DE                    ; DE -> LINE+pos
+            INC     HL                    ; HL -> LINE+pos+1
+            LD      A,(EDLEN)
+            SUB     B                     ; include old NUL in copy
+            LD      C,A
+            LD      B,0
+            LDIR
+            LD      A,(EDLEN)
+            DEC     A
+            LD      (EDLEN),A
+            LD      B,A
+            LD      A,(EDPOS)
+            LD      C,A
+            LD      A,B
+            SUB     C
+            LD      B,A
+            LD      E,C
+            LD      D,0
+            LD      HL,LINE
+            ADD     HL,DE
+            CALL    EDSFX
+            LD      A,' '
+            CALL    OUT                  ; clear old final column
+            LD      A,(EDLEN)
+            LD      B,A
+            LD      A,(EDPOS)
+            LD      C,A
+            LD      A,B
+            SUB     C
+            INC     A
+            LD      B,A
+            CALL    EDBS
+            JP      EDWAIT
+EDBACK      LD      A,(EDPOS)
+            OR      A
+            JP      Z,EDWAIT
+            DEC     A
+            LD      (EDPOS),A
+            LD      A,08H
+            CALL    OUT
+            JP      EDDELETE
+;
+; B=character count; HL -> starting bytes. OUT preserves BC, DE, HL.
+EDSFX       LD      A,B
+            OR      A
+            RET     Z
+EDSFL       LD      A,(HL)
+            CALL    OUT
+            INC     HL
+            DJNZ    EDSFL
+            RET
+; Move the cursor left B positions without erasing any text.
+EDBS        LD      A,B
+            OR      A
+            RET     Z
+EDBSL       LD      A,08H
+            CALL    OUT
+            DJNZ    EDBSL
+            RET
+;
+; EDCLEAR uses the same whole-line redraw as history navigation.
+EDCLEAR     LD      HL,EDEMPTY
+            CALL    EDREDRAW
+            JP      EDWAIT
+;
+; Every history navigation redraws in-place; temporary draft is restored
+; when moving down past newest history entry. No screen-wide repaint.
+EDUP        LD      A,(EDCOUNT)
+            OR      A
+            JP      Z,EDWAIT
+            LD      B,A
+            LD      A,(EDNAV)
+            CP      B
+            JP      Z,EDWAIT
+            OR      A
+            JR      NZ,EDUPH
+            LD      HL,LINE
+            LD      DE,EDDRAFT
+            LD      BC,120
+            LDIR
+EDUPH       LD      A,(EDNAV)
+            INC     A
+            LD      (EDNAV),A
+            CALL    EDSELECT
+            CALL    EDREDRAW
+            JP      EDWAIT
+EDDOWN      LD      A,(EDNAV)
+            OR      A
+            JP      Z,EDWAIT
+            DEC     A
+            LD      (EDNAV),A
+            JR      NZ,EDDOWNH
+            LD      HL,EDDRAFT
+            JR      EDDOWNR
+EDDOWNH     CALL    EDSELECT
+EDDOWNR     CALL    EDREDRAW
+            JP      EDWAIT
+;
+; Returns HL -> history[ (head - navigation + 10) % 10 ].
+EDSELECT    LD      A,(EDHEAD)
+            LD      B,A
+            LD      A,(EDNAV)
+            LD      C,A
+            LD      A,B
+            SUB     C
+            JR      NC,EDSELP
+            ADD     A,10
+EDSELP      JP      EDGETPTR
+;
+; A=slot (0..9), HL=slot address.
+EDGETPTR    LD      L,A
+            LD      H,0
+            ADD     HL,HL
+            LD      DE,EDPTRS
+            ADD     HL,DE
+            LD      E,(HL)
+            INC     HL
+            LD      D,(HL)
+            EX      DE,HL
+            RET
+;
+; HL points to NUL-terminated replacement. EDPOS and EDLEN track
+; current display. History includes fully normalized uppercase commands.
+EDREDRAW    PUSH    HL
+            LD      A,(EDPOS)
+            LD      B,A
+            CALL    EDBS
+            LD      A,(EDLEN)
+            LD      B,A
+            LD      C,B
+            LD      A,B
+            OR      A
+            JR      Z,EDRBSP
+EDRSP       LD      A,' '
+            CALL    OUT
+            DJNZ    EDRSP
+EDRBSP      LD      B,C
+            CALL    EDBS
+            POP     HL
+            LD      DE,LINE
+            LD      B,0
+EDRCP       LD      A,(HL)
+            LD      (DE),A
+            OR      A
+            JR      Z,EDRDONE
+            CALL    OUT
+            INC     HL
+            INC     DE
+            INC     B
+            JR      EDRCP
+EDRDONE     LD      A,B
+            LD      (EDLEN),A
+            LD      (EDPOS),A
+            RET
+;
+; Uppercase only on Enter, keeping case as typed during editing.
+EDENTER     LD      A,13
+            CALL    OUT
+            LD      HL,LINE
+            LD      A,(EDLEN)
+            LD      B,A
+            LD      A,B
+            OR      A
+            RET     Z                     ; no history entry for blank commands
+EDUPCASE    LD      A,(HL)
+            CP      'a'
+            JR      C,EDUCNEXT
+            CP      'z'+1
+            JR      NC,EDUCNEXT
+            SUB     32
+            LD      (HL),A
+EDUCNEXT    INC     HL
+            DJNZ    EDUPCASE
+            CALL    EDADD
+            CALL    EDSAVE
+            RET
+EDCANCEL    LD      A,13
+            CALL    OUT
+            XOR     A
+            LD      (LINE),A
+            RET
+;
+; Add every nonblank typed command to the ring. Kernel F8/11 persists this
+; ring across transient reloads; editor remains tab-local between saves.
+EDADD       LD      A,(EDHEAD)
+            CALL    EDGETPTR
+            EX      DE,HL                ; DE=history write slot
+            LD      HL,LINE
+            LD      BC,76
+            LDIR
+            DEC     DE                  ; last byte of destination history record
+            XOR     A
+            LD      (DE),A              ; ensure NUL for long (102+ byte) commands
+            LD      A,(EDHEAD)
+            INC     A
+            CP      10
+            JR      C,EDADDSLOT
+            XOR     A
+EDADDSLOT      LD      (EDHEAD),A
+            LD      A,(EDCOUNT)
+            CP      10
+            RET     Z
+            INC     A
+            LD      (EDCOUNT),A
+            RET
+;
+; No history slot crosses a bank. Dedicated AUX per-tab memory survives
+; cooperative tab switches, not CCP re-execution after a .COM program.
+EDLEN       DEFB    0
+EDPOS       DEFB    0
+EDNAV       DEFB    0
+EDPREFIX    DEFB    0
+EDCHAR      DEFB    0
+EDEMPTY     DEFB    0
+EDPTRS      DEFW    EDH0,EDH1,EDH2,EDH3,EDH4
+            DEFW    EDH5,EDH6,EDH7,EDH8,EDH9
+EDDRAFT     DEFS    120
+EDHEAD      DEFB    0           ; F8/11-12 persists 762 bytes from EDHEAD
+EDCOUNT     DEFB    0
+EDH0        DEFS    76
+EDH1        DEFS    76
+EDH2        DEFS    76
+EDH3        DEFS    76
+EDH4        DEFS    76
+EDH5        DEFS    76
+EDH6        DEFS    76
+EDH7        DEFS    76
+EDH8        DEFS    76
+EDH9        DEFS    76
+
+; Private F8 11/12 transfer the 762-byte history block to/from reserved
+; screen-bank AUX storage, one 768-byte slot per logical session.
+; Not part of the SAVE snapshot, the TPA, or the display buffer.
+; Restore into a scratch area first. The kernel must not replace the
+; live editor ring while its F8 call is still on the AUX call stack.
+; F8/12 returns A=1 only when a valid per-tab snapshot was transferred.
+EDRESTORE   LD      A,12
+            LD      HL,EDTEMP
+            CALL    EDTRANSFER
+            CP      1
+            RET     NZ                    ; new tab: leave initial empty ring
+            LD      A,(EDTEMP)            ; EDHEAD: next slot, 0..9
+            CP      10
+            RET     NC
+            LD      A,(EDTEMP+1)          ; EDCOUNT: populated slots, 0..10
+            CP      11
+            RET     NC
+            LD      HL,EDTEMP
+            LD      DE,EDHEAD
+            LD      BC,762
+            LDIR                          ; now fully in AUX, no bank switching
+            ; Unused history slots may contain assembler DEFS fill bytes.
+            ; All slots get a terminal NUL to bound editor redraw/recall.
+            LD      HL,EDH0+75
+            LD      DE,76
+            LD      B,10
+            XOR     A
+EDRNUL      LD      (HL),A
+            ADD     HL,DE
+            DJNZ    EDRNUL
+            RET
+EDSAVE      LD      A,11
+            LD      HL,EDHEAD
+EDTRANSFER  LD      (BXID),A
+            LD      (BXTAIL),HL
+            LD      DE,BXID
+            LD      C,0F8H
+            CALL    0005H
+            RET
+
+; Temporary restore destination: never read during normal editing.
+; 2 bytes of metadata + ten 76-byte command slots = 762 bytes.
+EDTEMP      DEFS    762

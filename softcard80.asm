@@ -2728,6 +2728,198 @@ F2P_CUR       LD        A,(CURDRV)
 ; Keep shared CLOSE compatibility constant while removing legacy CCP table.
 CLOSE_TRIM_ONE EQU       1
 ; Stage 25: legacy MAIN CCP builtin table removed (former $5800).
+              ORG       05700H
+; Stage 28.4: compact command history in the safe part of each reserved
+; snapshot RamWorks bank (2,5,10,15).  Each logical tab owns one $300
+; slot.  Slots begin at AUX $0400, $0700, $0A00, $0D00 and end by $0FFF.
+; Avoid $0000-$03FF (AUX zero page/stack and other low-memory state) and
+; $B000-$BFFF (language-card window). HGR is $1000-$2FFF; SAVE uses
+; $3000-$AFFF.  Each 762-byte record: head+count+10*76-char slots.
+; F8/11 stores, F8/12 restores.  Uses MAIN AUXSTAGE scratch (128 bytes).
+; The active CCP requests restore into a scratch record, *not* its live
+; EDHEAD/EDCOUNT/EDH0..9 state. CCP validates/commits after F8 returns.
+; Store path is unchanged from the successfully tested Stage 28.8.
+AXHSTORE      LD        A,(VSOK)
+              OR        A
+              RET       Z                         ; no backing banks in single-bank system
+              XOR       A
+              LD        (AXHOP),A
+              CALL      AXHINIT
+              JP        NZ,AXBAD
+              CALL      AXHCOPY
+              CALL      AXHFLAG
+              LD        (HL),1
+              XOR       A
+              LD        L,A
+              RET
+AXHLOAD       LD        A,(VSOK)
+              OR        A
+              JR        Z,AXHNONE
+              CALL      AXHFLAG
+              LD        A,(HL)
+              OR        A
+              JR        Z,AXHNONE                        ; new tab has no recorded commands
+              LD        A,1
+              LD        (AXHOP),A
+              CALL      AXHINIT
+              JP        NZ,AXBAD
+              CALL      AXHCOPY
+              LD        A,1                          ; an actual history image was transferred
+              LD        L,A                          ; F8/12: 1=valid image, 0=no image
+              RET
+AXHNONE       XOR       A
+              LD        L,A
+              RET
+; A per-tab validity flag lives in MAIN and is reset by SHINIT/SHCHECK.
+AXHFLAG       LD        A,(TABMODE)
+              LD        E,A
+              LD        D,0
+              LD        HL,HVALID
+              ADD       HL,DE
+              RET
+AXHINIT       LD        HL,(FILEBUF)             ; caller AUX EDHEAD pointer
+              LD        (AXHSRC),HL
+              LD        DE,761
+              ADD       HL,DE
+              LD        A,H
+              CP        0DEH
+              JR        NC,AXHBADPTR
+              LD        HL,(AXHSRC)
+              LD        A,H
+              OR        A
+              JR        Z,AXHBADPTR
+              LD        A,(TABMODE)
+              AND       3
+              LD        B,A
+              ADD       A,A
+              ADD       A,B                      ; 3 * slot index
+              ADD       A,04H                     ; AUX $0400 + slot * $0300
+              LD        H,A
+              LD        L,0
+              LD        (AXHDST),HL
+              LD        A,6
+              LD        (AXHCNT),A
+              XOR       A
+              RET
+AXHBADPTR    LD        A,1
+              OR        A
+              RET
+; Transfer 5*128 + 122 = 762 bytes per 768-byte slot.
+; Switching RamWorks banks is legal only while inside the MAIN bridge.
+AXHCOPY       LD        A,(AXHCNT)
+              CP        1
+              LD        DE,128
+              JR        NZ,AXHLENOK
+              LD        DE,122
+AXHLENOK      LD        (AXHSTEP),DE
+              LD        A,(AXHOP)
+              OR        A
+              JR        NZ,AXHFROMBK
+              ; Store: live AUX session -> MAIN scratch -> backing bank.
+              LD        A,(TABMODE)
+              CALL      TABPHYS
+              CALL      AXBANK
+              LD        HL,(AXHSRC)
+              LD        DE,AUXSTAGE
+              LD        BC,(AXHSTEP)
+              CALL      LCA2M
+              CALL      VSSBANK
+              CALL      AXBANK
+              LD        HL,AUXSTAGE
+              LD        DE,(AXHDST)
+              LD        BC,(AXHSTEP)
+              CALL      AXM2A
+              JR        AXHADV
+AXHFROMBK     CALL      VSSBANK
+              CALL      AXBANK
+              ; History restore reads from a RESERVED RamWorks bank.
+              ; Unlike a live transient bank, it has no LC copy gateway
+              ; at LCA2MR. LCA2M would otherwise jump into arbitrary
+              ; memory in that bank and crash the running machine.
+              ; Install only the self-contained LIA2M routine into this
+              ; bank's AUX LC before attempting the read. AXM2A runs
+              ; from MAIN and therefore needs no AUX executable shim.
+              LD        HL,LIA2M
+              LD        DE,LCA2MR
+              LD        BC,LINOP-LIA2M
+              CALL      AXM2A
+              LD        HL,(AXHDST)
+              LD        DE,AUXSTAGE
+              LD        BC,(AXHSTEP)
+              CALL      LCA2M
+              LD        A,(TABMODE)
+              CALL      TABPHYS
+              CALL      AXBANK
+              LD        HL,AUXSTAGE
+              LD        DE,(AXHSRC)
+              LD        BC,(AXHSTEP)
+              CALL      AXM2A
+AXHADV        LD        DE,(AXHSTEP)
+              LD        HL,(AXHSRC)
+              ADD       HL,DE
+              LD        (AXHSRC),HL
+              LD        HL,(AXHDST)
+              ADD       HL,DE
+              LD        (AXHDST),HL
+              LD        A,(AXHCNT)
+              DEC       A
+              LD        (AXHCNT),A
+              JP        NZ,AXHCOPY
+              LD        A,(TABMODE)
+              CALL      TABPHYS
+              CALL      AXBANK                   ; restore live bank, not screen bank
+              RET
+AXHOP         DEFB      0
+AXHCNT        DEFB      0
+AXHSTEP       DEFW      0
+AXHSRC        DEFW      0
+AXHDST        DEFW      0
+
+; Stage 28.6: the CCP editor polls BDOS 6 instead of BDOS 10,
+; so it never enters the existing kernel cursor-on path.  Interpose
+; TSKKEY and physical CUON/CUOFF without changing BDOS 6's footprint.
+; Carry remains set only when TSKKEY queued an OA tab switch.
+AB6CUR        CALL      TSKKEY
+              JR        C,AB6CURSW
+              OR        A
+              JR        NZ,AB6CURKEY
+              LD        A,(CUACTIVE)
+              OR        A
+              JR        NZ,AB6CURZERO                ; already drawn
+              CALL      SHISCCP                       ; only foreground CCP gets cursor
+              JR        NZ,AB6CURZERO
+              CALL      CUON
+              CALL      AB6BANKREST                   ; cursor maps physical bank 0
+AB6CURZERO    XOR       A
+              LD        L,A
+              RET
+AB6CURKEY     PUSH      AF
+              CALL      CUOFF                         ; hide before editor changes text
+              CALL      AB6BANKREST                   ; return to active AUX bank
+              POP       AF
+              LD        L,A
+              OR        A                             ; no OA switch: clear carry
+              RET
+AB6CURSW      CALL      CUOFF                         ; hide before queued tab switch
+              CALL      AB6BANKREST
+              SCF                                     ; preserve deferred switch signal
+              RET
+AB6BANKREST   LD        A,(TABMODE)
+              CALL      TABPHYS
+              JP        AXBANK
+
+; Stage 28.8: keep C_SENDA's original instruction footprint.
+; This out-of-line helper hides the CCP cursor before *any* output,
+; preserving the Stage 28.7 fix without enlarging packed BDOS code.
+CSOUTPRE      LD        A,(CUACTIVE)
+              OR        A
+              JR        Z,CSOUTEND
+              PUSH      DE
+              CALL      CUOFF
+              CALL      AB6BANKREST
+              POP       DE
+CSOUTEND      JP        CFO_CHECK
+
               ORG       05900H
 AXF7F8        CP        0F7H
               JP        Z,AXEXEC
@@ -2926,11 +3118,18 @@ FC5DONE       JP        IO_END                        ; restores app S2, sets L=
 ; A request is a BDOS $F7 call with DE -> 36-byte AUX FCB (COM extension).
 ; No direct AUX->AUX replacement occurs; old transient exits AXGATE first.
 SHFLAGS       DEFS      16
+HVALID        DEFS      16        ; ten-command history valid, indexed by TABMODE
 ; This is an out-of-line replacement for TSKINIT's original first
 ; instruction (LD HL,SCHWAIT, three bytes).  The jump occupies exactly
 ; the same three bytes in the crowded $0800-$0AFF region.
 SHINIT        LD        HL,SHFLAGS
               LD        DE,SHFLAGS+1
+              LD        BC,15
+              XOR       A
+              LD        (HL),A
+              LDIR
+              LD        HL,HVALID
+              LD        DE,HVALID+1
               LD        BC,15
               XOR       A
               LD        (HL),A
@@ -2957,6 +3156,9 @@ SHCMP         LD        A,(DE)
               DJNZ      SHCMP
               CALL      SHPTR
               LD        (HL),1
+              ; Do NOT reset HVALID on every CCP.COM reload: a running child
+              ; has just exited and its history must survive the re-load.
+              ; SHINIT / SHNEW reset it on boot or genuinely new sessions.
               CALL      SVSFPTR                         ; fresh CCP, no completed child
               LD        (HL),0
               RET
@@ -3225,6 +3427,8 @@ S8AUXBIND     LD        A,(CURDRV)
 ; Reuses the space formerly occupied by the disabled Stage 18 trace.
               ORG       05F60H
 SHNEW         CALL      SHNOARG
+              CALL      AXHFLAG
+              LD        (HL),0                          ; genuinely new shell gets empty history
               LD        HL,PATHBUF2
               LD        B,36
               XOR       A
@@ -5891,9 +6095,11 @@ AB6IN         CALL      SCHISFG
               XOR       A
               LD        L,A
               RET
+; Stage 28.6: new CCP nonblocking editor uses the same kernel
+; cursor as other console input.  Call replaces CALL TSKKEY byte-for-byte.
 AB6KEY        CALL      C_RAWIO
-              CALL      TSKKEY
-              RET       NC                             ; no shortcut: return raw character/0
+              CALL      AB6CUR                         ; handles TSKKEY and cursor
+              RET       NC                             ; same BDOS 6 return contract
               LD        A,0F6H                         ; deferred BDOS 6 poll
               LD        L,A
               RET
@@ -6527,9 +6733,14 @@ VTNOGATE      POP       HL
 ; BIOS console output passes through C_SENDA (cooked and raw).
 ; Only foreground output polls the keyboard.  Preserve a pending
 ; ordinary key; consume ^S/^Q, which applications must not see.
+; Stage 28.7: BDOS 6 also polls for ^C during DIR/TYPE.  That polling
+; can leave CUON's reverse-video cursor covering the next output cell.
+; Remove it BEFORE sending any output, otherwise CUOFF later restores
+; its old background byte over a character written by DIR.
+; Only remap AUX on the uncommon path where a cursor was active.
 C_SENDA       PUSH      AF                             ; A is the character being sent
               PUSH      HL                             ; HL is the 6502 output vector
-              CALL      CFO_CHECK
+              CALL      CSOUTPRE                       ; compact: same size as Stage 28.6
               POP       HL
               POP       AF
               LD        (AREG),A
@@ -8864,6 +9075,10 @@ SHRECPR       DEFM      '[R]etry or [B]YE to ProDOS? $'
 ; to the submitted command rather than creating a second reader.
 AXBEXTRA      CP        10
               JP        Z,AXBSUBMIT
+              CP        11
+              JP        Z,AXHSTORE
+              CP        12
+              JP        Z,AXHLOAD
               JP        CCPBAD
 AXBSUBMIT     LD        HL,(FILEBUF)
               LD        (AXSUBDST),HL
