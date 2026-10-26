@@ -121,7 +121,7 @@ FILEBUF       DEFS      128                            ; Command args go here to
 
               ORG       0100H
 
-PROGSTRT      CALL      CCP                            ; Run the CCP
+PROGSTRT      JP        BDOSINIT                       ; direct entry must cold-initialize system before CCP startup
 
 ; Phase 2: small MAIN-only bank-control helper and shell command.
 ; MAIN $0200..$02FF is unused by AUX transients and by SAVE's
@@ -417,10 +417,8 @@ TB_SWCONT     PUSH      BC
               JR        Z,TB_RESUM
               PUSH      BC
               CALL      VSSTSAVE                       ; save active 6502 parser/cursor state
-              ; Diagnostic: force the original reliable Stage 1 physical
-              ; 80-column capture before leaving the foreground tab.
-              ; This MUST happen before TABMODE changes, and is deliberately
-              ; limited to manual foreground switches (not scheduler ticks).
+              ; Capture the foreground 80-column screen before leaving it.
+              ; Do not capture video on background scheduler ticks.
               CALL      SCHISFG
               CALL      Z,VSSAVE
               CALL      TABSAVE
@@ -442,12 +440,12 @@ TB_RESUM      CALL      UNIMP                          ; bell, no spurious CCP o
               CALL      NZ,VSREST
 TB_GO         LD        A,(TABMODE)
               LD        (SCHFG),A
-              CALL      TB_VMARK                       ; visited (regardless of CCP/COM status)
+              CALL      TB_VISMARK                     ; first visit queues AUX CCP startup
               CALL      VSSELECT                       ; update 6502 foreground ownership
               CALL      SCHWAKE                        ; this tab may be waiting for CONIN
               LD        A,SCHFGQ
               LD        (SCHQLEFT),A                   ; a newly selected tab is foreground
-              CALL      TABRESUM
+              CALL      TB_BOOTIFNEW                   ; new tab: A:CCP.COM, else parked task
               RET
 ; One byte per CCP session. Saved display may already contain the
 ; A> prompt, so do not print it again after restoring that screen.
@@ -2449,7 +2447,7 @@ XSCEXIT       POP       HL
               POP       BC
               RET
 
-; MAIN CCP ERA/BYE Y/N uses C_READ directly, not BDOS 0Ah/01h.
+; Native MAIN BYE confirmation uses C_READ directly, not BDOS 0Ah/01h.
 ; Echo synthetic input just like C_READ does, otherwise original read.
 XSCCPKEY      CALL      XSCHAR
               JP        NC,C_READ
@@ -2811,74 +2809,9 @@ F2P_CUR       LD        A,(CURDRV)
               POP       HL
               RET
 
-              ORG       05800H
-BITABLE       DEFM      'DIR  '
-              DEFB      081H
-              DEFW      DIRECT
-              DEFM      'ERA  '
-              DEFB      1
-              DEFW      ERASE
-              DEFM      'REN  '
-              DEFB      1
-              DEFW      RENAME
-              DEFM      'TYPE '
-              DEFB      1
-              DEFW      BITYPE
-              DEFM      'SAVE '
-              DEFB      2
-              DEFW      BISAVE
-              DEFM      'BYE  '
-              DEFB      0
-              DEFW      CCPBYE
-              DEFM      'TERM '
-              DEFB      1
-              DEFW      CCPTERM
-              DEFM      'CACHE'
-              DEFB      081H                           ; zero or one argument (RESET)
-              DEFW      CCPCACHE
-              DEFM      'CLS  '
-              DEFB      0
-              DEFW      CCPCLS
-              DEFM      'BANKS'
-              DEFB      0
-              DEFW      CCPBANKS
-              DEFM      'TAB  '
-              DEFB      0FEH                           ; TAB's variable argument syntax
-              DEFW      CCPTAB
-              DEFM      'HELP '
-              DEFB      0
-              DEFW      CCPHELP
-              DEFM      'XSUB '
-              DEFB      0
-              DEFW      CCPXSUB
-              DEFM      'USER '
-              DEFB      081H                           ; USER or USER n
-              DEFW      CCPUSER
-
-
-; =====================================================================
-; Stage 5: conservative CP/M 2.2 CLOSE EOF reconciliation.
-;
-; CP/M sets S2 bit 7 on OPEN. A program may explicitly clear it and
-; reduce RC to request a short file (e.g. $$$.SUB). On ProDOS the data
-; already reached disk during WRITE; CLOSE physically flushes via
-; CACHECLS.  Never infer an arbitrary new EOF from RC: that could
-; destroy a database whose FCB uses RC/EX for scratch bookkeeping.
-;
-; Stage 7 enables guarded CLOSE reconciliation for exactly ONE record.
-; The caller must explicitly clear S2 bit 7, and EX/S2/RC must describe
-; a new EOF exactly 128 bytes below an existing record-aligned EOF.
-; No cross-extent or arbitrary RC truncation is attempted.  Keep this
-; switch at 0 for a completely non-truncating safety baseline.
-; Test with disposable files before considering broader support.
-; =====================================================================
+; Keep shared CLOSE compatibility constant while removing legacy CCP table.
 CLOSE_TRIM_ONE EQU       1
-; Stage 23: native SAVE bridge ID 9 and per-tab low TPA backup.
-; Stage 19: safe native CCP builtin bridge from AUX CCP.COM.
-; BDOS $F7 still chains via AXEXEC. $F8 accepts an 81-byte record
-; from AUX DE: command ID then 80-byte normalized MAIN FILEBUF tail.
-; ID 8 is a pure query for the current TABMODE (session), returning A=L.
-; MAIN handlers run without replacing the AUX shell or changing disks.
+; Stage 25: legacy MAIN CCP builtin table removed (former $5800).
               ORG       05900H
 AXF7F8        CP        0F7H
               JP        Z,AXEXEC
@@ -2927,7 +2860,7 @@ AXBUILT       PUSH      DE
               JP        Z,AXBSESSION                  ; read active logical TABMODE for AUX prompt
               CP        9
               JP        Z,AXBSAVE                     ; native SAVE with preserved transient
-              JP        CCPBAD
+              JP        AXBEXTRA                     ; private SUBMIT fetch or unknown ID
 ; Pure query: no scheduler mutation, no terminal switch, no AUX pointers.
 ; AXGATE returns both A and HL to the transient caller.
 AXBSESSION    LD        A,(TABMODE)
@@ -2957,7 +2890,7 @@ AXBID         DEFB      0
 AXBPTR       DEFW      0
 
 ; Intercept TB_SWITCH (from either TAB n or TAB n EXCLUSIVE).
-; The native MAIN CCP still takes its original direct path.
+; MAIN services use this helper directly; no resident CCP parser remains.
 ; From AUX, never perform bank/display switching inside AXGATE.
 TB_SWGATE     LD        A,(AXMODE)
               OR        A
@@ -3070,9 +3003,10 @@ FC5SKIP       XOR       A                             ; leave EOF untouched
 FC5DONE       JP        IO_END                        ; restores app S2, sets L=result
 
               ORG       05C00H
-; Stage 12: optional file-loaded AUX CCP supervisor. MAIN CCP is still
-; fallback, and stays active for tabs which never launch CCP.COM.
-; SHFLAGS: 0 = ordinary MAIN CCP, 1 = AUX CCP.COM, 2 = launched child .COM.
+; Stage 25: AUX CCP supervisor. All tabs start A:CCP.COM.
+; No MAIN resident command interpreter. Missing CCP uses a minimal
+; R=retry/B=ProDOS recovery monitor (not an infinite launch loop).
+; SHFLAGS: 0 = no AUX shell/recovery, 1 = AUX CCP.COM, 2 = child .COM.
 ; A request is a BDOS $F7 call with DE -> 36-byte AUX FCB (COM extension).
 ; No direct AUX->AUX replacement occurs; old transient exits AXGATE first.
 SHFLAGS       DEFS      16
@@ -3094,7 +3028,7 @@ SHPTR         LD        A,(TABMODE)
               ADD       HL,DE
               RET
 
-; Attach only for explicit CCP invocation from the existing MAIN CCP.
+; Mark a launched CCP.COM as the supervisor-owned shell.
 ; A drive selection and any arguments don't affect the test.
 SHCHECK       LD        HL,PATHBUF2+1
               LD        DE,SHNAME
@@ -3130,7 +3064,7 @@ SHLOOP        CALL      SHPTR
               LD        A,(AXQUIT)
               CP        4
               JR        Z,SHLAUNCH
-              ; Shell RET, BDOS 0 or failed load => fallback to MAIN CCP.
+              ; Shell RET, BDOS 0 or failed load => recovery supervisor.
 SHSTOP        XOR       A
               LD        (HL),A
               RET
@@ -3160,9 +3094,7 @@ SHRZERO       LD        (HL),A
               LD        DE,PATHBUF2+1
               LD        BC,11
               LDIR
-              ; Temporary launch audit: print actual reload target. If
-              ; PIP still starts, the fault lies deeper in AUXRUN/loader.
-              ; Stage 18 reload target audit disabled after successful test.
+              ; Known-good Stage 18 launch record; no diagnostic console I/O.
               CALL      SHPTR
               LD        (HL),1
               CALL      AUXRUN
@@ -3170,8 +3102,8 @@ SHRZERO       LD        (HL),A
               CP        3
               RET       Z                           ; shell suspended normally
               JP        SHLOOP
-; Clear the MAIN page-zero default FCBS/tail before executing a child.
-; This stage deliberately supports argumentless programs only.
+; Clear MAIN default FCBs and command tail before reloading/booting CCP.
+; Application arguments travel through AXEXEC/F7, not through this helper.
 SHNOARG       LD        HL,FCB1
               LD        (DMAADDR),HL
               CALL      CLRFCB
@@ -3263,6 +3195,35 @@ SVNEWCHILD    CALL      SHPTR
               LD        (HL),0                          ; and its high-memory SAVE image
               RET
 
+; The regular TAB switch occupies a fixed MAIN memory region. Replace
+; its original visited-mark call with this same-sized CALL. SHFLAGS=3
+; is a short-lived sentinel for a never-used or KILLed tab, not a shell
+; state: TB_BOOTIFNEW consumes it after the video and scheduler are ready.
+TB_VISMARK    LD        A,(TABMODE)
+              CALL      TB_VPTR
+              LD        A,(HL)
+              OR        A
+              RET       NZ                             ; revisiting: don't restart CCP
+              LD        (HL),1                         ; now visited (TAB LIST membership)
+              XOR       A
+              LD        (CURDRV),A                     ; KILLed slot restarts in A:/USER 0
+              CALL      SHPTR
+              LD        (HL),3                         ; defer initial CCP launch
+              RET
+
+TB_BOOTIFNEW  CALL      SHPTR
+              LD        A,(HL)
+              CP        3
+              JP        NZ,TABRESUM                   ; existing tab: resume as before
+              CALL      SHNEW                         ; runs until yield/EXIT; no auto-resume
+              RET                                      ; avoid reentering suspended CCP
+
+; WBOOT vectors and DMA are initialized before entering here.
+; A user WBOOT intentionally reloads CCP (no resident interpreter exists).
+SHBOOTREPORT  JP        RWREPORT                       ; cold-boot report (3-byte call site)
+SHBOOTENTRY   CALL      SHNEW
+              JP        CCP                           ; permanent MAIN supervisor/recovery loop
+
               ORG       05F00H
 ; CP/M 2.2 permits programs to read/write IOBYTE at 0003h directly.
 ; Each AUX transient has a private 0003h; resident BIOS uses MAIN 0003h.
@@ -3302,25 +3263,29 @@ S8AUXBIND     LD        A,(CURDRV)
               LD        A,(LCB1RO)                     ; preserve original LC bank switch
               RET
 
-; Stage 18: trace the *actual* executable FCB used for shell reload.
-; Lives in spare $5F60-$5FFF.  No AUX CCP changes required.
+; First visit to a tab: launch A:CCP.COM using the same FCB/loader
+; path as the proven Stage 18 shell reload, with no command arguments.
+; No transient is active yet, and the new tab is already foreground.
+; If CCP.COM is missing, SHSTEP clears SHFLAGS and MAIN enters its
+; minimal retry/BYE recovery monitor. Later TAB visits must not retry.
+; Reuses the space formerly occupied by the disabled Stage 18 trace.
               ORG       05F60H
-SHRTRACE      LD        DE,SHRMSG
-              CALL      C_WRITESTR
-              LD        HL,PATHBUF2+1
-              LD        B,11
-SHRTLOOP      PUSH      HL
-              PUSH      BC
-              LD        E,(HL)
-              CALL      C_WRITE
-              POP       BC
-              POP       HL
+SHNEW         CALL      SHNOARG
+              LD        HL,PATHBUF2
+              LD        B,36
+              XOR       A
+SHNZERO       LD        (HL),A
               INC       HL
-              DJNZ      SHRTLOOP
-              LD        E,13
-              JP        C_WRITE
-SHRMSG        DEFM      '[AUX reload: '
-              DEFB      '$'
+              DJNZ      SHNZERO
+              LD        A,1                            ; explicit drive A regardless of CURDRV
+              LD        (PATHBUF2),A
+              LD        HL,SHNAME
+              LD        DE,PATHBUF2+1
+              LD        BC,11
+              LDIR
+              CALL      SHCHECK                       ; mark as shell, reset SAVE validity
+              CALL      AUXRUN
+              JP        SHSTEP                        ; handle child chain or shell termination
 
 ; Relocated resident routines: ample MAIN memory, separate from AUX TPA.
 ; Stage 20: cheap OA hotkey probe at safe syscall-return boundaries.
@@ -3369,17 +3334,7 @@ SCHHOT        LD        A,(0E000H)                     ; $C000: common fast path
 SHNOTOA       POP       BC
               RET
 
-              ORG       06000H
-; Short CCP help plus explicit blocked-input label for TAB LIST.
-CCPHELP       LD        DE,CCPH1
-              CALL      C_WRITESTR
-              LD        DE,CCPH2
-              JP        C_WRITESTR
-CCPH1         DEFM      'DIR ERA REN TYPE SAVE'
-              DEFB      13
-              DEFM      'BYE TERM XSUB USER'
-              DEFB      13,'$'
-
+; Stage 25: legacy CCP HELP removed (old $6000 block).
               ORG       06100H
 ; The S1 magic high nibble is the SOLE logical-open test. An application
 ; may change S2 (extent + CP/M flags), so we must never classify it via S2.
@@ -5443,17 +5398,7 @@ CCPNOWILD     CALL      ISWILD
               RET       Z
               JP        CCPBAD
 
-BITYPE        LD        HL,FCB1NAM
-              CALL      CCPNOWILD
-              RET       NZ
-              JP        TYPEFILE
-BISAVE        LD        HL,FCB2NAM
-              CALL      CCPNOWILD
-              RET       NZ
-              JP        SAVEFILE
-
-
-
+; Legacy MAIN built-in TYPE/SAVE wrappers removed (AUX implements both).
 
 ; Permanent scratch: main TPA is unused by auxiliary transients.
 ; Cached Apple II text row addresses for the software cursor.
@@ -6405,14 +6350,14 @@ BDOSINIT      DI
               LD        HL,BIOSWBOOT
               LD        (0001H),HL                     ; 0000H -> BIOS WBOOT JP (CP/M ABI)
               CALL      BPMSIGN
-              CALL      RWREPORT                       ; physical bank count and supported tabs
+              CALL      SHBOOTREPORT                   ; display banks, arm one-shot tab 0 startup
 
 ; Warm-boot path for BDOS 0, RST 0, JP 0000H and Ctrl-C.
 ; Keep the existing BDOS reset semantics, but do not print BPMSIGN.
 BDOSWARM      DI                                       ; Make sure interrupts are off
               LD        SP,STCKTOP                     ; Discard transient's stack
               CALL      SHPTR
-              LD        (HL),0                         ; fallback MAIN WBOOT ends AUX-shell mode
+              LD        (HL),0                         ; WBOOT clears previous AUX shell state
               XOR       A
               LD        (SBHALT),A                     ; recheck $$$.SUB on a new warm boot
               CALL      SBWCLR                         ; consume current tab's WBOOT request
@@ -6438,7 +6383,7 @@ BDOSWARM      DI                                       ; Make sure interrupts ar
               LD        (DMAADDR),HL                   ; ...
               LD        HL,0000H                       ; No drives write protected
               LD        (ROVEC),HL                     ; ...
-              JP        CCP                            ; Start the CCP
+              JP        SHBOOTENTRY                    ; start AUX shell after WBOOT setup
 
 ; The TPA is AUX 0100H..DDFFH. Derive KiB from its top at
 ; assembly time, then turn it into decimal at run time. 10 right shifts
@@ -8936,337 +8881,79 @@ PHOUT         LD        E,A
 
 ; Get a line of text from the console & handle it
 CCP
-; A foreground .COM may yield after a scheduler quantum without
-; actually exiting.  Nor may CCP draw a prompt when SCHMAIN returns
-; with a pending hotkey.  Dispatch that hotkey, then restart the
-; scheduler if the newly selected foreground still has a live .COM.
-CCPL1         CALL      SCHMAIN                        ; run foreground program + background slices
-              CALL      TBAUTOSW                       ; drain hotkeys raised INSIDE SCHMAIN
+; MAIN no longer reads commands. All interactive command entry is AUX CCP.COM.
+; Retain the scheduler loop: a task can be parked on console input, and
+; hotkeys can select a different tab while it is suspended.
+SHMAIN        CALL      SCHMAIN
+              CALL      TBAUTOSW
               CALL      TSKACTIVE
               OR        A
-              JR        NZ,CCPL1                       ; no CCP prompt over WordStar's cursor
-              CALL      SBWGET                         ; background-resumed program requested WBOOT?
+              JR        NZ,SHMAIN
+              CALL      SBWGET
               OR        A
-              JP        NZ,BDOSWARM                    ; MAIN CCP owns stack, so reset is now safe
-              CALL      CCPPRPTR
+              JP        NZ,BDOSWARM
+              CALL      SHPTR
               LD        A,(HL)
               OR        A
-              JR        NZ,CCPREAD                     ; restored CCP screen already has A>
-              LD        (HL),1                         ; prompt will now be drawn
-              CALL      CCPPRNT                        ; [session]drive:> prompt
-CCPREAD
-              CALL      CCPSUB                         ; last record of A:$$$.SUB, if present
-              OR        A
-              JR        NZ,CCPGOT                      ; already copied into console line buffer
-              LD        DE,FILEBUF                     ; Use FILEBUF as line buffer
-              LD        A,120                          ; Max line length
-              LD        (DE),A                         ; Stored in first char of buffer
-              CALL      C_READSTR                      ; Get a line from the user
-CCPGOT        LD        A,(TABREQ)
-              CP        0FFH
-              JP        NZ,CCPL1                       ; selector is pending: NO empty command
-              CALL      CCPPRPTR
-              LD        (HL),0                         ; an actual input line was completed
-              LD        HL,FILEBUF+1                   ; Use actual count byte, not DE (editing clobbers E)
-              CALL      UCASE                          ; Uppercase commands AND transient command tails
-
-              LD        A,(FILEBUF+1)                  ; Number of chars entered
-              CP        0                              ; If none ...
-              JR        Z,CCPL1                        ; Loop until user types something!
-
-              ; Two char built-in commands A:, B:, C: etc
-              CP        2                              ; Check if two chars ...
-              JR        NZ,CCPS1                       ; If not, skip
-              LD        A,(FILEBUF+3)                  ; See if second char is ':'
-              CP        ':'                            ; ...
-              JR        NZ,CCPS1                       ; If not, skip
-              LD        A,(FILEBUF+2)                  ; Get the character before the ':'
-              SUB       'A'                            ; A is 0, B is 1 etc.
-              CP        16                             ; Valid CP/M drives A: through P:
-              JP        NC,CCPBADDRV
-              LD        E,A                            ; Set the default drive
-              CALL      DRV_SET                        ; ...
-              JP        CCPL1                          ; Go again
-
-CCPBADDRV     LD        DE,BFMSG
+              JR        NZ,SHMAIN                     ; shell/child is still under supervision
+; Only a missing or exited CCP reaches here. Never automatically relaunch
+; a missing program: allow the disk to be fixed or leave for ProDOS.
+SHRECOVER     LD        DE,SHRECMSG
               CALL      C_WRITESTR
-              JP        CCPL1
-CCPS1         LD        HL,FCB1                        ; Clear FCB1
-              LD        (DMAADDR),HL                   ;
-              CALL      CLRFCB                         ;
+SHRECPROMPT   LD        DE,SHRECPR
+              CALL      C_WRITESTR
+SHRECINPUT    CALL      C_READ
+              AND       0DFH
+              CP        'R'
+              JR        Z,SHRETRY
+              CP        'B'
+              JR        NZ,SHRECINPUT
+              LD        E,13
+              CALL      C_WRITE
+              CALL      CCPBYE                        ; existing confirmed ProDOS exit
+              JR        SHRECPROMPT                   ; user declined BYE
+SHRETRY       LD        E,13
+              CALL      C_WRITE
+              CALL      SHNEW
+              JP        SHMAIN
+SHRECMSG      DEFB      13
+              DEFM      'A:CCP.COM unavailable or exited'
+              DEFB      13,'$'
+SHRECPR       DEFM      '[R]etry or [B]YE to ProDOS? $'
 
-              LD        HL,FCB2                        ; Clear FCB2
-              LD        (DMAADDR),HL                   ;
-              CALL      CLRFCB                         ;
-
-              CALL      PARSE                          ; Parse the command line
-              ; A bare ':' (also '.COM', A::, etc.) creates a blank FCB name.
-              ; FCB2PATH deliberately maps blank FCBs to the drive directory;
-              ; never attempt to load that directory as executable Z80 code.
-              LD        A,(PATHBUF2+1)
-              CP        ' '
-              JP        Z,CCPBADDRV                    ; Bad format; stay in CCP
-              CALL      BUILTIN                        ; Check for built-in commands
-              CP        0                              ; If zero, was a built-in command
-              JP        Z,CCP                          ; Go again
-              CALL      RUNCOM                         ; Try to run .COM file
-
-              JP        CCP                            ; Go again
-
-; CCP uppercaser routines relocated into spare MAIN memory.
-
-; Parse the command line
-; Replaces the contents of FILEBUF with command tail as Pascal-style string
-; Creates FCB for loading .COM program
-; B is used to keep track of the parser state machine:
-;   0 in whitespace before command
-;   1 in command
-;   2 in whitespace segment following command
-;   3 in first argument
-;   4 in whitespace segment following first argument
-;   5 in second argument
-;   6 in whitespace segment following second arg (or later)
-PARSE         CALL      RSTPATHBUF                     ; Set IY and E for writing PATHBUF
-              LD        HL,FILEBUF+1                   ; Skip first byte - buffer capacity
-              PUSH      HL                             ; HL->IX. Use IX as dest pointer into FILEBUF
-              POP       IX                             ; ...
-              LD        D,0                            ; D is the count of chars for FILEBUF
-              LD        B,0                            ; B is the state of the parser
-              LD        C,(HL)                         ; Get the length of source string
-CTL1          LD        A,C                            ; See if any chars are left in input
-              CP        0                              ; ...
-              JR        Z,CTS2                         ; If 0, go update the length byte
-              INC       HL                             ; Advance to next char of source string
-              DEC       C                              ; Decrement count remaining
-              LD        A,(HL)                         ; Get char from buffer
-              CP        ' '                            ; See if it a space
-              JR        Z,CTS1                         ; If space ...
-              CALL      CMDNSPC                        ; Handle non-space
-              JR        CTL1                           ; Loop
-CTS1          CALL      CMDSPC                         ; Handle space
-              JR        CTL1                           ; Loop
-CTS2          LD        A,' '                          ; Fake an additional space on the end ...
-              CALL      CMDSPC                         ; ... so parser can get itself in correct state
-              LD        A,D                            ; Get string length of command tail
-              CP        1                              ; If length is 1, is just a space
-              JR        NZ,CTS3                        ; If not length 1, store length, otherwise ...
-              LD        D,0                            ; ... Set length to zero
-CTS3          LD        (IX+0),0                       ; CP/M command tail needs a zero terminator
-                                                       ; IX points just past the generated tail.
-              LD        HL,FILEBUF                     ; First byte is length of string
-              LD        (HL),D                         ; Write string length (excluding zero)
-              RET                                      ;
-
-; Helper function to reset the PATHBUF buffer pointer & character count
-; PATHBUF is used to store the filename for creating an FCB
-; Sets IY to point to first character to be written to PATHBUF
-; Resets count of chars written E
-RSTPATHBUF    PUSH      HL                             ; Preserve HL
-              LD        HL,PATHBUF+1                   ; Use HL to initialize IY
-              PUSH      HL                             ; HL->IY. Use IY as dest ptr into PATHBUF
-              POP       IY                             ; ...
-              POP       HL                             ; Restore original HL
-              LD        E,0                            ; Reset count of chars in PATHBUF
-              RET
-
-; Examines Pascal string pointed to by HL to see if it begins with a drive
-; letter and a colon.  If so, reduces string length by 2 and advances HL two
-; positions, sets B to the drive number.  If no drive is specified, sets B
-; to the default drive.
-DRVLETTER     LD        A,(HL)                         ; Pascal source length
-              CP        2                              ; Need at least D: before inspecting it
-              JR        C,DLSNODRV                     ; Don't read stale byte past ':' or '.'
-              INC       HL                             ; Advance to second char
-              INC       HL                             ; ...
-              LD        A,(HL)                         ; See if second char typed is a colon
-              CP        ':'                            ;
-              JR        NZ,DLS1                        ; If not then skip to default drive
-              DEC       HL                             ; Back to first char
-              LD        A,(HL)                         ; Get the drive letter
-              SUB       'A'-1                          ; Convert to 1-based drive number
-              LD        B,A                            ; In B for NAME2FCB
-              DEC       HL                             ; Back one to the size byte
-              LD        A,(HL)                         ; Get the string length
-              SUB       2                              ; Eat drive letter and colon
-              INC       HL                             ; ...
-              INC       HL                             ; ...
-              LD        (HL),A                         ; Write the reduced length
-              RET
-DLS1          DEC       HL                             ; Put HL back to the beginning
-              DEC       HL                             ; ...
-DLSNODRV      LD        B,0                            ; Use default drive
-              RET
-
-; Handle the end of command/argument tokens. State B is 0..6:
-; odd states 1/3/5 finish command / first / second argument.
-CMDSPC        LD        A,B
+; F8 ID 10: request the next SUBMIT command (if any) for AUX CCP.
+; AXBUILT has already copied 80 bytes from BXTAIL into MAIN FILEBUF;
+; its first two bytes are an AUX pointer to INBUF+1 (count and chars).
+; We use the existing CCPSUB/SBNEXT routines, so XSUB stays linked
+; to the submitted command rather than creating a second reader.
+AXBEXTRA      CP        10
+              JP        Z,AXBSUBMIT
+              JP        CCPBAD
+AXBSUBMIT     LD        HL,(FILEBUF)
+              LD        (AXSUBDST),HL
+              LD        DE,120                         ; count + max 120 chars
+              ADD       HL,DE
+              LD        A,H
+              CP        0DEH
+              JP        NC,AXBAD                       ; stay below AUX BDOS
+              LD        A,(AXSUBDST+1)
               OR        A
-              RET       Z                              ; Leading whitespace
-              CP        6
-              JR        Z,SPTAIL                       ; Further arguments stay in command tail
-              AND       1
-              RET       Z                              ; Inter-argument whitespace
-              LD        A,' '
-              CALL      EMTFILBUF
-              LD        A,E
-              LD        (PATHBUF),A
-              CALL      RSTPATHBUF
-              PUSH      HL
-              PUSH      BC
-              PUSH      DE
-              LD        A,B
-              CP        1
-              JR        Z,SPCOM
-              CP        3
-              JR        Z,SPFIRST
-              LD        HL,FCB2
-              JR        SPMKFCB
-SPCOM         LD        HL,PATHBUF2
-              JR        SPMKFCB
-SPFIRST       LD        HL,FCB1
-SPMKFCB       LD        (DMAADDR),HL
-              LD        HL,PATHBUF
-              CALL      DRVLETTER
-              LD        C,0
-              CALL      NAME2FCB
-              POP       DE
-              POP       BC
-              POP       HL
-              LD        A,B
-              CP        1
-              JR        NZ,SPNEXT
-              LD        A,'C'
-              LD        (PATHBUF2+9),A
-              LD        A,'O'
-              LD        (PATHBUF2+10),A
-              LD        A,'M'
-              LD        (PATHBUF2+11),A
-SPNEXT        INC       B
-              RET
-SPTAIL        LD        A,' '
-              JP        EMTFILBUF
-
-; Emit non-space input byte to command and/or argument buffers.
-; State transitions 0->1, 2->3, 4->5 happen on the first byte.
-CMDNSPC       LD        A,B
-              CP        6
-              JR        Z,CNSFILE
-              LD        A,(HL)
-              CALL      EMTPATHBUF
-              LD        A,B
+              JP        Z,AXBAD                        ; no page-zero target
+              CALL      CCPSUB                         ; A=1 if command was consumed
               OR        A
-              JR        NZ,CNSNEXT
-              INC       B
-              RET
-CNSNEXT       CP        1
               RET       Z
-              LD        A,(HL)
-              CALL      EMTFILBUF
-              LD        A,B
-              CP        2
-              JR        Z,CNSINC
-              CP        4
-              RET       NZ
-CNSINC        INC       B
+              LD        HL,(AXSUBDST)
+              PUSH      HL
+              LD        HL,FILEBUF+1                   ; count followed by command text
+              POP       DE
+              LD        BC,121
+              CALL      AXM2A                          ; MAIN -> active AUX session
+              LD        A,1
+              LD        L,A
               RET
-CNSFILE       LD        A,(HL)
-              JP        EMTFILBUF
+AXSUBDST      DEFW      0
 
-; Write character at A to IX (which points into FILEBUF)
-; Helper for CMDSPC/CMDNSPC
-EMTFILBUF     LD        (IX+0H),A                      ; Emit char to FILEBUF
-              INC       IX                             ; ...
-              INC       D                              ; Character count for FILEBUF
-              RET
-
-; Write character at A to IX (which points into PATHBUF)
-; Helper for CMDNSPC
-EMTPATHBUF    PUSH      AF
-              LD        A,E
-              CP        63
-              JR        NC,EPPFULL
-              POP       AF
-              LD        (IY+0H),A
-              INC       IY
-              INC       E
-              RET
-EPPFULL       POP       AF
-              RET
-
-; Built-ins are matched against the first five bytes of the parsed
-; command FCB. Table at MAIN $7600: name[5], nargs[1], handler[2].
-; Bit 7 of nargs permits zero arguments as well as one (DIR).
-; BITABLE now resides at MAIN $5800; CCPTERM remains in $7600.
-
-; CCP arg-checks routines relocated into spare MAIN memory.
-
-; Single table-driven dispatcher instead of six repeated string
-; comparisons. A handler is entered with a synthetic return address.
-BUILTIN       LD        HL,BITABLE
-              LD        C,15
-BISCAN        LD        DE,PATHBUF2+1
-              LD        B,5
-BICMP         LD        A,(DE)
-              CP        (HL)
-              JR        NZ,BISKIP
-              INC       DE
-              INC       HL
-              DJNZ      BICMP
-              LD        A,(HL)
-              LD        (BIREQ),A
-              INC       HL
-              LD        E,(HL)
-              INC       HL
-              LD        D,(HL)
-              PUSH      DE
-              CALL      CCPARGC
-              LD        B,A
-              LD        A,(BIREQ)
-              CP        0FEH                           ; TAB validates 0, 1 or 2 arguments itself
-              JR        Z,BIRUN
-              AND       0FH
-              CP        B
-              JR        Z,BIRUN
-              LD        A,(BIREQ)
-              BIT       7,A
-              JR        Z,BIFAIL
-              LD        A,B
-              OR        A
-              JR        NZ,BIFAIL
-BIRUN         POP       HL
-              LD        DE,BIRETURN
-              PUSH      DE
-              JP        (HL)
-BIRETURN      XOR       A
-              RET
-BIFAIL        POP       HL
-              CALL      CCPBAD
-              XOR       A
-              RET
-BISKIP        LD        E,B                            ; Skip unmatched portion of 5-char key
-              LD        D,0
-              ADD       HL,DE
-              LD        DE,3                           ; nargs and jump target
-              ADD       HL,DE
-              DEC       C
-              JR        NZ,BISCAN
-              LD        A,0FFH
-              RET
-BIREQ         DEFB      0
-
-; CCP yesno routines relocated into spare MAIN memory.
-
-; 44K experiment: CCP stays in MAIN, transients load into AUX $0100-$AFFF.
-; Only console BDOS calls are supported by the temporary LC gateway.
-RUNCOM        CALL      TSKACTIVE
-              OR        A
-              JR        Z,RCOFREE
-              LD        DE,TSKBUSY
-              JP        C_WRITESTR
-RCOFREE       CALL      SHCHECK                       ; attach supervisor only to CCP.COM
-              CALL      AUXRUN
-              JP        SHSTEP                        ; handle any CCP requested .COM chain
-
+; Shared loader diagnostics remain: AUXRUN, SAVE and BDOS use these.
 RCOERR        LD        DE,NFMSG
               CALL      C_WRITESTR
               RET
@@ -9296,309 +8983,8 @@ RNEMSG        DEFM      'Rename error'
               DEFB      13,'$'
 
 ; Four names per line, with their drive letters. No sorting is done.
-DIRECT        LD        A,(FCB1NAM)
-              CP        ' '
-              CALL      Z,DIRFCB
-              XOR       A
-              LD        (DIRCOL),A
-              LD        HL,FILEBUF
-              LD        (DMAADDR),HL
-              LD        E,13
-              CALL      C_WRITE
-              CALL      S8MSF                         ; CCP also shares the BDOS scanner
-              OR        A
-              JR        NZ,DIRDONE
-DIRLOOP       CALL      TYPEKEY                        ; ^C / Open Apple hotkeys
-              JR        C,DIRABORT
-              CALL      PRDIRENT
-              CALL      S8MSN
-              OR        A
-              JR        Z,DIRLOOP
-              JR        DIRDONE
-DIRABORT      CALL      S8INVAL                       ; discard unfinished search bookmark
-              ; Stage 8 S8EXIT already closed the physical directory FRN.
-DIRDONE       LD        A,(DIRCOL)
-              OR        A
-              RET       Z
-              LD        E,13
-              JP        C_WRITE
-DIRCOL        DEFB      0
-
-; Set up FCB1 to search all files
-; If length of command tail is zero, or length of command tail is 3
-; and 3rd char is ':' then set up FCB for searching
-DIRFCB        LD        A,(FILEBUF)
-              CP        4
-              JR        NZ,DFS1
-              LD        A,(FILEBUF+3)
-              CP        ':'
-              JR        NZ,DFS1
-              LD        A,(FILEBUF+2)
-              SUB       'A'-1
-              JR        DFS2
-DFS1          LD        A,(CURDRV)
-              AND       0FH
-              INC       A
-
-DFS2          LD        (FCB1DRV),A
-              LD        HL,FCB1NAM
-              LD        B,11
-              LD        A,'?'
-DFILL         LD        (HL),A
-              INC       HL
-              DJNZ      DFILL
-              RET
-
-; Print drive: plus 8.3 filename from the first 11 bytes of DMA.
-; Four entries per row, 3-space separation. Existing dot retained.
-PRDIRENT      LD        A,(FCB1DRV)
-              DEC       A
-              ADD       A,'A'
-              LD        E,A
-              CALL      C_WRITE
-              LD        E,':'
-              CALL      C_WRITE
-              LD        E,' '
-              CALL      C_WRITE
-              LD        HL,FILEBUF+1
-              LD        B,11
-PRDLOOP       LD        A,B
-              CP        3
-              JR        NZ,PRDNODOT
-              LD        E,' '
-              PUSH      HL
-              CALL      C_WRITE
-              POP       HL
-PRDNODOT      LD        E,(HL)
-              PUSH      HL
-              CALL      C_WRITE
-              POP       HL
-              INC       HL
-              DJNZ      PRDLOOP
-              LD        A,(DIRCOL)
-              INC       A
-              AND       3
-              LD        (DIRCOL),A
-              JR        Z,PRDNEWLINE
-              LD        DE,DIRSEP
-              JP        C_WRITESTR
-PRDNEWLINE    LD        E,13
-              JP        C_WRITE
-DIRSEP        DEFM      '   $'
-
-; Wildcard ERA always asks before deleting, including ERA *.COM.
-; This is deliberately safer than stock CP/M 2.2, which prompts only
-; for ERA *.*. FCB1 contains the wildcard-expanded '?' characters.
-ERASE         LD        HL,FCB1NAM
-              CALL      ISWILD
-              OR        A
-              JR        Z,ERADO
-              LD        DE,BYEASK
-              CALL      CCPYESNO
-              OR        A
-              RET       NZ
-ERADO         LD        HL,FILEBUF
-              LD        (DMAADDR),HL
-              LD        DE,FCB1
-              CALL      F_DELETE
-              OR        A
-              RET       Z
-              LD        A,(ROERROR)                    ; BDOS already printed R/O reason
-              OR        A
-              RET       NZ
-              LD        DE,NFMSG
-              JP        C_WRITESTR
-
-; Rename a file
-; Here we need to build our own 'special' FCB using the x:dest=src command line
-; Maniplate the command tail to replace the leading space with char count of
-; first string and the = with char count of second string.  Then use NAME2FCB
-; twice to build the 'special' FCB used by F_RENAME.
-RENAME        LD        HL,FILEBUF                     ; Command tail is in filebuf
-              LD        C,(HL)                         ; Read length of string
-              INC       C                              ; Makes length compare easier
-              LD        B,0                            ; Use B to count chars
-RENL1         INC       HL                             ; Advance to next char
-              INC       B                              ; Increase char count
-              LD        A,B                            ; Copy to A for compare
-              CP        C                              ; Compare with string length
-              JP        Z,RENS4                        ; If at end then bad format
-              LD        A,(HL)                         ; Fetch char
-              CP        '='                            ; See if it is equals sign
-              JR        Z,RENS1                        ; Handle '=' sign
-              JR        RENL1                          ; Loop
-RENS1         LD        A,B                            ; Get char count
-              SUB       2
-              JP        Z,RENS4                        ; Empty destination is invalid
-              ; For initial space and '='
-              LD        DE,FILEBUF                     ; Will write through ptr DE
-              INC       DE                             ; Advance to initial space
-              LD        (DE),A                         ; Store length of first string
-              LD        (TEMPWORD),HL                  ; Store address of '=' sign
-RENL2         INC       HL                             ; Advance to next char
-              INC       B                              ; Increase char count
-              LD        A,B                            ; Copy to A for compare
-              CP        C                              ; Compare with string length
-              JR        Z,RENS3                        ; If at end then jump out
-              JR        RENL2                          ; Loop
-RENS3         LD        A,B                            ; Get overall char count into A
-              SUB       4                              ; Compensate for extra chars
-              LD        HL,FILEBUF                     ; Get char count of first string
-              INC       HL                             ; ...
-              SUB       (HL)                           ; Subtract from char count
-              LD        HL,(TEMPWORD)                  ; Address of '=' sign
-              LD        (HL),A                         ; Store length of second string
-              OR        A
-              JP        Z,RENS4                        ; Empty source is invalid
-
-              LD        HL,FCB2                        ; Set DMAADDR for destination
-              LD        (DMAADDR),HL                   ; ...
-              LD        HL,FILEBUF                     ; Set HL to dest file string
-              INC       HL                             ; ...
-              CALL      DRVLETTER                      ; Handle any x: drive letter prefix
-              LD        C,0                            ; NAME2FCB should not do size lookup
-              CALL      NAME2FCB                       ; Make FCB for source file
-
-              LD        HL,FCB1                        ; Set DMAADDR for source
-              LD        (DMAADDR),HL                   ; ...
-              LD        HL,(TEMPWORD)                  ; Set HL to source file string
-              LD        C,0                            ; NAME2FCB should not do size lookup
-              CALL      NAME2FCB                       ; Make FCB for source file
-              LD        A,(FCB2)                       ; Get drive number of destination
-              LD        (FCB1),A
-              LD        HL,FCB1NAM                     ; Neither REN filename may be ambiguous
-              CALL      ISWILD
-              OR        A
-              JP        NZ,RENS4
-              LD        HL,FCB2NAM
-              CALL      ISWILD
-              OR        A
-              JP        NZ,RENS4
-
-              LD        DE,FCB1                        ; Pass address of FCB to F_RENAME
-              LD        HL,FILEBUF                     ; Set DMAADDR to point to FILEBUF
-              LD        (DMAADDR),HL                   ; ...
-              CALL      F_RENAME                       ; Perform the rename
-
-              CP        0                              ; See if it was successful
-              JR        NZ,RENS5                       ; If not, display message
-              RET                                      ;
-
-RENS4         JP        CCPBAD
-RENS5         LD        A,(ROERROR)
-              OR        A
-              RET       NZ                             ; BDOS already printed R/O reason
-              LD        DE,RNEMSG                      ; 'Rename error' message
-              CALL      C_WRITESTR                     ; ...
-              RET
-
-; Show a test file on the console
-; File to open is in FCB1
-TYPEFILE      LD        DE,FCB1                        ; Point to FCB1
-              LD        HL,FILEBUF                     ; Set DMAADDR to FILEBUF
-              LD        (DMAADDR),HL                   ; ...
-              CALL      F_OPEN                         ; Open the file with wildcard search
-              CP        0                              ;
-              JR        NZ,TFOERR                      ; Open error
-TFL1          LD        HL,FILEBUF                     ; Write ^Z to buffer in case 0 bytes read
-              LD        A,26                           ; ...
-              LD        (HL),A                         ; ...
-              LD        DE,FCB1                        ; Point to FCB1
-              CALL      F_READ                         ; Read records until done
-              CP        0                              ; Check return code from F_READ
-              JR        NZ,TFS1                        ; If non-zero jump out of loop
-              CALL      TYPEBLK                        ; Display block on screen
-              JR        C,TFCANCEL                     ; ^C pressed while printing
-              JR        TFL1                           ; Loop
-TFS1          CP        1                              ; Check return code from F_READ
-              JR        NZ,TFLERR                      ; If not EOF (1), then error
-              CALL      TYPEBLK                        ; Display last block on screen
-              JR        C,TFCANCEL                     ; ^C pressed while printing
-              CALL      F_CLOSE                        ; Close the file
-              LD        E,13                           ; Carriage return
-              CALL      C_WRITE                        ;
-              RET                                      ;
-; Aborted TYPE: discard the ^C in TYPEKEY, close our FCB and end line.
-; Don't WBOOT: other CP/M tabs and resident state must survive.
-TFCANCEL      CALL      F_CLOSE
-              LD        E,13
-              CALL      C_WRITE
-              RET
-TFOERR        LD        DE,NFMSG                       ; 'Not found' message
-              CALL      C_WRITESTR                     ; ...
-              RET                                      ;
-TFLERR        CALL      F_CLOSE                        ; Close the file
-              LD        DE,REMSG                       ; 'Read error' message
-              CALL      C_WRITESTR                     ; ...
-              RET
-
-; Display one 128-byte CP/M record, stopping at ^Z.
-; Carry SET means the foreground user pressed ^C, otherwise clear.
-; C_WRITE preserves BC and DE, so only the pointer needs protection.
-TYPEBLK       LD        HL,FILEBUF
-              LD        B,128
-TBL1          CALL      TYPEKEY                        ; Poll between characters
-              RET       C                              ; Caller closes the FCB
-              LD        A,(HL)
-              CP        26
-              JR        Z,TBLDONE                      ; CP/M text EOF marker
-              LD        E,A
-              PUSH      HL
-              CALL      C_WRITE
-              POP       HL
-              INC       HL
-              DJNZ      TBL1
-TBLDONE       OR        A                              ; No abort: clear carry
-              RET
-
-; CCP output poll shared by TYPE and DIR. ^C cancels immediately.
-; Open-Apple tab shortcuts queue a switch through the existing TSKSTAT
-; keyboard path; the current CCP command cancels cleanly, then CCPL1
-; performs the actual switch with its MAIN CCP stack active.
-; Never consume ordinary keys. Do NOT run SCHMAIN inside CCP commands.
-; Physical keyboard is $C000/$C061/$C010 (Z80 $E000/$E061/$E010).
-; Carry=1 on ^C or queued tab switch, 0 otherwise. Preserve BC/DE/HL.
-TYPEKEY       LD        A,(TABREQ)
-              CP        0FFH                           ; switch already queued?
-              JR        NZ,TKABORT
-              LD        A,(IOBYTE)
-              AND       3
-              CP        1                              ; CRT keyboard?
-              JR        NZ,TKNO
-              CALL      SCHISFG                        ; foreground must own keyboard
-              JR        NZ,TKNO
-              LD        A,(0E000H)                     ; key + strobe
-              BIT       7,A
-              JR        Z,TKNO
-              AND       07FH
-              CP        3                              ; Ctrl-C
-              JR        NZ,TKAPPLE
-              LD        A,(0E010H)                     ; consume ^C only
-TKABORT       SCF
-              RET
-TKAPPLE       LD        A,(0E061H)                     ; Open-Apple modifier
-              BIT       7,A
-              JR        Z,TKNO                         ; ordinary key: leave pending
-              PUSH      HL
-              CALL      TSKSTAT                        ; existing 6502 key peek + TSKKEY
-              LD        A,L                            ; F3 = different tab queued
-              POP       HL
-              CP        0F3H
-              JR        Z,TKABORT
-TKNO          OR        A                              ; clear carry
-              RET
-
-; AUX56 SAVEFILE/SVPAGES relocated to MAIN $4000 (free of AUX snapshot).
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-; Additional private scratch space for BDOS
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-; ProDOS Parameter Lists
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-; Parameter list for ProDOS CREATE call
+; Stage 25: resident DIR/ERA/REN/TYPE code removed.
+; ProDOS parameter blocks and all BDOS disk I/O remain below.
 FMMLI         DEFB      20H,00H,0BFH                   ; JSR $BF00 in 6502 code
               DEFB      0C0H                           ; ProDOS CREATE call
               DEFW      FMMLIPL+OFFSET                 ; Pointer to parm list in 6502 addr space

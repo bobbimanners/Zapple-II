@@ -1,4 +1,4 @@
-; Zapple-II AUX CCP 1.1.1 (Stage 23.2; SAVE parser correction)
+; Zapple-II AUX CCP 1.2 (Stage 24.2; classic directory layout)
 ; Standard CP/M 2.2 BDOS for built-ins; private BDOS F7 for program chaining.
 ; Requires Stage 13 kernel: F7 copies launch FCB + FCB1 + FCB2 + command tail.
 ; Transient program memory is AUX; tab switches retain command and stack.
@@ -71,10 +71,6 @@ CSEOL       LD      (ARGPTR),HL
             LD      DE,KHELP
             CALL    MATCH
             JP      Z,DOHELP
-            LD      HL,(CMDPTR)
-            LD      DE,KEXIT
-            CALL    MATCH
-            JP      Z,DOEXIT
             LD      HL,(CMDPTR)
             LD      DE,KCLS
             CALL    MATCH
@@ -149,12 +145,21 @@ PRMEND      LD      A,':'
 ; Reuse the kernel's BDOS 10 editor (raw input, BS/DEL, no double echo).
 ; Convert the returned CP/M [max][count][characters][CR] buffer to
 ; the original NUL-terminated, uppercase LINE used by the parser.
-READLINE    LD      DE,INBUF
+READLINE    JP      RLKEYBD                 ; Stage 25.1: bypass broken F8/10 SUBMIT hook
+            LD      (BXTAIL),HL                 ; F8 ID 10 input parameter
+            LD      A,10
+            LD      (BXID),A
+            LD      DE,BXID
+            LD      C,0F8H
+            CALL    0005H                      ; ask MAIN for next $$$.SUB record
+            OR      A
+            JR      NZ,RLHAVE                   ; already echoed by CCPSUB
+RLKEYBD     LD      DE,INBUF                  ; direct BDOS 10, proven Stage 24 editor
             LD      A,78
             LD      (DE),A
             LD      C,10
-            CALL    0005H
-            LD      A,(INBUF+1)
+            CALL    0005H                      ; otherwise use kernel line editor
+RLHAVE      LD      A,(INBUF+1)
             LD      B,A
             LD      HL,INBUF+2
             LD      DE,LINE
@@ -207,8 +212,8 @@ POLLKEY     PUSH    BC
             POP     BC
             RET
 
-; Stage 14: four tidy columns, directory heading, accurate file count.
-; Keep everything in AUX: the kernel and F7 chain interface are unchanged.
+; Stage 24.2: classic CP/M 2.2 DIR layout, four padded 8.3 names per row.
+; Preserve wildcard parsing, explicit drive, and ^C while listing.
 DODIR       CALL    SETDMA
             LD      HL,(ARGPTR)
             LD      A,(HL)
@@ -242,68 +247,63 @@ DIRPAT      LD      HL,(ARGPTR)
             JP      NZ,SHOWBAD
             JR      DIRFIRST
 DIRALL      CALL    FCBWILD
-DIRFIRST    XOR     A
-            LD      (DIRCOL),A
-            LD      (DIGSTART),A
-            LD      HL,0
-            LD      (DIRCOUNT),HL
-            LD      DE,DIRHDR
-            CALL    PRINT
-            LD      A,(FCB)
+; Capture the selected drive once. FCB drive 0 means current drive.
+DIRFIRST    LD      A,(FCB)
             OR      A
-            JR      NZ,DHEXPL
-            LD      C,25                         ; current drive for FCB drive=0
+            JR      NZ,DFEXPL
+            LD      C,25
             CALL    0005H
             INC     A
-DHEXPL      ADD     A,'A'-1
-            CALL    OUT
-            LD      DE,DIRHDR2
-            CALL    PRINT
-            LD      E,0FFH
-            LD      C,32                         ; current USER
-            CALL    0005H
-            CALL    PRINTNUM
-            LD      A,13
-            CALL    OUT
-            LD      DE,DIRRULE
-            CALL    PRINT
+DFEXPL      ADD     A,'A'-1
+            LD      (DIRDRIVE),A                ; ASCII drive for line prefixes
+            XOR     A
+            LD      (DIRCOL),A
             LD      DE,FCB
-            LD      C,17
+            LD      C,17                       ; SEARCH FIRST
             CALL    0005H
             OR      A
             JP      NZ,DIRNONE
-DIRLOOP     CALL    DIRFIELD
-            LD      HL,(DIRCOUNT)
-            INC     HL
-            LD      (DIRCOUNT),HL
+DIRLOOP     LD      A,(DIRCOL)
+            OR      A
+            JR      NZ,DIRSEP
+            CALL    DIRPREFIX                 ; A: only at beginning of row
+            JR      DIRPRINT
+DIRSEP      LD      A,' '
+            CALL    OUT
+            LD      A,':'
+            CALL    OUT
+            LD      A,' '
+            CALL    OUT
+DIRPRINT    CALL    DIRFIELD
             LD      A,(DIRCOL)
             INC     A
             CP      4
-            JR      NZ,DLCOL
+            JR      NZ,DIRPART
             XOR     A
             LD      (DIRCOL),A
-            LD      A,13
+            LD      A,13                      ; 4 names completed: newline
             CALL    OUT
-            JR      DLNEXT
-DLCOL       LD      (DIRCOL),A
-DLNEXT      CALL    POLLKEY
+            JR      DIRNEXT
+DIRPART     LD      (DIRCOL),A
+DIRNEXT     CALL    POLLKEY
             JP      Z,DIRABORT
             LD      DE,FCB
-            LD      C,18
+            LD      C,18                      ; SEARCH NEXT
             CALL    0005H
             OR      A
             JP      Z,DIRLOOP
-DIRFINISH   LD      A,(DIRCOL)
+            LD      A,(DIRCOL)
             OR      A
-            JR      Z,DFCOUNT
-            LD      A,13
+            JP      Z,MAINLOOP                ; full row already ended in CR
+            LD      A,13                      ; finish partial row
             CALL    OUT
-DFCOUNT     LD      DE,DIRTOTAL
-            CALL    PRINT
-            CALL    DIRDEC
-            LD      DE,DIRTAIL
-            CALL    PRINT
             JP      MAINLOOP
+DIRPREFIX   LD      A,(DIRDRIVE)
+            CALL    OUT
+            LD      A,':'
+            CALL    OUT
+            LD      A,' '
+            JP      OUT
 DIRABORT    LD      A,13
             CALL    OUT
             LD      DE,DIRSTOP
@@ -313,79 +313,24 @@ DIRNONE     LD      DE,EMPTYMSG
             CALL    PRINT
             JP      MAINLOOP
 
-; Print one 19-column slot: NAME.EXT (unpadded) + spaces to 19.
-; Four entries fit in 76 of the terminal's 80 columns.
+; One classic CP/M entry: exactly 8 name chars, a space, 3 extension
+; chars. Mask attribute bits in directory results, preserving padding.
 DIRFIELD    LD      HL,DMA+1
             LD      B,8
-            LD      C,0
 DFBASE      LD      A,(HL)
             AND     07FH
-            CP      ' '
-            JR      Z,DFBSKIP
             CALL    OUT
-            INC     C
-DFBSKIP     INC     HL
+            INC     HL
             DJNZ    DFBASE
-            LD      A,(DMA+9)
-            AND     07FH
-            CP      ' '
-            JR      Z,DFPAD
-            LD      A,'.'
+            LD      A,' '
             CALL    OUT
-            INC     C
-            LD      HL,DMA+9
             LD      B,3
 DFEXT       LD      A,(HL)
             AND     07FH
-            CP      ' '
-            JR      Z,DFESKIP
             CALL    OUT
-            INC     C
-DFESKIP     INC     HL
+            INC     HL
             DJNZ    DFEXT
-DFPAD       LD      A,19
-            SUB     C
-            LD      B,A
-DFPLOOP     LD      A,' '
-            CALL    OUT
-            DJNZ    DFPLOOP
             RET
-
-; Decimal count 0..65535 without an external run-time.
-DIRDEC      LD      HL,(DIRCOUNT)
-            XOR     A
-            LD      (DIGSTART),A
-            LD      DE,10000
-            CALL    DECDIG
-            LD      DE,1000
-            CALL    DECDIG
-            LD      DE,100
-            CALL    DECDIG
-            LD      DE,10
-            CALL    DECDIG
-            LD      A,L
-            ADD     A,'0'
-            JP      OUT
-DECDIG      LD      B,0
-DDLOOP      OR      A                          ; clear carry for 16-bit subtraction
-            SBC     HL,DE
-            JR      C,DDEND
-            INC     B
-            JR      DDLOOP
-DDEND       ADD     HL,DE                       ; restore remainder
-            LD      A,B
-            OR      A
-            JR      NZ,DDPRINT
-            LD      A,(DIGSTART)
-            OR      A
-            RET     Z
-            LD      A,'0'
-            JP      OUT
-DDPRINT     LD      A,1
-            LD      (DIGSTART),A
-            LD      A,B
-            ADD     A,'0'
-            JP      OUT
 FCBWILD     CALL    FCBZERO
             LD      HL,FCB+1
             LD      B,11
@@ -602,9 +547,6 @@ NUMSINGLE   ADD     A,'0'
 DOHELP      LD      DE,HELPMSG
             CALL    PRINT
             JP      MAINLOOP
-DOEXIT      LD      DE,GOODBYE
-            CALL    PRINT
-            RET
 
 ; Stage 19: private BDOS $F8 bridge to the MAIN-only CCP handlers.
 ; Record is 1-byte command ID followed by 80 bytes of normalized
@@ -1133,7 +1075,7 @@ OUT         PUSH    AF
             POP     AF
             RET
 
-BANNER      DEFM    'Zapple-II AUX CCP 1.1.1 (Stage 23.2)'
+BANNER      DEFM    'Zapple-II AUX CCP 1.4 (Stage 25)'
             DEFB    13,'$'
 KDIR        DEFM    'DIR'
             DEFB    0
@@ -1146,8 +1088,6 @@ KREN        DEFM    'REN'
 KUSER       DEFM    'USER'
             DEFB    0
 KHELP       DEFM    'HELP'
-            DEFB    0
-KEXIT       DEFM    'EXIT'
             DEFB    0
 KCLS        DEFM    'CLS'
             DEFB    0
@@ -1176,14 +1116,6 @@ KBYE        DEFM    'BYE'
             DEFB    0
 KSAVE       DEFM    'SAVE'
             DEFB    0
-DIRHDR      DEFM    'Directory of '
-            DEFB    '$'
-DIRHDR2     DEFM    ':   USER '
-            DEFB    '$'
-DIRRULE     DEFM    '------------------------------------------------------------------------'
-            DEFB    13,'$'
-DIRTOTAL    DEFM    'Files: $'
-DIRTAIL     DEFB    13,'$'
 DIRSTOP     DEFM    '^C  Directory interrupted'
             DEFB    13,'$'
 EMPTYMSG    DEFM    'No matching files'
@@ -1195,8 +1127,6 @@ BADNAME     DEFM    'Bad command or filename'
 FAILMSG     DEFM    'File operation failed'
             DEFB    13,'$'
 ERASK       DEFM    'Erase wildcard matches (Y/N)? $'
-GOODBYE     DEFM    'Returning to MAIN CCP'
-            DEFB    13,'$'
 EXFAIL      DEFM    'Program launch failed (requires Stage 13 kernel)'
             DEFB    13,'$'
 HELPMSG     DEFM    'DIR ERA REN TYPE USER    CLS BANKS CACHE [RESET]'
@@ -1207,7 +1137,7 @@ HELPMSG     DEFM    'DIR ERA REN TYPE USER    CLS BANKS CACHE [RESET]'
             DEFB    13
             DEFM    'Also: TAB n [SUSPEND/RESUME/EXCLUSIVE/KILL]'
             DEFB    13
-            DEFM    'XSUB BYE EXIT  A:..P:  program [args]'
+            DEFM    'XSUB BYE  A:..P:  program [args]'
             DEFB    13
             DEFM    'SAVE n file.ext (after a transient)'
             DEFB    13,'$'
@@ -1222,9 +1152,7 @@ LNCOUNT     DEFB    0
 ALLOWW      DEFB    0
 DIRCOL      DEFB    0
 DIRDRIVE    DEFB    0
-DIGSTART    DEFB    0
-DIRCOUNT    DEFW    0
-LINE        DEFS    80
+LINE        DEFS    124
 FCB         DEFS    36
 RENFCB      DEFS    36
 DMA         DEFS    128
@@ -1234,7 +1162,7 @@ EXF1        DEFS    16
 EXF2        DEFS    16
 EXTAIL      DEFS    128
 
-INBUF       DEFS    82                          ; dedicated BDOS 10 input buffer
+INBUF       DEFS    124                          ; dedicated BDOS 10 input buffer
 BXID        DEFB    0
 BXTAIL      DEFS    80                          ; private F8 MAIN command tail
 BXFCB       DEFS    36                          ; F8/9 SAVE target, must follow BXTAIL
