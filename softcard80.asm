@@ -22,7 +22,7 @@
 ;        - RS232 (A_READ, A_WRITE)
 ;        - Printer (LWRITE)
 ; IOBYTE routes console, reader, punch and list to Apple firmware.
-; TODO: User number doesn't do anything
+; User areas are mapped to per-user ProDOS directories.
 ;
 
 BDOSADDR      EQU       08100H                         ;
@@ -294,31 +294,8 @@ RWMSG5        DEFB      13
               DEFM      'HELP for commands'
               DEFB      13,'$'
 
-; Print the current logical session and drive: [0]A:> ... [F]P:>
-; Kept outside the crowded $81xx-$97xx resident filesystem region.
-CCPPRNT       LD        E,'['
-              CALL      C_WRITE
-              LD        A,(TABMODE)
-              CALL      PHNYB
-              LD        E,']'
-              CALL      C_WRITE
-              LD        A,(CURDRV)
-              AND       0FH
-              ADD       A,'A'
-              LD        E,A
-              CALL      C_WRITE
-              LD        A,(CURDRV)
-              RRCA
-              RRCA
-              RRCA
-              RRCA
-              AND       00FH
-              CALL      NZ,RWDECIMAL                   ; users 1..15; user 0 stays A:>
-              LD        E,':'
-              CALL      C_WRITE
-              LD        E,'>'
-              JP        C_WRITE
-
+; Session prompt is rendered by AUX CCP.COM.
+; Stage 27: removed unused code/data (Legacy MAIN prompt formatter).
               ORG       003B0H
 ; Kill only an inactive saved context. No CPU instruction is preempted.
 ; FCB cache has already been flushed by the cooperative park path.
@@ -449,12 +426,7 @@ TB_GO         LD        A,(TABMODE)
               RET
 ; One byte per CCP session. Saved display may already contain the
 ; A> prompt, so do not print it again after restoring that screen.
-CCPPRPTR      LD        A,(TABMODE)
-              LD        E,A
-              LD        D,0
-              LD        HL,CCPPROMS
-              ADD       HL,DE
-              RET
+; Stage 27: removed unused code/data (Unused CCP prompt pointer).
 TABMODE       DEFB      0
 
 ; Session descriptors are only seven bytes each, stored in MAIN memory.
@@ -915,11 +887,7 @@ TBHOLD        DEFS      16
               ORG       00800H
 ; BDOS 10 may suspend only at an empty line. A successful hotkey
 ; parks the read itself; resume restarts it, without submitting CR.
-AXLSKEY       LD        A,0FAH                         ; deferred BDOS 10 input
-              LD        L,A
-              RET
-
-; Blocked BDOS 1 and BIOS CONIN sample Open Apple at key-read time.
+; Stage 27: removed unused code/data (Obsolete input return marker).
 TSKCIN        CALL      BIOSCONIN
               CALL      TSKKEY
               JR        C,TSKCIKEY
@@ -927,11 +895,7 @@ TSKCIN        CALL      BIOSCONIN
               JR        Z,TSKCIN                       ; OA-current was consumed
               CP        3
               JR        NZ,TSKECHO
-              LD        A,1
-              LD        (LCQUIT),A
-              XOR       A
-              LD        L,A
-              RET
+              JP        TSKCCANCEL                     ; ^C: cancel shell, abort child
 TSKECHO       PUSH      AF
               LD        E,A
               CALL      C_WRITE
@@ -1198,10 +1162,7 @@ TSKRFIN       XOR       A
               CALL      SHAFTER                      ; offload stage-12 continuation and WBOOT setup
               RET
 
-TSKMSG        DEFM      'Suspended (Open Apple+0-9/A-F/arrows)'
-              DEFB      13,'$'
-TSKBUSY       DEFM      'Session suspended: select it first'
-              DEFB      13,'$'
+; Stage 27: removed unused code/data (Unreferenced scheduler strings).
 ; Shared serialization buffer and one copy for each session.
 TSKBUFF
 TSKBC         DEFW      0
@@ -1857,24 +1818,8 @@ SVCLEAR       LD        HL,SVVALID
               LDIR
               RET
 
-; CCP helper routines relocated here to keep resident code below $9800.
-; Uppercase the command input (Pascal string) in place.
-UCASE         LD        B,(HL)
-UCL1          LD        A,B
-              OR        A
-              RET       Z
-              INC       HL
-              LD        A,(HL)
-              CP        'a'
-              JR        C,UCS1
-              CP        'z'+1
-              JR        NC,UCS1
-              SUB       'a'-'A'
-              LD        (HL),A
-UCS1          DJNZ      UCL1
-              RET
-
-
+; Resident BYE confirmation retained for ProDOS recovery.
+; Stage 27: removed unused code/data (Unreferenced legacy uppercaser).
 ; Shared confirmation reader. A=0 for Y; A=1 for N.
 ; Invalid input is ignored; C_READ echoes typed characters.
 CCPYESNO      CALL      C_WRITESTR
@@ -2462,7 +2407,7 @@ XSCEXIT       POP       HL
 ; Native MAIN BYE confirmation uses C_READ directly, not BDOS 0Ah/01h.
 ; Echo synthetic input just like C_READ does, otherwise original read.
 XSCCPKEY      CALL      XSCHAR
-              JP        NC,C_READ
+              JP        NC,TSKCIN                      ; shell-safe ^C in BYE confirmation
               PUSH      AF
               LD        E,A
               CALL      C_WRITE
@@ -2568,9 +2513,7 @@ TB_VPTR       LD        E,A
               LD        HL,TBVIS
               ADD       HL,DE
               RET
-TB_VMARK      CALL      TB_VPTR
-              LD        (HL),1
-              RET
+; Stage 27: removed unused code/data (Unused tab visited wrapper).
 TB_VINIT      LD        HL,TBVIS
               LD        DE,TBVIS+1
               LD        BC,15
@@ -2708,47 +2651,8 @@ TL_DPAD       LD        E,' '
 TL_CCP        DEFM      'CCP     $'                    ; 8 columns, same as .COM names
 
               ORG       05500H
-; USER command. CCP normalized FILEBUF as: " n ", or empty.
-; USER with no argument prints current code, USER 0..15 selects it.
-CCPUSER       LD        A,(FILEBUF)
-              OR        A
-              JR        Z,CU_SHOW
-              LD        HL,FILEBUF+2
-              LD        A,(HL)
-              CP        '0'
-              JP        C,CCPBAD
-              CP        '9'+1
-              JP        NC,CCPBAD
-              SUB       '0'
-              LD        B,A
-              INC       HL
-              LD        A,(HL)
-              CP        ' '
-              JR        Z,CU_SET
-              ; Two-digit values 10..15 only.
-              LD        A,B
-              CP        1
-              JP        NZ,CCPBAD
-              LD        A,(HL)
-              CP        '0'
-              JP        C,CCPBAD
-              CP        '6'
-              JP        NC,CCPBAD
-              SUB       '0'-10
-              LD        B,A
-              INC       HL
-              LD        A,(HL)
-              CP        ' '
-              JP        NZ,CCPBAD
-CU_SET        LD        E,B
-              CALL      F_USERNUM
-              RET
-CU_SHOW       LD        E,0FFH
-              CALL      F_USERNUM
-              CALL      RWDECIMAL
-              LD        E,13
-              JP        C_WRITE
-
+; USER command lives in AUX CCP.COM; MAIN F_USERNUM remains in BDOS.
+; Stage 27: removed unused code/data (Old resident USER handler).
 ; Lazy user-area directory creation. Called ONLY after a file CREATE
 ; returned $44 (parent pathname missing), never on ordinary opens.
 ; PATHBUF holds A3/FILE etc. Preserve its original Pascal length.
@@ -3235,6 +3139,44 @@ TB_BOOTIFNEW  CALL      SHPTR
 SHBOOTREPORT  JP        RWREPORT                       ; cold-boot report (3-byte call site)
 SHBOOTENTRY   CALL      SHNEW
               JP        CCP                           ; permanent MAIN supervisor/recovery loop
+
+; Stage 27.1: Ctrl-C is a *line cancel*, not a CCP.COM termination.
+; Distinguish shell (SHFLAGS=1) from transient child (SHFLAGS=2).
+; Both keyboard handlers live here to avoid growing fixed $0800 and
+; $7000-$758F regions.  This $5E80-$5EFF region has 128 bytes total.
+SHISCCP       PUSH      HL
+              PUSH      DE
+              CALL      SHPTR
+              LD        A,(HL)
+              POP       DE
+              POP       HL
+              CP        1
+              RET
+AXCCANCEL     CALL      SHISCCP
+              JR        NZ,TSKCCKILL                   ; ordinary programs retain ^C abort
+              LD        E,'^'
+              CALL      C_WRITE
+              LD        E,'C'
+              CALL      C_WRITE
+              LD        HL,AXLBUF+2
+              LD        C,0                            ; discard partial command line
+              JP        AXLDONE                        ; return empty BDOS 10 buffer
+TSKCCANCEL    CALL      SHISCCP
+              JR        NZ,TSKCCKILL
+              LD        E,'^'
+              CALL      C_WRITE
+              LD        E,'C'
+              CALL      C_WRITE
+              LD        E,13                           ; finish the cancelled prompt line
+              CALL      C_WRITE
+              LD        A,'N'                          ; decline ERA/BYE confirmation
+              LD        L,A
+              RET
+TSKCCKILL     LD        A,1                            ; normal CP/M warm boot for child
+              LD        (LCQUIT),A
+              XOR       A
+              LD        L,A
+              RET
 
               ORG       05F00H
 ; CP/M 2.2 permits programs to read/write IOBYTE at 0003h directly.
@@ -4979,11 +4921,7 @@ AXLPARK       LD        A,C
               LD        L,A
               RET
 
-AXLCAN        LD        A,1
-              LD        (LCQUIT),A
-              XOR       A
-              LD        L,A
-              RET
+AXLCAN        JP        AXCCANCEL                      ; shell: empty line; child: warm boot
 AXLDONE       LD        (HL),13
               LD        A,C
               LD        (AXLBUF+1),A
@@ -5405,37 +5343,15 @@ ROFTEXT       DEFM      ': File R/O'
 RODTEXT       DEFM      ': R/O'
               DEFB      '$'
 
-; CCP command argument/file validators relocated from resident code.
-; The CCP parser normalizes arguments as " arg1 arg2 ", always
-; separating words by ONE space and retaining the leading/trailing space.
-; Number of words = number of spaces - 1 (or 0 if tail is empty).
-CCPARGC       LD        HL,FILEBUF
-              LD        B,(HL)
-              LD        C,0
-              INC       HL
-CALOOP        LD        A,B
-              OR        A
-              JR        Z,CADONE
-              LD        A,(HL)
-              CP        ' '
-              JR        NZ,CANEXT
-              INC       C
-CANEXT        INC       HL
-              DJNZ      CALOOP
-CADONE        LD        A,C
-              OR        A
-              RET       Z
-              DEC       A
-              RET
-
+; Shared error reporting for native TAB/TERM/SAVE services.
+; Stage 27: removed unused code/data (Old resident argument counter).
 CCPBAD        LD        DE,BFMSG
               CALL      C_WRITESTR
               LD        A,1
               OR        A
               RET
 
-; Disallow ambiguous file specifications in TYPE, REN and SAVE.
-; Returns A=0 for unambiguous name, nonzero for '?' anywhere.
+; ISWILD is retained for native SAVE filename validation.
 ISWILD        LD        B,11
 IWLOOP        LD        A,(HL)
               CP        '?'
@@ -5444,11 +5360,7 @@ IWLOOP        LD        A,(HL)
               DJNZ      IWLOOP
               XOR       A
               RET
-CCPNOWILD     CALL      ISWILD
-              OR        A
-              RET       Z
-              JP        CCPBAD
-
+; Stage 27: removed unused code/data (Old resident wildcard error wrapper).
 ; Legacy MAIN built-in TYPE/SAVE wrappers removed (AUX implements both).
 
 ; Permanent scratch: main TPA is unused by auxiliary transients.
@@ -6107,8 +6019,7 @@ SCHWAKE       LD        A,(TABMODE)
 
 ; The virtual display is live, so no physical screen snapshot is needed
 ; when an application yields or a manual tab change is requested.
-SCHSNAP       RET                                      ; live screen always up-to-date
-
+; Stage 27: removed unused code/data (Unused screen snapshot stub).
 ; Stage 3: defer blocking console reads if this task is in the
 ; background, OR if this is the foreground and another task can run
 ; while waiting for a keystroke. A physical key already pending may
@@ -6195,11 +6106,8 @@ STYIELD       LD        A,3
 
 ; Stage 2: keep 6502 parser/cursor state coherent across scheduler
 ; and manual TAB switches. VSMETAS retains the nine original bytes.
-; This helper block lives in MAIN $8000-$80FF before BIOS $8100.
-; Remaining built-ins and CCP command syntax.
-CCPH2         DEFM      'CACHE CLS BANKS TAB HELP'
-              DEFB      13,'$'
-
+; MAIN $8000-$80FF: per-tab terminal state helpers before BIOS $8100.
+; Stage 27: removed unused code/data (Unused legacy help text).
               ORG       08000H
 VSSTSAVE      LD        A,(VSOK)
               OR        A
@@ -8849,32 +8757,9 @@ RAND2MARK     LD        A,(IX+23H)
 RAND_MARK_BAD SCF
               RET
 
-; Legacy 16-bit extent/recs conversion (not used by BDOS 36).
-; Extent number is passed in B
-; Records within the extent is passed in A
-; Returns the length in records in HL - HL = (B*128)+A
-EXRC2RECS     LD        H,B                            ; 16-bit (extent*128 + record)
-              LD        L,A                            ; Record must be 0..127
-              LD        A,H
-              RRCA                                     ; Extent bit 0 -> bit 7 of low byte
-              AND       80H
-              OR        L
-              LD        L,A
-              SRL       H                              ; Extent bits 1..7 -> high byte
-              RET
-
-; Convert position in terms of random record number to extent/recs
-; Length in records in passed in HL
-; Returns extent number in B and records within extent in A
-RECS2EXRC     SLA       H                              ; 7 MS-bits of extent number
-              BIT       7,L                            ; See if MS-bit of L is set
-              JR        Z,R2ERS1                       ; If set ...
-              INC       H                              ; ... set LSB of extent number
-R2ERS1        LD        B,H                            ; Return extent in B
-              LD        A,L                            ; Now for the recs in the extent
-              AND       7FH                            ; Just need to mask out MS-bit
-              RET
-
+; Retired extent conversion routines removed in Stage 27.
+; Stage 27: removed unused code/data (Unused extent-to-record converter).
+; Stage 27: removed unused code/data (Unused record-to-extent converter).
 ; Compact diagnostic helper: print C as [XX] without a four-digit
 ; conversion buffer.  Preserve registers as the old PRHEX did.
 PRHEX         PUSH      AF
@@ -9030,9 +8915,7 @@ REMSG         DEFM      'I/O error'
 BFMSG         DEFM      'Bad format'
               DEFB      13,'$'
 
-RNEMSG        DEFM      'Rename error'
-              DEFB      13,'$'
-
+; Stage 27: removed unused code/data (Unused rename error message).
 ; Four names per line, with their drive letters. No sorting is done.
 ; Stage 25: resident DIR/ERA/REN/TYPE code removed.
 ; ProDOS parameter blocks and all BDOS disk I/O remain below.
