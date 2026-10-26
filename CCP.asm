@@ -1,4 +1,4 @@
-; Zapple-II AUX CCP 1.2 (Stage 24.2; classic directory layout)
+; Zapple-II AUX CCP 1.5 (Stage 26; SUBMIT/XSUB restoration)
 ; Standard CP/M 2.2 BDOS for built-ins; private BDOS F7 for program chaining.
 ; Requires Stage 13 kernel: F7 copies launch FCB + FCB1 + FCB2 + command tail.
 ; Transient program memory is AUX; tab switches retain command and stack.
@@ -145,16 +145,20 @@ PRMEND      LD      A,':'
 ; Reuse the kernel's BDOS 10 editor (raw input, BS/DEL, no double echo).
 ; Convert the returned CP/M [max][count][characters][CR] buffer to
 ; the original NUL-terminated, uppercase LINE used by the parser.
-READLINE    JP      RLKEYBD                 ; Stage 25.1: bypass broken F8/10 SUBMIT hook
-            LD      (BXTAIL),HL                 ; F8 ID 10 input parameter
+; The Stage 25 bridge used HL without initializing it, allowing the F8/10
+; record copier to write anywhere in AUX memory.  The out-of-line setup
+; after the data region preserves all original code/data addresses.
+; F8/10 returns A=1 only when a SUBMIT record has been echoed and copied.
+READLINE    JP      RLSUBPTR
+RLSUBCALL   LD      (BXTAIL),HL                 ; address of BDOS 10 count byte
             LD      A,10
             LD      (BXID),A
             LD      DE,BXID
             LD      C,0F8H
             CALL    0005H                      ; ask MAIN for next $$$.SUB record
-            OR      A
-            JR      NZ,RLHAVE                   ; already echoed by CCPSUB
-RLKEYBD     LD      DE,INBUF                  ; direct BDOS 10, proven Stage 24 editor
+            DEC     A                          ; only A=1 means a valid record
+            JR      Z,RLHAVE                    ; already echoed by CCPSUB
+RLKEYBD     LD      DE,INBUF                  ; physical BDOS 10 (proven Stage 25.2 editor)
             LD      A,78
             LD      (DE),A
             LD      C,10
@@ -1075,7 +1079,7 @@ OUT         PUSH    AF
             POP     AF
             RET
 
-BANNER      DEFM    'Zapple-II AUX CCP 1.4 (Stage 25)'
+BANNER      DEFM    'Zapple-II AUX CCP 1.5 (Stage 26)'
             DEFB    13,'$'
 KDIR        DEFM    'DIR'
             DEFB    0
@@ -1167,3 +1171,10 @@ BXID        DEFB    0
 BXTAIL      DEFS    80                          ; private F8 MAIN command tail
 BXFCB       DEFS    36                          ; F8/9 SAVE target, must follow BXTAIL
 TABCAN      DEFS    20                          ; TAB action-first canonical arguments
+
+; Stage 26: out-of-line F8/10 setup, safely beyond all CCP buffers.
+; INBUF+1 is the count-byte destination; INBUF holds capacity on
+; the physical-keyboard (BDOS 10) path.  SUBMIT may supply 120 chars;
+; both INBUF and LINE have 124 bytes reserved in Stage 25.2.
+RLSUBPTR    LD      HL,INBUF+1
+            JP      RLSUBCALL

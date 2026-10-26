@@ -2369,6 +2369,10 @@ XSNEXT        PUSH      BC
               RET
 
 ; A=1 if native XSUB is enabled for the current tab; A=0 otherwise.
+; XSUB may redirect application console input, never CCP keyboard entry.
+; The AUX supervisor marks the shell 1 and the launched child 2 in
+; SHFLAGS[tab].  A lingering XSUB stream must not intercept the CCP's
+; BDOS 10 fallback (or another shell console request).
 XSENABL       PUSH      BC
               LD        A,(XSFLAG)
               OR        A
@@ -2377,6 +2381,14 @@ XSENABL       PUSH      BC
               LD        B,A
               LD        A,(XSOWNER)
               CP        B
+              JR        NZ,XSEOFF
+              PUSH      DE
+              PUSH      HL
+              CALL      SHPTR                          ; HL=&SHFLAGS[TABMODE]
+              LD        A,(HL)
+              POP       HL
+              POP       DE
+              CP        2                              ; 2=child, 1=shell
               JR        NZ,XSEOFF
               LD        A,1
               POP       BC
@@ -3069,7 +3081,7 @@ SHSTOP        XOR       A
               LD        (HL),A
               RET
 SHLAUNCH      LD        (HL),2                     ; mark child before switching programs
-              CALL      AUXRUN                     ; F7 already staged child FCB in PATHBUF2
+              CALL      SHSUBRUN                   ; rearm SUBMIT on a fresh SUBMIT.COM launch
               LD        A,(AXQUIT)
               CP        3
               RET       Z                           ; child's bank saved by existing scheduler
@@ -3333,6 +3345,45 @@ SCHHOT        LD        A,(0E000H)                     ; $C000: common fast path
               RET
 SHNOTOA       POP       BC
               RET
+
+; Stage 26.1 SUBMIT restart guard.  The legacy resident CCP cleared
+; SBHALT through BDOSWARM, but the AUX supervisor directly reloads CCP
+; after each transient, bypassing BDOSWARM.  If a prior SUBMIT reader
+; encountered an invalid or zero-length $$$.SUB and latched SBHALT,
+; a later SUBMIT.COM can create a new $$$.SUB that is never examined.
+;
+; Only rearm when the CCP is about to launch a fresh SUBMIT.COM.
+; This does NOT repeatedly retry a bad $$$.SUB at each CCP prompt.
+; Diagnostic message prints ONLY if an old SBHALT latch was found.
+; Same stack/return behaviour as original CALL AUXRUN in SHLAUNCH.
+              ORG       06000H
+SHSUBRUN      LD        HL,PATHBUF2+1
+              LD        DE,SHSUBNAME
+              LD        B,11
+SHSUBCMP      LD        A,(DE)
+              CP        (HL)
+              JR        NZ,SHSUBGO
+              INC       HL
+              INC       DE
+              DJNZ      SHSUBCMP
+              ; Fresh SUBMIT.COM starts a new submission lifecycle.
+              ; Don't let an earlier XSUB stream steal its console input
+              ; or contaminate subsequent normal SUBMIT scripts.
+              XOR       A
+              LD        (XSFLAG),A
+              LD        (XSLEFT),A
+              LD        (SBFROM),A
+              LD        A,(SBHALT)
+              OR        A
+              JR        Z,SHSUBGO
+              LD        DE,SHSUBMSG
+              CALL      C_WRITESTR
+              XOR       A
+              LD        (SBHALT),A
+SHSUBGO       JP        AUXRUN
+SHSUBNAME     DEFM      'SUBMIT  COM'
+SHSUBMSG      DEFM      'SUBMIT: stale reader latch cleared'
+              DEFB      13,'$'
 
 ; Stage 25: legacy CCP HELP removed (old $6000 block).
               ORG       06100H
