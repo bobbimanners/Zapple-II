@@ -164,12 +164,6 @@ RLSUBCALL   LD      (BXTAIL),HL                 ; address of BDOS 10 count byte
             DEC     A                          ; only A=1 means a valid record
             JR      Z,RLHAVE                    ; already echoed by CCPSUB
 RLKEYBD     JP      EDSTART
-; Original BDOS 10 path retained for reference and XSUB-independent editing.
-RLKEYOLD    LD      DE,INBUF                  ; physical BDOS 10 (proven Stage 25.2 editor)
-            LD      A,78
-            LD      (DE),A
-            LD      C,10
-            CALL    0005H                      ; otherwise use kernel line editor
 RLHAVE      LD      A,(INBUF+1)
             LD      B,A
             LD      HL,INBUF+2
@@ -210,14 +204,22 @@ MBAD        LD      A,1
             OR      A
             RET
 
-; Poll ^C non-destructively to stop a listing.
+; Check ^C without triggering the CCP software cursor on every
+; TYPE byte.  BDOS 11 only peeks keyboard readiness and honors OA hotkeys.
+; BDOS 6 consumes a key only if one is actually waiting.
 POLLKEY     PUSH    BC
             PUSH    DE
             PUSH    HL
-            LD      E,0FFH
+            LD      C,11                         ; console status, no cursor
+            CALL    0005H
+            OR      A
+            JR      Z,PKNOKEY
+            LD      E,0FFH                      ; key ready: get it
             LD      C,6
             CALL    0005H
-            CP      3
+            JR      PKCHECK
+PKNOKEY     XOR     A                           ; no key = not Ctrl-C
+PKCHECK     CP      3
             POP     HL
             POP     DE
             POP     BC
@@ -1205,14 +1207,10 @@ HELPMSG     DEFM    'DIR ERA REN TYPE USER    CLS BANKS CACHE [RESET]'
             DEFB    13
             DEFM    'History: HIST lists, ^E/^X or Up/Down recalls, ^Y clears'
             DEFB    13,'$'
-SAVEWARN    DEFM    'SAVE unavailable: AUX CCP overwrote transient RAM'
-            DEFB    13,'$'
 CMDPTR      DEFW    LINE
 ARGPTR      DEFW    LINE
 RENDST      DEFW    LINE
 SVFPTR      DEFW    LINE
-LNPTR       DEFW    LINE
-LNCOUNT     DEFB    0
 ALLOWW      DEFB    0
 DIRCOL      DEFB    0
 DIRDRIVE    DEFB    0
@@ -1239,7 +1237,7 @@ TABCAN      DEFS    20                          ; TAB action-first canonical arg
 RLSUBPTR    LD      HL,INBUF+1
             JP      RLSUBCALL
 
-; Stage 28 command editor. No MAIN kernel changes are required.
+; Stage 28 command editor. Persistent history uses kernel F8/11-12.
 ; BDOS 6 / E=FF reads raw keys, so the supervisor still sees OA+hotkeys.
 ; Everything below belongs to the executing AUX session (independent history).
 ; Apple II: LEFT=08h, RIGHT=15h, UP=0Bh, DOWN=0Ah.
