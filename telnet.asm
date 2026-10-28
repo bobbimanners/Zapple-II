@@ -28,8 +28,11 @@ S1RXRD        EQU   0528H
 START         LD    SP,STACKTOP
               LD    DE,MSG_BANNER
               CALL  PRINT
+              CALL  ARG_PARSE
+              JP    C,FATAL_ARGS
               CALL  CONFIG_READ
               JP    C,FATAL_CFG
+              CALL  ARG_APPLY
               CALL  PRINT_CFG
               CALL  VALIDATE_CFG
               JP    C,FATAL_CFG
@@ -53,6 +56,8 @@ START         LD    SP,STACKTOP
               LD    DE,MSG_CONNECTED
               CALL  PRINT
               JP    MAIN_LOOP
+FATAL_ARGS    LD    DE,MSG_USAGE
+              JP    ERROR_EXIT
 FATAL_CFG     LD    DE,MSG_BADCFG
               JP    ERROR_EXIT
 FATAL_HW      LD    DE,MSG_BADHW
@@ -75,18 +80,32 @@ EXIT          LD    DE,MSG_EXIT
 
 ; BDOS 9 '$'-terminated message. Preserve the working caller's BC/HL.
 PRINT         PUSH  BC
+              PUSH  AF
+              CALL  PRINT_GATE
+              POP   AF
               PUSH  HL
+              LD    A,(QUIET_MUTE)
+              OR    A
+              JP    NZ,PRINT_SKIP
               LD    C,9
               CALL  BDOS
-              POP   HL
+PRINT_SKIP    POP   HL
               POP   BC
               RET
 PUTC          PUSH  BC
+              PUSH  AF
+              LD    A,(QUIET_MUTE)
+              OR    A
+              JP    NZ,PUTC_SKIP
+              POP   AF
               PUSH  HL
               LD    E,A
               LD    C,2
               CALL  BDOS
               POP   HL
+              POP   BC
+              RET
+PUTC_SKIP     POP   AF
               POP   BC
               RET
 NEWLINE       LD    A,13
@@ -112,6 +131,161 @@ HEX16         LD    A,H
               CALL  HEX
               LD    A,L
               JP    HEX
+
+; Verbose output is controlled by -v. Keep diagnostic HEX/NEWLINE silent
+; by retaining QUIET_MUTE across their follow-on calls; clear each RX poll.
+PRINT_GATE    LD    A,(VERBOSE)
+              OR    A
+              JP    NZ,PG_SHOW
+              PUSH  HL
+              LD    HL,PG_ALLOW
+PG_SCAN       LD    A,(HL)
+              INC   HL
+              LD    C,A
+              LD    A,(HL)
+              INC   HL
+              LD    B,A
+              LD    A,B
+              OR    C
+              JP    Z,PG_HIDE
+              LD    A,E
+              CP    C
+              JP    NZ,PG_SCAN
+              LD    A,D
+              CP    B
+              JP    NZ,PG_SCAN
+              POP   HL
+PG_SHOW       XOR   A
+              LD    (QUIET_MUTE),A
+              RET
+PG_HIDE       POP   HL
+              LD    A,1
+              LD    (QUIET_MUTE),A
+              RET
+PG_ALLOW      DEFW  MSG_BANNER,MSG_CONNECTED,MSG_DISCONNECT,MSG_BADCFG
+              DEFW  MSG_BADHW,MSG_BADSOCK,MSG_BADCONN,MSG_USAGE
+              DEFW  MSG_TXFULL,MSG_CLOSE,MSG_EXIT,MSG_SOCKBUSY
+              DEFW  MSG_BUFERR,MSG_TIMEOUT,MSG_CLOSED,MSG_MODEKEEP
+              DEFW  MSG_BADMODE,MSG_CMDTIME,MSG_INVALID
+              DEFW  0
+
+; CP/M command tail length at 0080h, text at 0081h.
+; Syntax TELNET [IPv4-address [port]] [-v], flags in any position.
+; Preserve overrides until after configuration is loaded.
+ARG_PARSE     LD    A,(0080H)
+              CP    120
+              JP    NC,ARG_BAD
+              LD    B,A
+              LD    HL,0081H
+              LD    DE,ARG_BUF
+ARG_COPY      LD    A,B
+              OR    A
+              JP    Z,ARG_COPIED
+              LD    A,(HL)
+              LD    (DE),A
+              INC   HL
+              INC   DE
+              DJNZ  ARG_COPY
+ARG_COPIED    XOR   A
+              LD    (DE),A
+              LD    HL,ARG_BUF
+ARG_SKIP      LD    A,(HL)
+              CP    ' '
+              JP    Z,ARG_SPACE
+              CP    9
+              JP    Z,ARG_SPACE
+              OR    A
+              RET   Z
+              LD    (ARG_TOKEN),HL
+ARG_FIND      LD    A,(HL)
+              OR    A
+              JP    Z,ARG_LAST
+              CP    ' '
+              JP    Z,ARG_ENDTOKEN
+              CP    9
+              JP    Z,ARG_ENDTOKEN
+              INC   HL
+              JP    ARG_FIND
+ARG_ENDTOKEN  XOR   A
+              LD    (HL),A
+              INC   HL
+              LD    (ARG_NEXT),HL
+              JP    ARG_HANDLE
+ARG_LAST      LD    (ARG_NEXT),HL
+ARG_HANDLE    LD    HL,(ARG_TOKEN)
+              LD    A,(HL)
+              CP    '-'
+              JP    NZ,ARG_POSITION
+              INC   HL
+              LD    A,(HL)
+              CP    'v'
+              JP    Z,ARG_VEND
+              CP    'V'
+              JP    NZ,ARG_BAD
+ARG_VEND      INC   HL
+              LD    A,(HL)
+              OR    A
+              JP    NZ,ARG_BAD
+              LD    A,1
+              LD    (VERBOSE),A
+              JP    ARG_CONT
+ARG_POSITION  LD    A,(ARG_STAGE)
+              OR    A
+              JP    NZ,ARG_PORT
+              LD    DE,ARG_IP
+              CALL  IPV4
+              JP    C,ARG_BAD
+              LD    A,1
+              LD    (ARG_STAGE),A
+              JP    ARG_CONT
+ARG_PORT      CP    1
+              JP    NZ,ARG_BAD
+              CALL  DEC16
+              JP    C,ARG_BAD
+              LD    A,H
+              OR    L
+              JP    Z,ARG_BAD
+              LD    A,H
+              LD    (ARG_PORTBE),A
+              LD    A,L
+              LD    (ARG_PORTBE+1),A
+              LD    A,2
+              LD    (ARG_STAGE),A
+ARG_CONT      LD    HL,(ARG_NEXT)
+              JP    ARG_SKIP
+ARG_SPACE     INC   HL
+              JP    ARG_SKIP
+ARG_BAD       SCF
+              RET
+ARG_APPLY     LD    A,(ARG_STAGE)
+              OR    A
+              RET   Z
+              LD    HL,ARG_IP
+              LD    DE,CFG_REMOTE
+              LD    BC,4
+ARG_CPIP      LD    A,(HL)
+              LD    (DE),A
+              INC   HL
+              INC   DE
+              DEC   BC
+              LD    A,B
+              OR    C
+              JP    NZ,ARG_CPIP
+              LD    A,(ARG_STAGE)
+              CP    2
+              RET   NZ
+              LD    HL,ARG_PORTBE
+              LD    DE,CFG_PORTBE
+              LD    BC,2
+ARG_CPPORT    LD    A,(HL)
+              LD    (DE),A
+              INC   HL
+              INC   DE
+              DEC   BC
+              LD    A,B
+              OR    C
+              JP    NZ,ARG_CPPORT
+              RET
 
 ; -------- CONFIG FILE ----------------------------------------------------
 ; File is read as sequential CP/M 128-byte records (up to EOF), line-by-line.
@@ -1229,35 +1403,89 @@ CMD_WAIT      LD    HL,S1CR
               SCF
               RET
 
-; Read one byte if available. Carry=1 means no data; carry=0 A=data.
-; Socket 1 ring size and base reflect the actual RMSR allocation.
-RX_ONE        LD    HL,S1RXRSR
-              CALL  WREAD
-              LD    B,A
-              INC   HL
-              CALL  WREAD
-              OR    B
-              JP    Z,RX_EMPTY
-              LD    HL,S1RXRD
+; v1.8b conservative batching: use the EXACT verified v1.7 WREAD
+; for every incoming byte. Only defer RX_RD/RECV acknowledgment to once
+; per batch. No W5100 sequential-auto-increment assumptions.
+; At most 16 bytes buffered: a deliberately small first experiment.
+RX_ONE        LD    A,(RX_LEFT)
+              OR    A
+              JP    Z,RX_REFILL
+RX_POP        LD    A,(RX_INDEX)
+              LD    E,A
+              LD    D,0
+              LD    HL,RX_BUFFER
+              ADD   HL,DE
+              LD    A,(HL)
+              LD    (RX_CHAR),A
+              LD    A,(RX_INDEX)
+              INC   A
+              LD    (RX_INDEX),A
+              LD    A,(RX_LEFT)
+              DEC   A
+              LD    (RX_LEFT),A
+              LD    A,(RX_CHAR)
+              OR    A
+              RET
+RX_REFILL     LD    HL,S1RXRSR
               CALL  WREAD
               LD    B,A
               INC   HL
               CALL  WREAD
               LD    C,A
+              LD    A,B
+              OR    A
+              JP    NZ,RX_LIMIT
+              LD    A,C
+              OR    A
+              JP    Z,RX_EMPTY
+              CP    17
+              JP    C,RX_COUNT
+RX_LIMIT      LD    A,16
+RX_COUNT      LD    (RX_CHUNK),A
+              LD    HL,S1RXRD
+              CALL  WREAD
+              LD    (RX_PTRHI),A
+              INC   HL
+              CALL  WREAD
+              LD    (RX_PTRLO),A
+              XOR   A
+              LD    (RX_INDEX),A
+RX_FILL_LOOP  ; Each byte recomputes its W5100 ring address and WREAD
+              ; selects that address explicitly, as v1.7 did.
+              LD    A,(RX_PTRHI)
+              LD    H,A
               LD    A,(RX_MASKHI)
-              AND   B
+              AND   H
               LD    H,A
               LD    A,(RX_BASEHI)
               OR    H
               LD    H,A
-              LD    L,C
+              LD    A,(RX_PTRLO)
+              LD    L,A
               CALL  WREAD
-              LD    (RX_CHAR),A
-              INC   BC
-              LD    A,B
-              LD    (RX_PTRHI),A
-              LD    A,C
+              PUSH  AF
+              LD    A,(RX_INDEX)
+              LD    E,A
+              LD    D,0
+              LD    HL,RX_BUFFER
+              ADD   HL,DE
+              POP   AF
+              LD    (HL),A
+              LD    A,(RX_PTRLO)
+              INC   A
               LD    (RX_PTRLO),A
+              JP    NZ,RX_NO_CARRY
+              LD    A,(RX_PTRHI)
+              INC   A
+              LD    (RX_PTRHI),A
+RX_NO_CARRY   LD    A,(RX_INDEX)
+              INC   A
+              LD    (RX_INDEX),A
+              LD    B,A
+              LD    A,(RX_CHUNK)
+              CP    B
+              JP    NZ,RX_FILL_LOOP
+              ; Both pointer bytes are now ready, one RECV per batch.
               LD    HL,S1RXRD
               LD    DE,RX_PTRHI
               LD    B,2
@@ -1265,9 +1493,11 @@ RX_ONE        LD    HL,S1RXRSR
               LD    A,040H
               CALL  COMMAND
               JP    C,RX_EMPTY
-              LD    A,(RX_CHAR)
-              OR    A
-              RET
+              XOR   A
+              LD    (RX_INDEX),A
+              LD    A,(RX_CHUNK)
+              LD    (RX_LEFT),A
+              JP    RX_POP
 RX_EMPTY      SCF
               RET
 
@@ -1456,7 +1686,9 @@ TN_REPLY      LD    (TN_BUF+1),A
               CALL  SEND_BYTES
               RET
 
-MAIN_LOOP     CALL  RX_ONE
+MAIN_LOOP     XOR   A
+              LD    (QUIET_MUTE),A
+              CALL  RX_ONE
               JP    C,MAIN_NO_RX
               CALL  TEL_IN
 MAIN_NO_RX    LD    HL,(POLL_COUNT)
@@ -1472,7 +1704,9 @@ MAIN_NO_RX    LD    HL,(POLL_COUNT)
               CALL  WREAD
               CALL  HEX
               CALL  NEWLINE
-MAIN_NO_HB    LD    HL,S1SR
+MAIN_NO_HB    XOR   A
+              LD    (QUIET_MUTE),A
+              LD    HL,S1SR
               CALL  WREAD
               CP    017H
               JP    Z,MAIN_KEY
@@ -1491,8 +1725,7 @@ MAIN_KEY      LD    C,11                    ; cooperative scheduler+keyboard sta
               AND   07FH
               CP    01DH                    ; Ctrl-] leaves telnet
               JP    Z,CLOSE_EXIT
-              CP    3                       ; Ctrl-C leaves telnet
-              JP    Z,CLOSE_EXIT
+              ; Ctrl-C (03h) is forwarded to the remote host.
               CALL  SEND_KEY
               JP    C,CLOSE_EXIT
               JP    MAIN_LOOP
@@ -1504,9 +1737,12 @@ CLOSE_EXIT    LD    DE,MSG_CLOSE
 
 ; --- Data and ASCII diagnostics ------------------------------------------
 MSG_BANNER    DEFB  13,10
-              DEFM  'Zapple-II TELNET/W5100 prototype v1.7'
+              DEFM  'Zapple-II TELNET/W5100 v1.9'
               DEFB  13,10
               DEFB  '$'
+MSG_USAGE    DEFB  13,10
+              DEFM  'Usage: TELNET [a.b.c.d [port]] [-v]'
+              DEFB  13,10,'$'
 MSG_CFGOPEN   DEFM  '[01] opening TELNET.CFG'
               DEFB  13,10
               DEFB  '$'
@@ -1623,7 +1859,7 @@ MSG_CMDTIME   DEFM  ' [W5100] socket command never cleared'
               DEFB  13,10
               DEFB  '$'
 MSG_HEART     DEFM  '[POLL] socket status = $'
-MSG_CONNECTED DEFM  '[06] CONNECTED - Ctrl-] or Ctrl-C to exit'
+MSG_CONNECTED DEFM  '[06] CONNECTED - Ctrl-] to exit'
               DEFB  13,10
               DEFB  '$'
 MSG_DISCONNECT DEFB  13,10
@@ -1659,6 +1895,14 @@ K_PORT        DEFM  'PORT='
 K_RESET       DEFM  'RESET='
               DEFB  0
 
+VERBOSE       DEFB  0
+QUIET_MUTE    DEFB  0
+ARG_STAGE     DEFB  0
+ARG_IP        DEFS  4
+ARG_PORTBE    DEFS  2
+ARG_TOKEN     DEFW  0
+ARG_NEXT      DEFW  0
+ARG_BUF       DEFS  121
 CONFIG_FCB    DEFB  0
               DEFM  'TELNET  CFG'
               DEFS  24
@@ -1689,6 +1933,10 @@ RX_MASKHI     DEFB  0
 TX_BASEHI     DEFB  0
 TX_MASKHI     DEFB  0
 RX_CHAR       DEFB  0
+RX_LEFT       DEFB  0
+RX_INDEX      DEFB  0
+RX_CHUNK      DEFB  0
+RX_BUFFER     DEFS  16
 RX_PTRHI      DEFB  0
 RX_PTRLO      DEFB  0
 TX_PTRHI      DEFB  0
