@@ -10435,7 +10435,8 @@ NETCLNEXT     INC       C
               RET
 NETOWN        DEFB      0FFH,0FFH,0FFH,0FFH
 ; Phase 4A corrected: compact $FB to preserve the $A800 stack boundary.
-; D=socket 0..3, E=0 STATUS / 1 COMMAND, B=socket command.
+; D=socket 0..3, E=0 STATUS, otherwise E=W5100 command byte.
+; Command carried in E, never B (BDOS/scheduler may modify B).
 ; Only the owning logical tab can access a socket. No special VEDRIVE case.
 ; A=L=status for STATUS, 0 for accepted command, FF for error.
 NETIO         LD        A,D
@@ -10450,17 +10451,13 @@ NETIO         LD        A,D
               LD        A,E
               OR        A
               JR        Z,NI_STAT
-              CP        1
-              JP        NZ,NETBAD
-              ; W5100 command byte is passed through, including OPEN,
-              ; CONNECT, DISCON, CLOSE, SEND, RECV and LISTEN.
+              ; Nonzero E is the W5100 command byte.
+              LD        (YREG),A
               LD        A,D
               ADD       A,4
               LD        (AREG),A
               LD        A,1
               LD        (XREG),A
-              LD        A,B
-              LD        (YREG),A
               LD        HL,0B827H
               LD        (ADDR),HL
               LD        A,1
