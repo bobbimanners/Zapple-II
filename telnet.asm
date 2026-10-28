@@ -1488,9 +1488,11 @@ COM002       PUSH  BC
 ; for every incoming byte. Only defer RX_RD/RECV acknowledgment to once
 ; per batch. No W5100 sequential-auto-increment assumptions.
 ; At most 16 bytes buffered: a deliberately small first experiment.
+; Phase 4B: receive up to 16 bytes through kernel-owned ring handling.
+; Keep TELNET's original cached character interface for IAC processing.
 RX_ONE        LD    A,(RX_011)
               OR    A
-              JP    Z,RX_001
+              JR    Z,RX_FETCH
 RX_POP        LD    A,(RX_012)
               LD    E,A
               LD    D,0
@@ -1507,150 +1509,53 @@ RX_POP        LD    A,(RX_012)
               LD    A,(RX_010)
               OR    A
               RET
-RX_001     LD    HL,S1R001
-              CALL  WREAD
-              LD    B,A
-              INC   HL
-              CALL  WREAD
-              LD    C,A
-              LD    A,B
-              OR    A
-              JP    NZ,RX_002
-              LD    A,C
-              OR    A
-              JP    Z,RX_006
-              CP    17
-              JP    C,RX_003
-RX_002      LD    A,16
-RX_003      LD    (RX_013),A
-              LD    HL,S1RXRD
-              CALL  WREAD
-              LD    (RX_015),A
-              INC   HL
-              CALL  WREAD
-              LD    (RX_016),A
-              XOR   A
-              LD    (RX_012),A
-RX_004  ; Each byte recomputes its W5100 ring address and WREAD
-              ; selects that address explicitly, as v1.7 did.
-              LD    A,(RX_015)
-              LD    H,A
-              LD    A,(RX_009)
-              AND   H
-              LD    H,A
-              LD    A,(RX_008)
-              ADD   A,H
-              LD    H,A
-              LD    A,(RX_016)
-              LD    L,A
-              CALL  WREAD
-              PUSH  AF
-              LD    A,(RX_012)
-              LD    E,A
-              LD    D,0
+RX_FETCH      LD    A,(SOCK_NO)
+              LD    (NXP001),A
+              LD    A,1
+              LD    (NXP001+1),A              ; RX operation
+              LD    A,16
+              LD    (NXP001+2),A
               LD    HL,RX_014
-              ADD   HL,DE
-              POP   AF
-              LD    (HL),A
-              LD    A,(RX_016)
-              INC   A
-              LD    (RX_016),A
-              JP    NZ,RX_005
-              LD    A,(RX_015)
-              INC   A
-              LD    (RX_015),A
-RX_005   LD    A,(RX_012)
-              INC   A
-              LD    (RX_012),A
-              LD    B,A
-              LD    A,(RX_013)
-              CP    B
-              JP    NZ,RX_004
-              ; Both pointer bytes are now ready, one RECV per batch.
-              LD    HL,S1RXRD
-              LD    DE,RX_015
-              LD    B,2
-              CALL  WBLOCK
-              LD    A,040H
-              CALL  COM002
-              JP    C,RX_006
+              LD    (NXP001+3),HL
+              LD    DE,NXP001
+              LD    C,0FCH
+              CALL  BDOS
+              CP    0FFH
+              JR    Z,RX_EMPTY
+              OR    A
+              JR    Z,RX_EMPTY
+              LD    (RX_011),A
               XOR   A
               LD    (RX_012),A
-              LD    A,(RX_013)
-              LD    (RX_011),A
               JP    RX_POP
-RX_006      SCF
+RX_EMPTY      SCF
               RET
 
-; Send B bytes from DE: Sn_TX_WR, ring wrap according to TMSR.
-; Never call BDOS while an indirect W5100 pointer is active.
-SEN001    LD    A,B
+; Phase 4B: send 1..16 bytes through kernel-managed W5100 TX ring.
+; On insufficient free space, $FC returns zero (same error behaviour as before).
+SEN001        LD    A,B
               OR    A
               RET   Z
-              LD    (SEN005),A
-              LD    (SEN006),DE
-              LD    HL,S1T001
-              CALL  WREAD
-              LD    C,A
-              INC   HL
-              CALL  WREAD
+              CP    17
+              JR    NC,SEN_ERR
+              LD    (NXP001+2),A
+              LD    (NXP001+3),DE
+              LD    A,(SOCK_NO)
+              LD    (NXP001),A
+              XOR   A
+              LD    (NXP001+1),A
+              LD    DE,NXP001
+              LD    C,0FCH
+              CALL  BDOS
               LD    B,A
-              LD    A,C
-              OR    A
-              JP    NZ,SEN002       ; available >=256
-              LD    A,(SEN005)
+              LD    A,(NXP001+2)
               CP    B
-              JP    C,SEN002
-              JP    Z,SEN002
-              LD    DE,MSG069
+              RET   Z
+SEN_ERR       LD    DE,MSG069
               CALL  PRINT
               SCF
               RET
-SEN002 LD    HL,S1TXWR
-              CALL  WREAD
-              LD    B,A
-              INC   HL
-              CALL  WREAD
-              LD    C,A
-              LD    A,B
-              LD    (TX_004),A
-              LD    A,C
-              LD    (TX_005),A
-SEN003     LD    DE,(SEN006)
-              LD    A,(DE)
-              LD    (TX_006),A
-              INC   DE
-              LD    (SEN006),DE
-              LD    A,(TX_004)
-              LD    H,A
-              LD    A,(TX_003)
-              AND   H
-              LD    H,A
-              LD    A,(TX_002)
-              ADD   A,H
-              LD    H,A
-              LD    A,(TX_005)
-              LD    L,A
-              LD    A,(TX_006)
-              CALL  WWRITE
-              LD    A,(TX_005)
-              INC   A
-              LD    (TX_005),A
-              JP    NZ,SEND_NEXT
-              LD    A,(TX_004)
-              INC   A
-              LD    (TX_004),A
-SEND_NEXT
-              LD    A,(SEN005)
-              DEC   A
-              LD    (SEN005),A
-              JP    NZ,SEN003
-              LD    HL,S1TXWR
-              LD    DE,TX_004
-              LD    B,2
-              CALL  WBLOCK
-              LD    A,020H
-              JP    COM002
+
 ; Send one keyboard byte (CR as CR LF); IAC $FF escaped as $FF $FF.
 SEN004      LD    (SEN007),A
               LD    B,1
@@ -2027,6 +1932,7 @@ RX_011       DEFB  0
 RX_012      DEFB  0
 RX_013      DEFB  0
 RX_014     DEFS  16
+NXP001     DEFS  5
 RX_015      DEFB  0
 RX_016      DEFB  0
 TX_004      DEFB  0

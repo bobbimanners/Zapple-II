@@ -4747,6 +4747,8 @@ AXBDOS        CALL      XSPRE                          ; skip physical keyboard 
               RET       C
               LD        A,C
               LD        (AXBADFN),A                    ; diagnostic: remember original BDOS C
+              CP        0FCH                           ; NET TX/RX via AUX parameter block
+              JP        Z,NXIO
               CP        0FBH                           ; NET socket I/O (E=0 status, else command)
               JP        Z,NETIO
               CP        0FAH                           ; NET socket manager (E=operation, D=socket)
@@ -9479,6 +9481,285 @@ NI_READ       LD        (XREG),A
               LD        (SOFTCARD),A
               LD        A,(AREG)
               RET
+
+
+; Phase 4B: BDOS $FC - packetless W5100 TX/RX, max 16 bytes per call.
+; DE -> AUX [socket, operation (0=TX,1=RX), requested length, ptr lo,ptr hi].
+; Return A=L actual count (0=would block), FF=bad arguments / hardware failure.
+; Unowned sockets are never touched. Single call executes on MAIN stack.
+; In particular, do not call scheduling/BDOS routines while accessing
+; hardware or copying between MAIN and AUX transient banks.
+              ORG       09500H
+NXIO          EX        DE,HL
+              LD        DE,NXPAR
+              LD        BC,5
+              CALL      LCA2M                       ; AUX parameters -> MAIN
+              LD        A,(NXPAR)
+              CP        4
+              JP        NC,NETBAD
+              LD        (NXSOCK),A
+              CALL      NETPTR
+              LD        A,(TABMODE)
+              CP        (HL)
+              JP        NZ,NETBAD
+              LD        A,(NXPAR+2)
+              OR        A
+              JP        Z,NXZERO
+              CP        17                          ; 16-byte staging limit
+              JP        NC,NETBAD
+              LD        (NXREQ),A
+              LD        A,(NXPAR+1)
+              OR        A
+              JP        Z,NXTX
+              CP        1
+              JP        Z,NXRX
+              JP        NETBAD
+NXZERO        XOR       A
+              JP        NETRET
+
+; Universal W5100 read/write: HL is full W5100 address.
+; NXRD returns A, NXWR accepts A; both preserve HL.
+NXRD          PUSH      HL
+              LD        A,H
+              LD        (AREG),A
+              LD        A,L
+              LD        (XREG),A
+              LD        HL,0B824H
+              LD        (ADDR),HL
+              LD        A,1
+              LD        (CMD),A
+              LD        (SOFTCARD),A
+              LD        A,(AREG)
+              POP       HL
+              RET
+NXWR          PUSH      HL
+              LD        (YREG),A
+              LD        A,H
+              LD        (AREG),A
+              LD        A,L
+              LD        (XREG),A
+              LD        HL,0B827H
+              LD        (ADDR),HL
+              LD        A,1
+              LD        (CMD),A
+              LD        (SOFTCARD),A
+              POP       HL
+              RET
+; A=socket register offset, returns HL=full W5100 socket address.
+NXREG         LD        L,A
+              LD        A,(NXSOCK)
+              ADD       A,4
+              LD        H,A
+              RET
+; Socket's TX/RX allocation from live W5100 TMSR/RMSR.
+; A=allocation register, C=first buffer page (40h or 60h).
+; Returns base high byte NXBASE, ring high-byte mask NXMASK.
+NXRING        LD        B,A
+              LD        A,C
+              LD        (NXBASE),A
+              LD        A,(NXSOCK)
+              LD        C,A
+NXRG1         LD        A,B
+              AND       3
+              LD        E,A
+              LD        D,0
+              LD        HL,NXSIZE
+              ADD       HL,DE
+              LD        E,(HL)                       ; buffer length in 256-byte pages
+              LD        A,C
+              OR        A
+              JR        Z,NXRG2
+              LD        A,(NXBASE)
+              ADD       A,E
+              LD        (NXBASE),A
+              LD        A,B
+              RRCA
+              RRCA
+              LD        B,A
+              DEC       C
+              JR        NXRG1
+NXRG2         LD        A,(NXBASE)
+              AND       01FH                         ; 40h and 60h begin on 8KB boundaries
+              ADD       A,E
+              CP        33                           ; must fit in 8KB hardware buffer
+              JR        NC,NXRGERR
+              LD        A,E
+              DEC       A
+              LD        (NXMASK),A
+              OR        A
+              RET
+NXRGERR       SCF
+              RET
+NXSIZE        DEFB      4,8,16,32
+; NXRPTR is the high byte's socket-register low address (24h/28h).
+NXRDPTR       LD        A,(NXRPTR)
+              CALL      NXREG
+              CALL      NXRD
+              LD        (NXHI),A
+              INC       HL
+              CALL      NXRD
+              LD        (NXLO),A
+              RET
+NXWRPTR       LD        A,(NXRPTR)
+              CALL      NXREG
+              LD        A,(NXHI)
+              CALL      NXWR
+              INC       HL
+              LD        A,(NXLO)
+              CALL      NXWR
+              RET
+; Compute selected TX/RX ring address for the current pointer.
+NXADDR        LD        A,(NXHI)
+              LD        B,A
+              LD        A,(NXMASK)
+              AND       B
+              LD        B,A
+              LD        A,(NXBASE)
+              ADD       A,B
+              LD        H,A
+              LD        A,(NXLO)
+              LD        L,A
+              RET
+NXINC         LD        A,(NXLO)
+              INC       A
+              LD        (NXLO),A
+              RET       NZ
+              LD        A,(NXHI)
+              INC       A
+              LD        (NXHI),A
+              RET
+; A=command, call existing ownership-checked FB backend; return A=0/FF.
+NXCMD         LD        E,A
+              LD        A,(NXSOCK)
+              LD        D,A
+              CALL      NETIO
+              RET
+; Fill ring from 16-byte MAIN staging. FSR < length -> zero, no writes.
+NXTX          LD        HL,(NXPAR+3)
+              LD        DE,NXBUF
+              LD        A,(NXREQ)
+              LD        C,A
+              LD        B,0
+              CALL      LCA2M
+              LD        HL,001BH                     ; TMSR
+              CALL      NXRD
+              LD        C,040H
+              CALL      NXRING
+              JP        C,NETBAD
+              LD        A,020H                       ; Sn_TX_FSR high
+              CALL      NXREG
+              CALL      NXRD
+              OR        A
+              JR        NZ,NXTXOK
+              INC       HL
+              CALL      NXRD
+              LD        B,A
+              LD        A,(NXREQ)
+              CP        B
+              JP        NC,NXTXCHK
+              JR        NXTXOK
+NXTXCHK       JR        Z,NXTXOK
+              JP        NXZERO                      ; transient buffer full
+NXTXOK        LD        A,024H
+              LD        (NXRPTR),A
+              CALL      NXRDPTR
+              XOR       A
+              LD        (NXIDX),A
+NXTXLP        LD        A,(NXIDX)
+              LD        E,A
+              LD        D,0
+              LD        HL,NXBUF
+              ADD       HL,DE
+              LD        A,(HL)
+              PUSH      AF
+              CALL      NXADDR
+              POP       AF
+              CALL      NXWR
+              CALL      NXINC
+              LD        A,(NXIDX)
+              INC       A
+              LD        (NXIDX),A
+              LD        B,A
+              LD        A,(NXREQ)
+              CP        B
+              JR        NZ,NXTXLP
+              CALL      NXWRPTR
+              LD        A,020H                       ; SEND
+              CALL      NXCMD
+              CP        0FFH
+              JP        Z,NETBAD
+              LD        A,(NXREQ)
+              JP        NETRET
+; Nonblocking RX: return min(available, requested) into AUX buffer.
+NXRX          LD        HL,001AH                     ; RMSR
+              CALL      NXRD
+              LD        C,060H
+              CALL      NXRING
+              JP        C,NETBAD
+              LD        A,026H                       ; Sn_RX_RSR high
+              CALL      NXREG
+              CALL      NXRD
+              OR        A
+              JR        NZ,NXRXOK
+              INC       HL
+              CALL      NXRD
+              OR        A
+              JP        Z,NXZERO
+              LD        B,A
+              LD        A,(NXREQ)
+              CP        B
+              JR        C,NXRXOK
+              JR        Z,NXRXOK
+              LD        A,B
+              LD        (NXREQ),A
+NXRXOK        LD        A,028H
+              LD        (NXRPTR),A
+              CALL      NXRDPTR
+              XOR       A
+              LD        (NXIDX),A
+NXRXLP        CALL      NXADDR
+              CALL      NXRD
+              PUSH      AF
+              LD        A,(NXIDX)
+              LD        E,A
+              LD        D,0
+              LD        HL,NXBUF
+              ADD       HL,DE
+              POP       AF
+              LD        (HL),A
+              CALL      NXINC
+              LD        A,(NXIDX)
+              INC       A
+              LD        (NXIDX),A
+              LD        B,A
+              LD        A,(NXREQ)
+              CP        B
+              JR        NZ,NXRXLP
+              CALL      NXWRPTR
+              LD        A,040H                       ; RECV: acknowledge consumed data
+              CALL      NXCMD
+              CP        0FFH
+              JP        Z,NETBAD
+              LD        HL,NXBUF
+              LD        DE,(NXPAR+3)
+              LD        A,(NXREQ)
+              LD        C,A
+              LD        B,0
+              CALL      AXM2A                        ; MAIN -> calling AUX bank
+              LD        A,(NXREQ)
+              JP        NETRET
+; Sole staging area; never retain caller AUX pointers across a task switch.
+NXPAR         DEFS      5
+NXSOCK        DEFB      0
+NXREQ         DEFB      0
+NXRPTR        DEFB      0
+NXBASE        DEFB      0
+NXMASK        DEFB      0
+NXHI          DEFB      0
+NXLO          DEFB      0
+NXIDX         DEFB      0
+NXBUF         DEFS      16
+NXEND
 
               ORG       9800H                          ; Try this - WORKS
 IOBUF1        DEFS      1024
