@@ -4747,6 +4747,8 @@ AXBDOS        CALL      XSPRE                          ; skip physical keyboard 
               RET       C
               LD        A,C
               LD        (AXBADFN),A                    ; diagnostic: remember original BDOS C
+              CP        0FBH                           ; NET socket I/O (E=0 status, 1 command)
+              JP        Z,NETIO
               CP        0FAH                           ; NET socket manager (E=operation, D=socket)
               JP        Z,NETAPI
               CP        0F9H                           ; private W5100 bridge: DE=AUX [hi,lo,data]
@@ -10432,6 +10434,67 @@ NETCLNEXT     INC       C
               JR        NZ,NETCLP
               RET
 NETOWN        DEFB      0FFH,0FFH,0FFH,0FFH
+; Phase 4A corrected: compact $FB to preserve the $A800 stack boundary.
+; D=socket 0..3, E=0 STATUS / 1 COMMAND, B=socket command.
+; Only the owning logical tab can access a socket. No special VEDRIVE case.
+; A=L=status for STATUS, 0 for accepted command, FF for error.
+NETIO         LD        A,D
+              CP        4
+              JP        NC,NETBAD
+              PUSH      DE
+              CALL      NETPTR
+              POP       DE
+              LD        A,(TABMODE)
+              CP        (HL)
+              JP        NZ,NETBAD
+              LD        A,E
+              OR        A
+              JR        Z,NI_STAT
+              CP        1
+              JP        NZ,NETBAD
+              ; W5100 command byte is passed through, including OPEN,
+              ; CONNECT, DISCON, CLOSE, SEND, RECV and LISTEN.
+              LD        A,D
+              ADD       A,4
+              LD        (AREG),A
+              LD        A,1
+              LD        (XREG),A
+              LD        A,B
+              LD        (YREG),A
+              LD        HL,0B827H
+              LD        (ADDR),HL
+              LD        A,1
+              LD        (CMD),A
+              LD        (SOFTCARD),A
+              LD        BC,8000
+NI_POLL       LD        A,1                         ; read Sn_CR
+              CALL      NI_READ
+              OR        A
+              JR        Z,NI_OK
+              DEC       BC
+              LD        A,B
+              OR        C
+              JR        NZ,NI_POLL
+              JP        NETBAD
+NI_OK         XOR       A
+              JP        NETRET
+NI_STAT       LD        A,3                         ; read Sn_SR
+              CALL      NI_READ
+              JP        NETRET
+; A=low register address, D=physical socket, reads byte via 6502 bridge.
+; Preserve BC for command acceptance timeout.
+NI_READ       LD        (XREG),A
+              LD        A,D
+              ADD       A,4
+              LD        (AREG),A
+              LD        HL,0B824H
+              LD        (ADDR),HL
+              LD        A,1
+              LD        (CMD),A
+              LD        (SOFTCARD),A
+              LD        A,(AREG)
+              RET
+
 NETEND
 
 ; Stack grows from $A800 down to NETEND.
