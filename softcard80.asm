@@ -4747,7 +4747,7 @@ AXBDOS        CALL      XSPRE                          ; skip physical keyboard 
               RET       C
               LD        A,C
               LD        (AXBADFN),A                    ; diagnostic: remember original BDOS C
-              CP        0FBH                           ; NET socket I/O (E=0 status, 1 command)
+              CP        0FBH                           ; NET socket I/O (E=0 status, else command)
               JP        Z,NETIO
               CP        0FAH                           ; NET socket manager (E=operation, D=socket)
               JP        Z,NETAPI
@@ -9418,6 +9418,68 @@ VRBLK         DEFW      0                              ; Requested ProDOS 512-by
 
               ;ORG        9000H   ; Try this - WORKS
 
+; Phase 4A.3: $FB socket commands in MAIN $9400-$97FF.
+; Prior resident code ends at $93A7; ProDOS buffers start at $9800.
+; Do not place this in $A168-$A1E7: that is AUXSTAGE (128 bytes).
+              ORG       09400H
+; Phase 4A corrected: compact $FB to preserve the $A800 stack boundary.
+; D=socket 0..3, E=0 STATUS, otherwise E=W5100 command byte.
+; Command carried in E, never B (BDOS/scheduler may modify B).
+; Only the owning logical tab can access a socket. No special VEDRIVE case.
+; A=L=status for STATUS, 0 for accepted command, FF for error.
+NETIO         LD        A,D
+              CP        4
+              JP        NC,NETBAD
+              PUSH      DE
+              CALL      NETPTR
+              POP       DE
+              LD        A,(TABMODE)
+              CP        (HL)
+              JP        NZ,NETBAD
+              LD        A,E
+              OR        A
+              JR        Z,NI_STAT
+              ; Nonzero E is the W5100 command byte.
+              LD        (YREG),A
+              LD        A,D
+              ADD       A,4
+              LD        (AREG),A
+              LD        A,1
+              LD        (XREG),A
+              LD        HL,0B827H
+              LD        (ADDR),HL
+              LD        A,1
+              LD        (CMD),A
+              LD        (SOFTCARD),A
+              LD        BC,8000
+NI_POLL       LD        A,1                         ; read Sn_CR
+              CALL      NI_READ
+              OR        A
+              JR        Z,NI_OK
+              DEC       BC
+              LD        A,B
+              OR        C
+              JR        NZ,NI_POLL
+              JP        NETBAD
+NI_OK         XOR       A
+              JP        NETRET
+NI_STAT       LD        A,3                         ; read Sn_SR
+              CALL      NI_READ
+              JP        NETRET
+; A=low register address, D=physical socket, reads byte via 6502 bridge.
+; Preserve BC for command acceptance timeout.
+NI_READ       LD        (XREG),A
+              LD        A,D
+              ADD       A,4
+              LD        (AREG),A
+              LD        HL,0B824H
+              LD        (ADDR),HL
+              LD        A,1
+              LD        (CMD),A
+              LD        (SOFTCARD),A
+              LD        A,(AREG)
+              RET
+
               ORG       9800H                          ; Try this - WORKS
 IOBUF1        DEFS      1024
 IOBUF2        DEFS      1024
@@ -10434,64 +10496,8 @@ NETCLNEXT     INC       C
               JR        NZ,NETCLP
               RET
 NETOWN        DEFB      0FFH,0FFH,0FFH,0FFH
-; Phase 4A corrected: compact $FB to preserve the $A800 stack boundary.
-; D=socket 0..3, E=0 STATUS, otherwise E=W5100 command byte.
-; Command carried in E, never B (BDOS/scheduler may modify B).
-; Only the owning logical tab can access a socket. No special VEDRIVE case.
-; A=L=status for STATUS, 0 for accepted command, FF for error.
-NETIO         LD        A,D
-              CP        4
-              JP        NC,NETBAD
-              PUSH      DE
-              CALL      NETPTR
-              POP       DE
-              LD        A,(TABMODE)
-              CP        (HL)
-              JP        NZ,NETBAD
-              LD        A,E
-              OR        A
-              JR        Z,NI_STAT
-              ; Nonzero E is the W5100 command byte.
-              LD        (YREG),A
-              LD        A,D
-              ADD       A,4
-              LD        (AREG),A
-              LD        A,1
-              LD        (XREG),A
-              LD        HL,0B827H
-              LD        (ADDR),HL
-              LD        A,1
-              LD        (CMD),A
-              LD        (SOFTCARD),A
-              LD        BC,8000
-NI_POLL       LD        A,1                         ; read Sn_CR
-              CALL      NI_READ
-              OR        A
-              JR        Z,NI_OK
-              DEC       BC
-              LD        A,B
-              OR        C
-              JR        NZ,NI_POLL
-              JP        NETBAD
-NI_OK         XOR       A
-              JP        NETRET
-NI_STAT       LD        A,3                         ; read Sn_SR
-              CALL      NI_READ
-              JP        NETRET
-; A=low register address, D=physical socket, reads byte via 6502 bridge.
-; Preserve BC for command acceptance timeout.
-NI_READ       LD        (XREG),A
-              LD        A,D
-              ADD       A,4
-              LD        (AREG),A
-              LD        HL,0B824H
-              LD        (ADDR),HL
-              LD        A,1
-              LD        (CMD),A
-              LD        (SOFTCARD),A
-              LD        A,(AREG)
-              RET
-
+; Phase 4A.3: $FB moved to $9400 (see above). Keep stack headroom
+; and all W5100 socket ownership data here unchanged.
 NETEND
 
 ; Stack grows from $A800 down to NETEND.

@@ -1464,17 +1464,21 @@ CONNECT_TIMEOUT
               SCF
               RET
 ; A=command, waits for CR to clear with finite counter.
-COM002       LD    HL,S1CR
-              CALL  WWRITE
-              LD    BC,8000
-CMD001      LD    HL,S1CR
-              CALL  WREAD
+; Phase 4A.1: $FB with E=command (0 means STATUS), D=socket.
+; Avoid passing command via B across BDOS/scheduler.
+COM002       PUSH  BC
+              PUSH  DE
+              PUSH  HL
+              LD    E,A
+              LD    A,(SOCK_NO)
+              LD    D,A
+              LD    C,0FBH
+              CALL  BDOS
+              POP   HL
+              POP   DE
+              POP   BC
               OR    A
               RET   Z
-              DEC   BC
-              LD    A,B
-              OR    C
-              JP    NZ,CMD001
               LD    DE,MSG065
               CALL  PRINT
               SCF
