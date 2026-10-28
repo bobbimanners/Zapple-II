@@ -136,6 +136,8 @@ RELOC_ST
               JMP       VGETMODE                       ; B81B: return terminal personality in A (private Z80)
               JMP       VSTATEPTR                      ; B81E: pointer to contiguous VCOL..VATTR state
               JMP       VSELECT                        ; B821: A=bank, X=physical flag, Y=slot offset
+              JMP       W5READ                         ; B824: W5100 read; A=address high, X=low
+              JMP       W5WRITE                        ; B827: W5100 write; Y=value
 
 ENTRY         CLD                                      ; ProDOS/loader entry always uses binary arithmetic
               LDA       #0
@@ -1005,5 +1007,21 @@ VSELECT       STA       VVBANK
               STX       VPHY
               STY       VVOFF
               JMP       VMBASIC                        ; refresh per-task MBASIC control bytes
+
+* Uthernet-II socket register access, native 6502, slot 5.
+* Called from Z80 through CMD=1, ADDR=$B824/$B827. In HANDLR,
+* Z80-supplied registers arrive in 6502 A/X/Y. Return A via AREG.
+* W5100 auto increment is harmless: the caller selects address on
+* EVERY access. Do not reset W5100 or modify VEDRIVE's socket 0.
+* These routines live in MAIN and touch only $C0D5-$C0D7.
+W5READ        STA       $C0D5                          ; indirect address high
+              STX       $C0D6                          ; indirect address low
+              LDA       $C0D7                          ; selected register byte
+              RTS
+W5WRITE       STA       $C0D5
+              STX       $C0D6
+              TYA                                      ; supplied data byte
+              STA       $C0D7
+              RTS
 
 RELOC_EN

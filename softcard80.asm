@@ -4741,6 +4741,8 @@ AXBDOS        CALL      XSPRE                          ; skip physical keyboard 
               RET       C
               LD        A,C
               LD        (AXBADFN),A                    ; diagnostic: remember original BDOS C
+              CP        0F9H                           ; private W5100 bridge: DE=AUX [hi,lo,data]
+              JP        Z,AXW5WRITE                     ; use MAIN AXGATE before switching to 6502
               CP        0F7H                           ; AUX CCP: chain/load next .COM via MAIN supervisor
               JP        NC,AXF7F8                     ; F7 launch or F8 native CCP builtin
               CP        0F0H                           ; private TERM: 0 VT100 / 1 Soroc / 2 H19
@@ -4836,6 +4838,30 @@ AXERRMODE     XOR       A
               LD        L,A
               RET
 ; Unsupported calls must not pass AUX pointers to the MAIN BDOS.
+; Private AUX BDOS $F9: socket-one W5100 register write via native 6502.
+; On entry DE points to 3 AUX bytes: address high, address low, data.
+; The AUX->MAIN copy is performed before the SoftCard CPU handoff.
+; The calling AUX stack is parked by AXGATE, so the 6502 can return safely.
+; Returns A=L=0. No reset or access to socket 0 is performed by service.
+AXW5WRITE     EX        DE,HL                         ; HL = AUX parameter pointer
+              LD        DE,AXW5BUF                     ; MAIN staging in $78xx
+              LD        BC,3
+              CALL      LCA2M                          ; existing AUX->MAIN copier
+              LD        A,(AXW5BUF)
+              LD        (AREG),A                        ; W5100 address high
+              LD        A,(AXW5BUF+1)
+              LD        (XREG),A                        ; W5100 address low
+              LD        A,(AXW5BUF+2)
+              LD        (YREG),A                        ; value
+              LD        HL,0B827H                       ; new native W5WRITE vector
+              LD        (ADDR),HL
+              LD        A,1
+              LD        (CMD),A
+              LD        (SOFTCARD),A                    ; MAIN-safe existing handoff
+              XOR       A
+              LD        L,A
+              RET
+
 AXBAD         LD        A,2
               LD        (LCQUIT),A
               LD        A,0FFH
@@ -5590,6 +5616,7 @@ AXLIP         DEFW      0
 AXLBUF        DEFS      260
 AXLRESUME     DEFB      0                              ; set only on AXRETRY BDOS 10
 AXBADFN       DEFB      0                              ; last AUX BDOS function for diagnostics
+AXW5BUF       DEFS      3                              ; private MAIN staging for AUX W5100 writes
 BDOSFN        DEFB      0                              ; last MAIN BDOS function for diagnostics
 
  ; MAIN-to-AUX-LC resident transition helper, entirely in ordinary MAIN RAM.
