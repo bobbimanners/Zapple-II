@@ -577,6 +577,8 @@ RELOC_ST
               JMP       VSELECT                        ; B821: A=bank, X=physical flag, Y=slot offset
               JMP       W5READ                         ; B824: W5100 read; A=address high, X=low
               JMP       W5WRITE                        ; B827: W5100 write; Y=value
+              JMP       VCURON                         ; B82A: draw solid foreground cursor
+              JMP       VCUROFF                        ; B82D: restore foreground cursor cell
 
 ENTRY         CLD                                      ; ProDOS/loader entry always uses binary arithmetic
               LDA       #0
@@ -1218,20 +1220,8 @@ VLOAD         LDA       $0400,Y                        ; operand updated by VADD
 * Keep the original byte under the cursor, including its attributes.
 VGET          JSR       VPEEK
               STA       VUNDER
-* Toggle the underlying screen character's inverse/normal video.
-* Keep existing attributes intact when the key is returned.
-              BMI       :VGNORM                        ; Normal byte ($80-$FF): make inverse
-              CMP       #$20
-              BCC       :VGUP                          ; Inverse uppercase -> normal uppercase
-              ORA       #$80                           ; Inverse punctuation/lowercase -> normal
-              BNE       :VGSHOW
-:VGUP         ORA       #$C0
-              BNE       :VGSHOW
-:VGNORM       AND       #$7F
-              CMP       #$60
-              BCS       :VGSHOW
-              AND       #$3F                           ; Avoid MouseText when inverting uppercase
-:VGSHOW       JSR       VDRAW
+              JSR       VCURINV                         ; same inverse-video logic as polling cursor
+              JSR       VDRAW
 :VGWAIT       LDA       $C000                          ; keyboard latch; bit 7 means key ready
               BPL       :VGWAIT
               PHA
@@ -1243,6 +1233,71 @@ VGET          JSR       VPEEK
               PLA
               LDX       VKMOD                          ; HANDLR returns X in XREG alongside AREG keycode
               RTS
+
+* Physical nonblinking cursor for Z80's polling CCP/foreground sessions.
+* Called via B82A/B82D.  Unlike the old Z80 CUON/CUOFF, these use
+* VPEEK/VDRAW rather than direct Z80 banking/video soft-switch writes.
+* VCOL/VROW can change between calls, so remember cursor coordinates.
+* Only the foreground ever draws the physical cursor. Z80 CUACTIVE
+* guards repeated ON calls; the 6502 guard is only needed for OFF.
+VCURON        LDA       VPHY
+              BEQ       :VCDONE                        ; never draw in a background snapshot
+              LDA       VROW
+              CMP       #24
+              BCS       :VCDONE                        ; guard invalid physical screen row
+              LDA       VCOL
+              STA       VCURCOL
+              LDA       VROW
+              STA       VCURROW
+              JSR       VPEEK
+              STA       VCURUND
+              JSR       VCURINV
+              JSR       VDRAW
+              INC       VCURVIS
+:VCDONE       RTS
+
+* Restore the original cell even if the active session's coordinates
+* have since moved. Temporarily force physical output; restore VPHY.
+VCUROFF       LDA       VCURVIS
+              BEQ       :VCDONE
+              LDA       #0
+              STA       VCURVIS
+              LDA       VCOL
+              PHA
+              LDA       VROW
+              PHA
+              LDA       VPHY
+              PHA
+              LDA       #1
+              STA       VPHY
+              LDA       VCURCOL
+              STA       VCOL
+              LDA       VCURROW
+              STA       VROW
+              LDA       VCURUND
+              JSR       VDRAW
+              PLA
+              STA       VPHY
+              PLA
+              STA       VROW
+              PLA
+              STA       VCOL
+:VCDONE       RTS
+
+* Exactly the original VGET video-attribute transformation.
+* A = original screen byte; returns A = same character, opposite video.
+VCURINV       BMI       :VGNORM                        ; Normal byte ($80-$FF): make inverse
+              CMP       #$20
+              BCC       :VGUP                          ; Inverse uppercase -> normal uppercase
+              ORA       #$80                           ; Inverse punctuation/lowercase -> normal
+              BNE       :VGSHOW
+:VGUP         ORA       #$C0
+              BNE       :VGSHOW
+:VGNORM       AND       #$7F
+              CMP       #$60
+              BCS       :VGSHOW
+              AND       #$3F                           ; Avoid MouseText when inverting uppercase
+:VGSHOW       RTS
 
 VBELL         BIT       $C030                          ; click speaker
               RTS
@@ -1405,6 +1460,10 @@ VVBANK        DB        2                              ; reserved RamWorks snaps
 VVOFF         DB        $1C                            ; high-byte delta for first snapshot half
 VSHIFT        DB        0                              ; scroll destination high-byte delta
 VVRDY         DB        0                              ; nonzero when physical bank 2 exists
+VCURVIS       DB        0                              ; physical polling cursor displayed
+VCURCOL       DB        0                              ; saved col at draw time
+VCURROW       DB        0                              ; saved row at draw time
+VCURUND       DB        0                              ; screen byte beneath cursor
 
 * Loader diagnostics without ROM I/O.
 CROUT         LDA       #$0D

@@ -627,54 +627,26 @@ SCHBGQ        EQU       8
 ; RamWorks backing screen. Polling input normally bypasses VGET, so
 ; draw the reverse-video cell while a foreground task waits for a key.
               ORG       005A8H
+; Physical cursor is drawn by the 6502 video driver (B82A/B82D).
+; Avoid Z80 CUMAP/VSPREP0 bank/page switching while the cursor moves.
+; Preserve HL and AF for CCP, scheduler, and other input paths.
 CUON          LD        A,(CUACTIVE)
               OR        A
               RET       NZ
               LD        A,(VSOK)
               OR        A
               RET       Z
-              PUSH      BC
-              PUSH      DE
+              PUSH      AF
               PUSH      HL
-              LD        HL,(VSPTR)                     ; 6502 VCOL,VROW pair
-              LD        A,(HL)
-              LD        C,A
-              INC       HL
-              LD        A,(HL)
-              CP        24
-              JR        NC,CUONDONE
-              ADD       A,A
-              LD        E,A
-              LD        D,0
-              LD        HL,CUROWTAB
-              ADD       HL,DE
-              LD        E,(HL)
-              INC       HL
-              LD        D,(HL)
-              LD        A,C
-              AND       1
-              LD        (CUHALF),A                     ; 0 AUX, 1 MAIN
-              SRL       C
-              LD        B,0
-              EX        DE,HL
-              ADD       HL,BC
-              LD        (CUADDR),HL
-              CALL      CUMAP
-              LD        A,(HL)
-              LD        (CUUNDER),A
-              BIT       7,A
-              JR        Z,CUONINV
-              AND       07FH
-              CP        060H
-              JR        NC,CUONINV
-              AND       03FH                           ; uppercase: avoid MouseText
-CUONINV       LD        (HL),A
-              CALL      VSPREP                         ; leave RAMRD/WRT, PAGE1 normal
+              LD        HL,0B82AH                       ; VCURON - 6502 physical draw
+              LD        (ADDR),HL
+              LD        A,1
+              LD        (CMD),A
+              LD        (SOFTCARD),A
               LD        A,1
               LD        (CUACTIVE),A
-CUONDONE      POP       HL
-              POP       DE
-              POP       BC
+              POP       HL
+              POP       AF
               RET
 
 SCHIDLEQ      EQU       32
@@ -5721,10 +5693,11 @@ CUOFF         LD        A,(CUACTIVE)
               PUSH      HL
               XOR       A
               LD        (CUACTIVE),A
-              CALL      CUMAP
-              LD        A,(CUUNDER)
-              LD        (HL),A
-              CALL      VSPREP
+              LD        HL,0B82DH                       ; VCUROFF - 6502 physical restore
+              LD        (ADDR),HL
+              LD        A,1
+              LD        (CMD),A
+              LD        (SOFTCARD),A
               POP       HL
               POP       AF
               RET
