@@ -299,7 +299,8 @@ RWMSG5        DEFB      13
               ORG       003B0H
 ; Kill only an inactive saved context. No CPU instruction is preempted.
 ; FCB cache has already been flushed by the cooperative park path.
-TB_KILL       LD        A,B
+TB_KILL       CALL      NETCLN                         ; release network sockets for killed tab
+              LD        A,B
               CALL      TB_HPTR
               LD        (HL),0
               LD        A,B
@@ -3194,7 +3195,10 @@ SHLAUNCH      LD        (HL),2                     ; mark child before switching
               CP        3
               RET       Z                           ; child's bank saved by existing scheduler
               JP        SHLOOP                     ; child ended -> reload shell
-SHCHILD       CALL      SBWCLR                    ; child warm boot returns to file-loaded CCP
+SHCHILD       LD        A,(TABMODE)
+              LD        B,A
+              CALL      NETCLN                         ; child exited, release sockets
+              CALL      SBWCLR                    ; child warm boot returns to file-loaded CCP
               CALL      SVSSNAP                       ; preserve child low 8K BEFORE CCP reload
               ; Clear page-zero FCBs/tail FIRST, before building the
               ; executable FCB.  Never allow the stale child launch record
@@ -4743,6 +4747,8 @@ AXBDOS        CALL      XSPRE                          ; skip physical keyboard 
               RET       C
               LD        A,C
               LD        (AXBADFN),A                    ; diagnostic: remember original BDOS C
+              CP        0FAH                           ; NET socket manager (E=operation, D=socket)
+              JP        Z,NETAPI
               CP        0F9H                           ; private W5100 bridge: DE=AUX [hi,lo,data]
               JP        Z,AXW5WRITE                     ; use MAIN AXGATE before switching to 6502
               CP        0F7H                           ; AUX CCP: chain/load next .COM via MAIN supervisor
@@ -10269,9 +10275,126 @@ B69POK        INC       HL
 
 B69END
 
-; Stack grows from $A800 down to B69END (roughly 0.5KB remaining).
+; Phase 3: W5100 socket ownership. Private AUX BDOS $FA.
+; E=0 ALLOC -> A=L=socket 0..3 or FF; E=1 FREE D=socket,
+; E=2 INFO -> A=L=managed allocations bitmask. No AUX pointers.
+; The W5100 hardware state remains authoritative for external users:
+; a socket may be allocated only when SR==SOCK_CLOSED (00h).
+; Ownership is separately tracked so a just-allocated CLOSED socket
+; cannot be claimed by another task before its OPEN command.
+; This code runs in MAIN, serially inside AXGATE. The bridge is slot 5.
+; NETCLN receives B=logical task, used on normal child exit and KILL.
+NETAPI        LD        A,E
+              OR        A
+              JP        Z,NETALLOC
+              CP        1
+              JP        Z,NETFREE
+              CP        2
+              JP        Z,NETINFO
+              JP        NETBAD
+NETALLOC      LD        B,1                            ; preferred 1,2,3,0
+NETTRY        LD        A,B
+              CALL      NETPTR
+              LD        A,(HL)
+              CP        0FFH
+              JR        NZ,NETNEXT
+              ; Check actual W5100 SR without changing anything.
+              PUSH      BC
+              LD        A,B
+              ADD       A,4
+              LD        (AREG),A
+              LD        A,3
+              LD        (XREG),A
+              LD        HL,0B824H
+              LD        (ADDR),HL
+              LD        A,1
+              LD        (CMD),A
+              LD        (SOFTCARD),A
+              POP       BC
+              LD        A,(AREG)
+              OR        A
+              JR        NZ,NETNEXT
+              LD        A,B
+              CALL      NETPTR
+              LD        A,(TABMODE)
+              LD        (HL),A
+              LD        A,B
+              JR        NETRET
+NETNEXT       INC       B
+              LD        A,B
+              AND       3
+              LD        B,A
+              CP        1
+              JR        NZ,NETTRY
+              JR        NETBAD
+NETFREE       LD        A,D
+              CP        4
+              JR        NC,NETBAD
+              CALL      NETPTR
+              LD        A,(TABMODE)
+              CP        (HL)
+              JR        NZ,NETBAD
+              LD        (HL),0FFH
+              XOR       A
+              JR        NETRET
+NETINFO       LD        HL,NETOWN
+              LD        B,4
+              LD        C,0
+              LD        D,1
+NETILP        LD        A,(HL)
+              CP        0FFH
+              JR        Z,NETISK
+              LD        A,C
+              OR        D
+              LD        C,A
+NETISK        SLA       D
+              INC       HL
+              DJNZ      NETILP
+              LD        A,C
+              JR        NETRET
+NETBAD        LD        A,0FFH
+NETRET        LD        L,A
+              RET
+; A=socket, returns HL->owner entry, preserves B.
+NETPTR        LD        E,A
+              LD        D,0
+              LD        HL,NETOWN
+              ADD       HL,DE
+              RET
+; B=owner task. Only close sockets allocated through this API.
+NETCLN        LD        C,0
+NETCLP        LD        A,C
+              CALL      NETPTR
+              LD        A,(HL)
+              CP        B
+              JR        NZ,NETCLNEXT
+              LD        (HL),0FFH
+              ; Hardware CLOSE command (10h) to socket register CR (01h).
+              PUSH      BC
+              LD        A,C
+              ADD       A,4
+              LD        (AREG),A
+              LD        A,1
+              LD        (XREG),A
+              LD        A,010H
+              LD        (YREG),A
+              LD        HL,0B827H
+              LD        (ADDR),HL
+              LD        A,1
+              LD        (CMD),A
+              LD        (SOFTCARD),A
+              POP       BC
+NETCLNEXT     INC       C
+              LD        A,C
+              CP        4
+              JR        NZ,NETCLP
+              RET
+NETOWN        DEFB      0FFH,0FFH,0FFH,0FFH
+NETEND
+
+; Stack grows from $A800 down to NETEND.
 ; Compile guard: negative DEFS if the codec doesn't fit.
-Z80STACK      DEFS      STCKTOP-B69END
+Z80STACK      DEFS      STCKTOP-NETEND
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 

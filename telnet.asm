@@ -45,7 +45,7 @@ START         LD    SP,STACKTOP
               CALL  PRINT
               CALL  HW_001                  ; probe existing card read-only
               JP    C,FAT003
-              CALL  SOCK_PICK
+              CALL  NET_PICK
               JP    C,FAT004
               CALL  SOC001
               JP    C,FAT004
@@ -73,7 +73,8 @@ FAT005    LD    DE,MSG064
               JP    EXIT
 ERR001    CALL  PRINT
               JP    EXIT
-EXIT          LD    DE,MSG071
+EXIT          CALL  NET_DROP
+              LD    DE,MSG071
               CALL  PRINT
               LD    C,0
               JP    BDOS
@@ -1143,6 +1144,51 @@ WBU005       CALL  WBU001
               LD    (RX_009),A
               OR    A
               RET
+
+; Phase 3: private BDOS FA socket manager. Hardware management remains
+; in TELNET, but hardware socket discovery is owned by the kernel.
+; E=0 ALLOC, returns A=socket or FF. E=1 FREE, D=socket.
+NET_PICK      LD    E,0
+              LD    C,0FAH
+              CALL  BDOS
+              CP    4
+              JR    NC,NPKERR
+              LD    (SOCK_NO),A
+              PUSH  AF
+              LD    A,1
+              LD    (NET_HELD),A
+              POP   AF
+              ADD   A,4
+              LD    (SOCK_HI),A
+              CALL  HBCALC
+              JR    C,NPKBAD
+              LD    DE,MSG_PICK
+              CALL  PRINT
+              LD    A,(SOCK_NO)
+              CALL  HEX
+              CALL  NEW001
+              LD    A,(SOCK_NO)
+              ADD   A,0DEH
+              LD    (LOC001+1),A
+              OR    A
+              RET
+NPKBAD   CALL  NET_DROP
+NPKERR   LD    DE,MSG_NOSOCK
+              CALL  PRINT
+              SCF
+              RET
+NET_DROP      LD    A,(NET_HELD)
+              OR    A
+              RET   Z
+              XOR   A
+              LD    (NET_HELD),A
+              LD    A,(SOCK_NO)
+              LD    D,A
+              LD    E,1
+              LD    C,0FAH
+              CALL  BDOS
+              RET
+NET_HELD      DEFB  0
 
 ; Pick a CLOSED socket (preferred order 1,2,3,0).
 ; Never alter any socket that is not CLOSED. With VEDRIVE, RESET=0.
