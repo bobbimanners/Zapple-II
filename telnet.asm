@@ -17,63 +17,63 @@ S1IR          EQU   0502H
 S1SR          EQU   0503H
 S1PORT        EQU   0504H
 S1DIP         EQU   050CH
-S1DPORT       EQU   0510H
-S1TXFSR       EQU   0520H
+S1D001       EQU   0510H
+S1T001       EQU   0520H
 S1TXWR        EQU   0524H
-S1RXRSR       EQU   0526H
+S1R001       EQU   0526H
 S1RXRD        EQU   0528H
 ; TX/RX socket 1 buffer addresses are determined at run time.
 
               ORG   0100H
 START         LD    SP,STACKTOP
-              LD    DE,MSG_BANNER
+              LD    DE,MSG001
               CALL  PRINT
-              CALL  ARG_PARSE
-              JP    C,FATAL_ARGS
-              CALL  CONFIG_READ
-              JP    C,FATAL_CFG
-              CALL  ARG_APPLY
-              CALL  PRINT_CFG
-              CALL  VALIDATE_CFG
-              JP    C,FATAL_CFG
-              LD    A,(CFG_SLOTNUM)
+              CALL  ARG001
+              JP    C,FAT001
+              CALL  CON001
+              JP    C,FAT002
+              CALL  ARG015
+              CALL  PRI003
+              CALL  VAL001
+              JP    C,FAT002
+              LD    A,(CFG025)
               CP    5
-              JP    NZ,FATAL_CFG
-              LD    A,(CFG_RESETFLAG)
+              JP    NZ,FAT002
+              LD    A,(CFG026)
               OR    A
-              JP    NZ,FATAL_CFG
-              CALL  SET_SLOT_IO
+              JP    NZ,FAT002
+              CALL  SET001
               LD    DE,MSG_HW
               CALL  PRINT
-              CALL  HW_INIT
-              JP    C,FATAL_HW
-              CALL  SOCK_SETUP
-              JP    C,FATAL_SOCK
-              LD    DE,MSG_CONNECT
+              CALL  HW_001
+              JP    C,FAT003
+              CALL  SOC001
+              JP    C,FAT004
+              LD    DE,MSG059
               CALL  PRINT
-              CALL  SOCK_CONNECT
-              JP    C,FATAL_CONN
-              LD    DE,MSG_CONNECTED
+              CALL  SOC003
+              JP    C,FAT005
+              LD    DE,MSG067
               CALL  PRINT
-              JP    MAIN_LOOP
-FATAL_ARGS    LD    DE,MSG_USAGE
-              JP    ERROR_EXIT
-FATAL_CFG     LD    DE,MSG_BADCFG
-              JP    ERROR_EXIT
-FATAL_HW      LD    DE,MSG_BADHW
-              JP    ERROR_EXIT
-FATAL_SOCK    LD    DE,MSG_BADSOCK
-              JP    ERROR_EXIT
-FATAL_CONN    LD    DE,MSG_BADCONN
+              JP    MAI001
+FAT001    LD    DE,MSG002
+              JP    ERR001
+FAT002     LD    DE,MSG013
+              JP    ERR001
+FAT003      LD    DE,MSG036
+              JP    ERR001
+FAT004    LD    DE,MSG058
+              JP    ERR001
+FAT005    LD    DE,MSG064
               CALL  PRINT
-              LD    DE,MSG_CONN_CLEAN
+              LD    DE,MSG063
               CALL  PRINT
               LD    A,010H                 ; we own socket 1 after successful OPEN
-              CALL  COMMAND              ; close failed connection before leaving
+              CALL  COM002              ; close failed connection before leaving
               JP    EXIT
-ERROR_EXIT    CALL  PRINT
+ERR001    CALL  PRINT
               JP    EXIT
-EXIT          LD    DE,MSG_EXIT
+EXIT          LD    DE,MSG071
               CALL  PRINT
               LD    C,0
               JP    BDOS
@@ -81,22 +81,22 @@ EXIT          LD    DE,MSG_EXIT
 ; BDOS 9 '$'-terminated message. Preserve the working caller's BC/HL.
 PRINT         PUSH  BC
               PUSH  AF
-              CALL  PRINT_GATE
+              CALL  PRI002
               POP   AF
               PUSH  HL
-              LD    A,(QUIET_MUTE)
+              LD    A,(QUI001)
               OR    A
-              JP    NZ,PRINT_SKIP
+              JP    NZ,PRI001
               LD    C,9
               CALL  BDOS
-PRINT_SKIP    POP   HL
+PRI001    POP   HL
               POP   BC
               RET
 PUTC          PUSH  BC
               PUSH  AF
-              LD    A,(QUIET_MUTE)
+              LD    A,(QUI001)
               OR    A
-              JP    NZ,PUTC_SKIP
+              JP    NZ,PUT001
               POP   AF
               PUSH  HL
               LD    E,A
@@ -105,10 +105,10 @@ PUTC          PUSH  BC
               POP   HL
               POP   BC
               RET
-PUTC_SKIP     POP   AF
+PUT001     POP   AF
               POP   BC
               RET
-NEWLINE       LD    A,13
+NEW001       LD    A,13
               CALL  PUTC
               LD    A,10
               JP    PUTC
@@ -134,12 +134,12 @@ HEX16         LD    A,H
 
 ; Verbose output is controlled by -v. Keep diagnostic HEX/NEWLINE silent
 ; by retaining QUIET_MUTE across their follow-on calls; clear each RX poll.
-PRINT_GATE    LD    A,(VERBOSE)
+PRI002    LD    A,(VER001)
               OR    A
-              JP    NZ,PG_SHOW
+              JP    NZ,PG_002
               PUSH  HL
-              LD    HL,PG_ALLOW
-PG_SCAN       LD    A,(HL)
+              LD    HL,PG_004
+PG_001       LD    A,(HL)
               INC   HL
               LD    C,A
               LD    A,(HL)
@@ -147,321 +147,321 @@ PG_SCAN       LD    A,(HL)
               LD    B,A
               LD    A,B
               OR    C
-              JP    Z,PG_HIDE
+              JP    Z,PG_003
               LD    A,E
               CP    C
-              JP    NZ,PG_SCAN
+              JP    NZ,PG_001
               LD    A,D
               CP    B
-              JP    NZ,PG_SCAN
+              JP    NZ,PG_001
               POP   HL
-PG_SHOW       XOR   A
-              LD    (QUIET_MUTE),A
+PG_002       XOR   A
+              LD    (QUI001),A
               RET
-PG_HIDE       POP   HL
+PG_003       POP   HL
               LD    A,1
-              LD    (QUIET_MUTE),A
+              LD    (QUI001),A
               RET
-PG_ALLOW      DEFW  MSG_BANNER,MSG_CONNECTED,MSG_DISCONNECT,MSG_BADCFG
-              DEFW  MSG_BADHW,MSG_BADSOCK,MSG_BADCONN,MSG_USAGE
-              DEFW  MSG_TXFULL,MSG_CLOSE,MSG_EXIT,MSG_SOCKBUSY
-              DEFW  MSG_BUFERR,MSG_TIMEOUT,MSG_CLOSED,MSG_MODEKEEP
-              DEFW  MSG_BADMODE,MSG_CMDTIME,MSG_INVALID
+PG_004      DEFW  MSG001,MSG067,MSG068,MSG013
+              DEFW  MSG036,MSG058,MSG064,MSG002
+              DEFW  MSG069,MSG070,MSG071,MSG042
+              DEFW  MSG020,MSG061,MSG062,MSG024
+              DEFW  MSG044,MSG065,MSG015
               DEFW  0
 
 ; CP/M command tail length at 0080h, text at 0081h.
 ; Syntax TELNET [IPv4-address [port]] [-v], flags in any position.
 ; Preserve overrides until after configuration is loaded.
-ARG_PARSE     LD    A,(0080H)
+ARG001     LD    A,(0080H)
               CP    120
-              JP    NC,ARG_BAD
+              JP    NC,ARG014
               LD    B,A
               LD    HL,0081H
-              LD    DE,ARG_BUF
-ARG_COPY      LD    A,B
+              LD    DE,ARG022
+ARG002      LD    A,B
               OR    A
-              JP    Z,ARG_COPIED
+              JP    Z,ARG003
               LD    A,(HL)
               LD    (DE),A
               INC   HL
               INC   DE
-              DJNZ  ARG_COPY
-ARG_COPIED    XOR   A
+              DJNZ  ARG002
+ARG003    XOR   A
               LD    (DE),A
-              LD    HL,ARG_BUF
-ARG_SKIP      LD    A,(HL)
+              LD    HL,ARG022
+ARG004      LD    A,(HL)
               CP    ' '
-              JP    Z,ARG_SPACE
+              JP    Z,ARG013
               CP    9
-              JP    Z,ARG_SPACE
+              JP    Z,ARG013
               OR    A
               RET   Z
-              LD    (ARG_TOKEN),HL
-ARG_FIND      LD    A,(HL)
+              LD    (ARG020),HL
+ARG005      LD    A,(HL)
               OR    A
-              JP    Z,ARG_LAST
+              JP    Z,ARG007
               CP    ' '
-              JP    Z,ARG_ENDTOKEN
+              JP    Z,ARG006
               CP    9
-              JP    Z,ARG_ENDTOKEN
+              JP    Z,ARG006
               INC   HL
-              JP    ARG_FIND
-ARG_ENDTOKEN  XOR   A
+              JP    ARG005
+ARG006  XOR   A
               LD    (HL),A
               INC   HL
-              LD    (ARG_NEXT),HL
-              JP    ARG_HANDLE
-ARG_LAST      LD    (ARG_NEXT),HL
-ARG_HANDLE    LD    HL,(ARG_TOKEN)
+              LD    (ARG021),HL
+              JP    ARG008
+ARG007      LD    (ARG021),HL
+ARG008    LD    HL,(ARG020)
               LD    A,(HL)
               CP    '-'
-              JP    NZ,ARG_POSITION
+              JP    NZ,ARG010
               INC   HL
               LD    A,(HL)
               CP    'v'
-              JP    Z,ARG_VEND
+              JP    Z,ARG009
               CP    'V'
-              JP    NZ,ARG_BAD
-ARG_VEND      INC   HL
+              JP    NZ,ARG014
+ARG009      INC   HL
               LD    A,(HL)
               OR    A
-              JP    NZ,ARG_BAD
+              JP    NZ,ARG014
               LD    A,1
-              LD    (VERBOSE),A
-              JP    ARG_CONT
-ARG_POSITION  LD    A,(ARG_STAGE)
+              LD    (VER001),A
+              JP    ARG012
+ARG010  LD    A,(ARG018)
               OR    A
-              JP    NZ,ARG_PORT
+              JP    NZ,ARG011
               LD    DE,ARG_IP
               CALL  IPV4
-              JP    C,ARG_BAD
+              JP    C,ARG014
               LD    A,1
-              LD    (ARG_STAGE),A
-              JP    ARG_CONT
-ARG_PORT      CP    1
-              JP    NZ,ARG_BAD
+              LD    (ARG018),A
+              JP    ARG012
+ARG011      CP    1
+              JP    NZ,ARG014
               CALL  DEC16
-              JP    C,ARG_BAD
+              JP    C,ARG014
               LD    A,H
               OR    L
-              JP    Z,ARG_BAD
+              JP    Z,ARG014
               LD    A,H
-              LD    (ARG_PORTBE),A
+              LD    (ARG019),A
               LD    A,L
-              LD    (ARG_PORTBE+1),A
+              LD    (ARG019+1),A
               LD    A,2
-              LD    (ARG_STAGE),A
-ARG_CONT      LD    HL,(ARG_NEXT)
-              JP    ARG_SKIP
-ARG_SPACE     INC   HL
-              JP    ARG_SKIP
-ARG_BAD       SCF
+              LD    (ARG018),A
+ARG012      LD    HL,(ARG021)
+              JP    ARG004
+ARG013     INC   HL
+              JP    ARG004
+ARG014       SCF
               RET
-ARG_APPLY     LD    A,(ARG_STAGE)
+ARG015     LD    A,(ARG018)
               OR    A
               RET   Z
               LD    HL,ARG_IP
-              LD    DE,CFG_REMOTE
+              LD    DE,CFG022
               LD    BC,4
-ARG_CPIP      LD    A,(HL)
+ARG016      LD    A,(HL)
               LD    (DE),A
               INC   HL
               INC   DE
               DEC   BC
               LD    A,B
               OR    C
-              JP    NZ,ARG_CPIP
-              LD    A,(ARG_STAGE)
+              JP    NZ,ARG016
+              LD    A,(ARG018)
               CP    2
               RET   NZ
-              LD    HL,ARG_PORTBE
-              LD    DE,CFG_PORTBE
+              LD    HL,ARG019
+              LD    DE,CFG024
               LD    BC,2
-ARG_CPPORT    LD    A,(HL)
+ARG017    LD    A,(HL)
               LD    (DE),A
               INC   HL
               INC   DE
               DEC   BC
               LD    A,B
               OR    C
-              JP    NZ,ARG_CPPORT
+              JP    NZ,ARG017
               RET
 
 ; -------- CONFIG FILE ----------------------------------------------------
 ; File is read as sequential CP/M 128-byte records (up to EOF), line-by-line.
 ; No comments on key=value lines; '#' or ';' at line beginning = comment.
-CONFIG_READ   LD    DE,MSG_CFGOPEN
+CON001   LD    DE,MSG003
               CALL  PRINT
               ; Udo Z80ASM may fill DEFS with $FF: zero writable FCB fields.
-              LD    HL,CONFIG_FCB+12
+              LD    HL,CON006+12
               LD    B,24
               XOR   A
-CFG_ZEROFCB   LD    (HL),A
+CFG001   LD    (HL),A
               INC   HL
-              DJNZ  CFG_ZEROFCB
-              LD    DE,CONFIG_FCB
+              DJNZ  CFG001
+              LD    DE,CON006
               LD    C,15
               CALL  BDOS
               CP    0FFH
-              JP    Z,CONFIG_FAIL
-              LD    DE,REC_BUF
+              JP    Z,CON002
+              LD    DE,REC001
               LD    C,26
               CALL  BDOS
               XOR   A
-              LD    (LINE_LEN),A
-CFG_NEXTREC   LD    DE,CONFIG_FCB
+              LD    (LIN001),A
+CFG002   LD    DE,CON006
               LD    C,20
               CALL  BDOS
               OR    A
-              JP    NZ,CFG_EOF
-              LD    HL,REC_BUF
+              JP    NZ,CFG006
+              LD    HL,REC001
               LD    B,128
-CFG_NEXTCHR   LD    A,(HL)
+CFG003   LD    A,(HL)
               CP    01AH
-              JP    Z,CFG_EOF
+              JP    Z,CFG006
               CP    13
-              JP    Z,CFG_ENDLINE
+              JP    Z,CFG004
               CP    10
-              JP    Z,CFG_ENDLINE
+              JP    Z,CFG004
               PUSH  HL
               PUSH  BC
-              CALL  CFG_APPEND
+              CALL  CFG007
               POP   BC
               POP   HL
-              JP    CFG_ADV
-CFG_ENDLINE   PUSH  HL
+              JP    CFG005
+CFG004   PUSH  HL
               PUSH  BC
-              CALL  CFG_LINE
+              CALL  CFG009
               POP   BC
               POP   HL
-CFG_ADV       INC   HL
-              DJNZ  CFG_NEXTCHR
-              JP    CFG_NEXTREC
-CFG_EOF       CALL  CFG_LINE
-              LD    DE,CONFIG_FCB
+CFG005       INC   HL
+              DJNZ  CFG003
+              JP    CFG002
+CFG006       CALL  CFG009
+              LD    DE,CON006
               LD    C,16
               CALL  BDOS
               OR    A
               RET
-CONFIG_FAIL   SCF
+CON002   SCF
               RET
-CFG_APPEND    PUSH  HL
+CFG007    PUSH  HL
               PUSH  DE
               LD    E,A
-              LD    A,(LINE_LEN)
+              LD    A,(LIN001)
               CP    62
-              JP    NC,CFG_APPDONE
+              JP    NC,CFG008
               LD    L,A
               LD    H,0
-              LD    BC,LINE_BUF
+              LD    BC,LIN002
               ADD   HL,BC
               LD    (HL),E
-              LD    A,(LINE_LEN)
+              LD    A,(LIN001)
               INC   A
-              LD    (LINE_LEN),A
-CFG_APPDONE   POP   DE
+              LD    (LIN001),A
+CFG008   POP   DE
               POP   HL
               RET
-CFG_LINE      LD    A,(LINE_LEN)
+CFG009      LD    A,(LIN001)
               OR    A
               RET   Z
               LD    L,A
               LD    H,0
-              LD    DE,LINE_BUF
+              LD    DE,LIN002
               ADD   HL,DE
               LD    (HL),0
               XOR   A
-              LD    (LINE_LEN),A
-              LD    A,(LINE_BUF)
+              LD    (LIN001),A
+              LD    A,(LIN002)
               CP    '#'
               RET   Z
-              CP    ';'
+              CP    03BH
               RET   Z
-              LD    HL,LINE_BUF
+              LD    HL,LIN002
               LD    DE,K_IP
               CALL  PREFIX
               JP    NC,CFG_IP
-              LD    HL,LINE_BUF
-              LD    DE,K_NETMASK
+              LD    HL,LIN002
+              LD    DE,K_N001
               CALL  PREFIX
-              JP    NC,CFG_MASK
-              LD    HL,LINE_BUF
+              JP    NC,CFG010
+              LD    HL,LIN002
               LD    DE,K_MASK
               CALL  PREFIX
-              JP    NC,CFG_MASK
-              LD    HL,LINE_BUF
+              JP    NC,CFG010
+              LD    HL,LIN002
               LD    DE,K_GW
               CALL  PREFIX
               JP    NC,CFG_GW
-              LD    HL,LINE_BUF
+              LD    HL,LIN002
               LD    DE,K_HOST
               CALL  PREFIX
-              JP    NC,CFG_HOST
-              LD    HL,LINE_BUF
+              JP    NC,CFG011
+              LD    HL,LIN002
               LD    DE,K_MAC
               CALL  PREFIX
-              JP    NC,CFG_SETMAC
-              LD    HL,LINE_BUF
+              JP    NC,CFG013
+              LD    HL,LIN002
               LD    DE,K_SLOT
               CALL  PREFIX
-              JP    NC,CFG_SLOT
-              LD    HL,LINE_BUF
+              JP    NC,CFG014
+              LD    HL,LIN002
               LD    DE,K_PORT
               CALL  PREFIX
-              JP    NC,CFG_PORT
-              LD    HL,LINE_BUF
-              LD    DE,K_RESET
+              JP    NC,CFG016
+              LD    HL,LIN002
+              LD    DE,K_R001
               CALL  PREFIX
-              JP    NC,CFG_RESET
-              LD    DE,MSG_UNKNOWN
+              JP    NC,CFG015
+              LD    DE,MSG014
               CALL  PRINT
-              JP    CFG_ECHO
-CFG_IP        LD    DE,CFG_IPADDR
-              JP    CFG_IPSET
-CFG_MASK      LD    DE,CFG_NETMASK
-              JP    CFG_IPSET
-CFG_GW        LD    DE,CFG_GATEWAY
-              JP    CFG_IPSET
-CFG_HOST      LD    DE,CFG_REMOTE
-CFG_IPSET     CALL  IPV4
-              JP    C,CFG_INVALID
+              JP    CFG018
+CFG_IP        LD    DE,CFG019
+              JP    CFG012
+CFG010      LD    DE,CFG020
+              JP    CFG012
+CFG_GW        LD    DE,CFG021
+              JP    CFG012
+CFG011      LD    DE,CFG022
+CFG012     CALL  IPV4
+              JP    C,CFG017
               RET
-CFG_SETMAC    LD    DE,CFG_MAC
-              CALL  MACADDR
-              JP    C,CFG_INVALID
+CFG013    LD    DE,CFG023
+              CALL  MAC001
+              JP    C,CFG017
               RET
-CFG_SLOT      CALL  DEC8
-              JP    C,CFG_INVALID
+CFG014      CALL  DEC8
+              JP    C,CFG017
               CP    1
-              JP    C,CFG_INVALID
+              JP    C,CFG017
               CP    8
-              JP    NC,CFG_INVALID
+              JP    NC,CFG017
               CP    4                        ; slot 4 contains the SoftCard
-              JP    Z,CFG_INVALID
-              LD    (CFG_SLOTNUM),A
+              JP    Z,CFG017
+              LD    (CFG025),A
               RET
-CFG_RESET     CALL  DEC8
-              JP    C,CFG_INVALID
+CFG015     CALL  DEC8
+              JP    C,CFG017
               CP    2
-              JP    NC,CFG_INVALID
-              LD    (CFG_RESETFLAG),A
+              JP    NC,CFG017
+              LD    (CFG026),A
               RET
-CFG_PORT      CALL  DEC16
-              JP    C,CFG_INVALID
+CFG016      CALL  DEC16
+              JP    C,CFG017
               LD    A,H
               OR    L
-              JP    Z,CFG_INVALID
+              JP    Z,CFG017
               LD    A,H
-              LD    (CFG_PORTBE),A
+              LD    (CFG024),A
               LD    A,L
-              LD    (CFG_PORTBE+1),A
+              LD    (CFG024+1),A
               RET
-CFG_INVALID   LD    DE,MSG_INVALID
+CFG017   LD    DE,MSG015
               CALL  PRINT
-CFG_ECHO      LD    HL,LINE_BUF
+CFG018      LD    HL,LIN002
 CFG_EL        LD    A,(HL)
               OR    A
-              JP    Z,NEWLINE
+              JP    Z,NEW001
               PUSH  HL
               CALL  PUTC
               POP   HL
@@ -471,41 +471,41 @@ CFG_EL        LD    A,(HL)
 ; success carry clear and HL points just after prefix.
 PREFIX        LD    A,(DE)
               OR    A
-              JP    Z,PREFIX_OK
+              JP    Z,PRE001
               CP    (HL)
-              JP    NZ,PREFIX_BAD
+              JP    NZ,PRE002
               INC   DE
               INC   HL
               JP    PREFIX
-PREFIX_OK     OR    A
+PRE001     OR    A
               RET
-PREFIX_BAD    SCF
+PRE002    SCF
               RET
 ; MACADDR: parse HH:HH:HH:HH:HH:HH; HL=input, DE=six bytes.
-MACADDR       LD    A,6
-              LD    (MAC_COUNT),A
-MAC_NEXT      PUSH  DE
-              CALL  HEXBYTE
+MAC001       LD    A,6
+              LD    (MAC005),A
+MAC002      PUSH  DE
+              CALL  HEX001
               POP   DE
               RET   C
               LD    (DE),A
               INC   DE
-              LD    A,(MAC_COUNT)
+              LD    A,(MAC005)
               DEC   A
-              LD    (MAC_COUNT),A
-              JP    Z,MAC_END
+              LD    (MAC005),A
+              JP    Z,MAC003
               LD    A,(HL)
               CP    ':'
-              JP    NZ,MAC_BAD
+              JP    NZ,MAC004
               INC   HL
-              JP    MAC_NEXT
-MAC_END       LD    A,(HL)
+              JP    MAC002
+MAC003       LD    A,(HL)
               OR    A
-              JP    NZ,MAC_BAD
+              JP    NZ,MAC004
               RET
-MAC_BAD       SCF
+MAC004       SCF
               RET
-HEXBYTE       LD    A,(HL)
+HEX001       LD    A,(HL)
               CALL  HEXNIB
               RET   C
               RRCA
@@ -521,21 +521,21 @@ HEXBYTE       LD    A,(HL)
               INC   HL
               RET
 HEXNIB        CP    '0'
-              JP    C,MAC_BAD
+              JP    C,MAC004
               CP    '9'+1
-              JP    NC,HEXNIB_A
+              JP    NC,HEX002
               SUB   '0'
               RET
-HEXNIB_A      CP    'A'
-              JP    C,MAC_BAD
+HEX002      CP    'A'
+              JP    C,MAC004
               CP    'F'+1
-              JP    NC,MAC_BAD
+              JP    NC,MAC004
               SUB   'A'-10
               RET
 ; DEC8: HL->digits, returns A and HL->NUL; CY on syntax/overflow.
 DEC8          LD    B,0
               LD    E,0
-D8_LOOP       LD    A,(HL)
+D8_001       LD    A,(HL)
               OR    A
               JP    Z,D8_END
               CP    '0'
@@ -559,7 +559,7 @@ D8_LOOP       LD    A,(HL)
               LD    B,A
               INC   E
               INC   HL
-              JP    D8_LOOP
+              JP    D8_001
 D8_END        LD    A,E
               OR    A
               JP    Z,D8_BAD
@@ -571,40 +571,40 @@ D8_BAD        SCF
 ; IPV4 parse four 0..255 octets, dotted numeric only.
 ; HL->value, DE->4-byte destination. Return CY on failure.
 IPV4          LD    A,4
-              LD    (IP_COUNT),A
-IP_NEXT       PUSH  DE
-              CALL  DEC8_PART
+              LD    (IP_003),A
+IP_001       PUSH  DE
+              CALL  DEC001
               POP   DE
               RET   C
               LD    (DE),A
               INC   DE
-              LD    A,(IP_COUNT)
+              LD    A,(IP_003)
               DEC   A
-              LD    (IP_COUNT),A
-              JP    Z,IP_LAST
+              LD    (IP_003),A
+              JP    Z,IP_002
               LD    A,(HL)
               CP    '.'
               JP    NZ,IP_BAD
               INC   HL
-              JP    IP_NEXT
-IP_LAST       LD    A,(HL)
+              JP    IP_001
+IP_002       LD    A,(HL)
               OR    A
               JP    NZ,IP_BAD
               RET
 IP_BAD        SCF
               RET
 ; Similar to DEC8 but stops on '.' and leaves HL on delimiter.
-DEC8_PART     LD    B,0
+DEC001     LD    B,0
               LD    E,0
-D8P_LOOP      LD    A,(HL)
+D8P001      LD    A,(HL)
               CP    '.'
-              JP    Z,D8P_END
+              JP    Z,D8P002
               OR    A
-              JP    Z,D8P_END
+              JP    Z,D8P002
               CP    '0'
-              JP    C,D8P_BAD
+              JP    C,D8P003
               CP    '9'+1
-              JP    NC,D8P_BAD
+              JP    NC,D8P003
               SUB   '0'
               LD    D,A
               LD    A,B
@@ -622,178 +622,178 @@ D8P_LOOP      LD    A,(HL)
               LD    B,A
               INC   E
               INC   HL
-              JP    D8P_LOOP
-D8P_END       LD    A,E
+              JP    D8P001
+D8P002       LD    A,E
               OR    A
-              JP    Z,D8P_BAD
+              JP    Z,D8P003
               LD    A,B
               OR    A
               RET
-D8P_BAD       SCF
+D8P003       SCF
               RET
 ; Decimal 16-bit port parsing, HL->digit string, returns HL=port.
 ; Uses a temporary byte to simplify the Z80 multiply-by-ten.
 DEC16         EX    DE,HL
               LD    HL,0
               LD    A,0
-              LD    (DIG_COUNT),A
-D16_NEXT      LD    A,(DE)
+              LD    (DIG001),A
+D16001      LD    A,(DE)
               OR    A
-              JP    Z,D16_END
+              JP    Z,D16002
               CP    '0'
-              JP    C,D16_BAD
+              JP    C,D16003
               CP    '9'+1
-              JP    NC,D16_BAD
+              JP    NC,D16003
               SUB   '0'
               LD    (DIGIT),A
               ADD   HL,HL
-              JP    C,D16_BAD
+              JP    C,D16003
               LD    B,H
               LD    C,L
               ADD   HL,HL
-              JP    C,D16_BAD
+              JP    C,D16003
               ADD   HL,HL
-              JP    C,D16_BAD
+              JP    C,D16003
               ADD   HL,BC
-              JP    C,D16_BAD
+              JP    C,D16003
               LD    A,(DIGIT)
               LD    C,A
               LD    B,0
               ADD   HL,BC
-              JP    C,D16_BAD
-              LD    A,(DIG_COUNT)
+              JP    C,D16003
+              LD    A,(DIG001)
               INC   A
-              LD    (DIG_COUNT),A
+              LD    (DIG001),A
               INC   DE
-              JP    D16_NEXT
-D16_END       LD    A,(DIG_COUNT)
+              JP    D16001
+D16002       LD    A,(DIG001)
               OR    A
-              JP    Z,D16_BAD
-              OR    A
-              RET
-D16_BAD       SCF
-              RET
-
-VALIDATE_CFG  LD    A,(CFG_IPADDR)
-              OR    A
-              JP    Z,VALID_BAD
-              LD    A,(CFG_NETMASK)
-              OR    A
-              JP    Z,VALID_BAD
-              LD    A,(CFG_REMOTE)
-              OR    A
-              JP    Z,VALID_BAD
+              JP    Z,D16003
               OR    A
               RET
-VALID_BAD     SCF
+D16003       SCF
               RET
 
-PRINT_CFG     LD    DE,MSG_CFG
+VAL001  LD    A,(CFG019)
+              OR    A
+              JP    Z,VAL002
+              LD    A,(CFG020)
+              OR    A
+              JP    Z,VAL002
+              LD    A,(CFG022)
+              OR    A
+              JP    Z,VAL002
+              OR    A
+              RET
+VAL002     SCF
+              RET
+
+PRI003     LD    DE,MSG004
               CALL  PRINT
-              LD    DE,MSG_SLOT
+              LD    DE,MSG005
               CALL  PRINT
-              LD    A,(CFG_SLOTNUM)
+              LD    A,(CFG025)
               ADD   A,'0'
               CALL  PUTC
-              CALL  NEWLINE
-              LD    DE,MSG_MAC
+              CALL  NEW001
+              LD    DE,MSG006
               CALL  PRINT
-              LD    HL,CFG_MAC
+              LD    HL,CFG023
               CALL  PRINT_MAC_BYTES
-              LD    DE,MSG_LOCAL
-              LD    HL,CFG_IPADDR
-              CALL  PRINT_IP
-              LD    DE,MSG_MASK
-              LD    HL,CFG_NETMASK
-              CALL  PRINT_IP
-              LD    DE,MSG_GATEWAY
-              LD    HL,CFG_GATEWAY
-              CALL  PRINT_IP
-              LD    DE,MSG_REMOTE
-              LD    HL,CFG_REMOTE
-              CALL  PRINT_IP
-              LD    DE,MSG_PORT
+              LD    DE,MSG007
+              LD    HL,CFG019
+              CALL  PRI004
+              LD    DE,MSG008
+              LD    HL,CFG020
+              CALL  PRI004
+              LD    DE,MSG009
+              LD    HL,CFG021
+              CALL  PRI004
+              LD    DE,MSG010
+              LD    HL,CFG022
+              CALL  PRI004
+              LD    DE,MSG011
               CALL  PRINT
-              LD    A,(CFG_PORTBE)
+              LD    A,(CFG024)
               CALL  HEX
-              LD    A,(CFG_PORTBE+1)
+              LD    A,(CFG024+1)
               CALL  HEX
-              CALL  NEWLINE
-              LD    DE,MSG_RESET
+              CALL  NEW001
+              LD    DE,MSG012
               CALL  PRINT
-              LD    A,(CFG_RESETFLAG)
+              LD    A,(CFG026)
               ADD   A,'0'
               CALL  PUTC
-              JP    NEWLINE
+              JP    NEW001
 PRINT_MAC_BYTES
               LD    B,6
 PRMAC         LD    A,(HL)
               CALL  HEX
               INC   HL
               DEC   B
-              JP    Z,PRMAC_END
+              JP    Z,PRM001
               LD    A,':'
               CALL  PUTC
               JP    PRMAC
-PRMAC_END     JP    NEWLINE
-PRINT_IP      PUSH  HL
+PRM001     JP    NEW001
+PRI004      PUSH  HL
               CALL  PRINT
               POP   HL
               LD    B,4
-PIP_LOOP      LD    A,(HL)
+PIP001      LD    A,(HL)
               CALL  HEX
               INC   HL
               DEC   B
-              JP    Z,NEWLINE
+              JP    Z,NEW001
               LD    A,'.'
               CALL  PUTC
-              JP    PIP_LOOP
+              JP    PIP001
 
 ; -------- HARDWARE PORTS -------------------------------------------------
 ; v0.9 on real hardware proved LD (BC),A works for DATA_WR, while
 ; LD (nn),A did not. v1.0 incorrectly changed pointer writes as well.
 ; Preserve v0.9's known-working address-pointer routines, and use
 ; register-indirect write ONLY for the W5100 data port.
-SET_SLOT_IO   LD    A,(CFG_SLOTNUM)
+SET001   LD    A,(CFG025)
               ADD   A,A
               ADD   A,A
               ADD   A,A
               ADD   A,A
               ADD   A,084H
-              LD    (MODE_RD+1),A
-              LD    (MODE_WR+1),A
+              LD    (MOD001+1),A
+              LD    (MOD002+1),A
               INC   A
-              LD    (ADDRHI_RD+1),A
-              LD    (ADDRHI_WR+1),A
+              LD    (ADD001+1),A
+              LD    (ADD003+1),A
               INC   A
-              LD    (ADDRLO_RD+1),A
-              LD    (ADDRLO_WR+1),A
+              LD    (ADD002+1),A
+              LD    (ADD004+1),A
               INC   A
-              LD    (DATA_RD+1),A
+              LD    (DAT001+1),A
               RET
-MODE_RD       LD    A,(0E0B4H)
+MOD001       LD    A,(0E0B4H)
               RET
-ADDRHI_RD     LD    A,(0E0B5H)
+ADD001     LD    A,(0E0B5H)
               RET
-ADDRLO_RD     LD    A,(0E0B6H)
+ADD002     LD    A,(0E0B6H)
               RET
-DATA_RD       LD    A,(0E0B7H)
+DAT001       LD    A,(0E0B7H)
               RET
 ; Preserve the mode register write form from v0.9 (RESET=0 never uses it).
-MODE_WR       LD    (0E0B4H),A
+MOD002       LD    (0E0B4H),A
               RET
 ; These two routines were working in the v0.9 opcode-comparison test.
-ADDRHI_WR     LD    (0E0B5H),A
+ADD003     LD    (0E0B5H),A
               RET
-ADDRLO_WR     LD    (0E0B6H),A
+ADD004     LD    (0E0B6H),A
               RET
 ; Only data-port writes use the experimentally confirmed indirect form.
 ; Mirror the exact proven v0.9 LD (HL),A hardware write sequence.
 ; Save the W5100 register address in HL because WBLOCK needs it intact.
 ; A is the byte to write; all BC/DE/HL preserved.
-DATA_WR       PUSH  HL
+DAT002       PUSH  HL
               PUSH  AF
-              LD    A,(DATA_RD+1)
+              LD    A,(DAT001+1)
               LD    L,A
               LD    H,0E0H
               POP   AF
@@ -803,34 +803,34 @@ DATA_WR       PUSH  HL
 ; Set W5100 16-bit internal pointer HL high then low, preserve HL.
 WSEL          PUSH  AF
               LD    A,H
-              CALL  ADDRHI_WR
+              CALL  ADD003
               LD    A,L
-              CALL  ADDRLO_WR
+              CALL  ADD004
               POP   AF
               RET
 ; TELNET v1.5: hybrid W5100 access. Native Z80 reads, native 6502 writes.
 ; The v1.4 first 6502 READ handoff hung after W5100 mode display.
 ; Preserve working v1.3 read path; use 6502 only for writes.
 WREAD         CALL  WSEL
-              JP    DATA_RD
+              JP    DAT001
 ; Read B consecutive bytes into (DE) without BDOS or other interrupts.
 ; Mode $03/$13: hardware auto-increments W5100 indirect address.
 ; Mode $01/$11: pointer does NOT auto-increment; explicitly reselect for
 ; every byte. Never change VEDRIVE's mode register merely for efficiency.
-WREADBLOCK    LD    A,(HW_MODE)
+WRE001    LD    A,(HW_009)
               AND   002H
-              JP    Z,WRB_MANUAL
+              JP    Z,WRB002
               CALL  WSEL
-WRB_LOOP      CALL  DATA_RD
+WRB001      CALL  DAT001
               LD    (DE),A
               INC   DE
-              DJNZ  WRB_LOOP
+              DJNZ  WRB001
               RET
-WRB_MANUAL    CALL  WREAD
+WRB002    CALL  WREAD
               LD    (DE),A
               INC   DE
               INC   HL
-              DJNZ  WRB_MANUAL
+              DJNZ  WRB002
               RET
 ; WWRITE: HL=W5100 address, A=data. Never switch CPUs directly
 ; from an AUX transient: private BDOS $F9 travels via AXGATE.
@@ -839,19 +839,19 @@ WWRITE        PUSH  AF
               PUSH  DE
               PUSH  HL
               LD    A,H
-              LD    (W5PARAM),A
+              LD    (W5P001),A
               LD    A,L
-              LD    (W5PARAM+1),A
+              LD    (W5P001+1),A
               POP   HL
               POP   DE
               POP   BC
               POP   AF
-              LD    (W5PARAM+2),A
+              LD    (W5P001+2),A
               PUSH  AF
               PUSH  BC
               PUSH  DE
               PUSH  HL
-              LD    DE,W5PARAM
+              LD    DE,W5P001
               LD    C,0F9H
               CALL  BDOS
               POP   HL
@@ -859,7 +859,7 @@ WWRITE        PUSH  AF
               POP   BC
               POP   AF
               RET
-W5PARAM       DEFB  0,0,0
+W5P001       DEFB  0,0,0
 ; All W5100 reads use the v1.3 native Z80 path proven on hardware.
 ; All writes use one native 6502 handoff per byte, with explicit address.
 ; Avoid BDOS inside individual W5100 transactions.
@@ -870,66 +870,66 @@ WBLOCK        LD    A,(DE)
               DJNZ  WBLOCK
               RET
 
-HW_INIT       LD    A,(CFG_RESETFLAG)
+HW_001       LD    A,(CFG026)
               OR    A
-              JP    Z,HW_NO_RESET
-              LD    DE,MSG_RESETWARN
+              JP    Z,HW_002
+              LD    DE,MSG016
               CALL  PRINT
               LD    A,080H
-              CALL  MODE_WR
-HW_NO_RESET   LD    A,(CFG_RESETFLAG)
+              CALL  MOD002
+HW_002   LD    A,(CFG026)
               OR    A
-              JP    Z,HW_MODE_READY
+              JP    Z,HW_003
 ; Fresh reset only: program our preferred mode.  With VEDRIVE active,
 ; use the pre-existing mode without writing even a single byte to MR.
               LD    A,003H
-              CALL  MODE_WR
-HW_MODE_READY CALL  MODE_RD
-              LD    (HW_MODE),A
+              CALL  MOD002
+HW_003 CALL  MOD001
+              LD    (HW_009),A
 ; Always print *actual* mode, even for a failed probe (v0.3 omitted it).
-              LD    DE,MSG_MODERB
+              LD    DE,MSG017
               CALL  PRINT
-              LD    A,(HW_MODE)
+              LD    A,(HW_009)
               CALL  HEX
-              CALL  NEWLINE
+              CALL  NEW001
 ; W5100 MR bit 0 = indirect addressing, the only mandatory bit.
 ; $03 is normal, $13 enables ping-block; $01/$11 omit auto-increment.
-              LD    A,(HW_MODE)
+              LD    A,(HW_009)
               AND   001H
               JP    NZ,HW_INDIRECT_OK
-              LD    DE,MSG_MODEKEEP
+              LD    DE,MSG024
               CALL  PRINT
               SCF
               RET
 HW_INDIRECT_OK
-              LD    A,(HW_MODE)
+              LD    A,(HW_009)
               AND   002H
-              JP    NZ,HW_AI_ON
-              LD    DE,MSG_AI_OFF
+              JP    NZ,HW_004
+              LD    DE,MSG025
               CALL  PRINT
-              JP    HW_ALLOCS
-HW_AI_ON      LD    DE,MSG_AI_ON
+              JP    HW_005
+HW_004      LD    DE,MSG026
               CALL  PRINT
-HW_ALLOCS     LD    HL,001AH
+HW_005     LD    HL,001AH
               CALL  WREAD
-              LD    (RX_ALLOC),A
-              LD    DE,MSG_RXALLOC
+              LD    (RX_007),A
+              LD    DE,MSG018
               CALL  PRINT
-              LD    A,(RX_ALLOC)
+              LD    A,(RX_007)
               CALL  HEX
-              CALL  NEWLINE
+              CALL  NEW001
               LD    HL,001BH
               CALL  WREAD
-              LD    (TX_ALLOC),A
-              LD    DE,MSG_TXALLOC
+              LD    (TX_001),A
+              LD    DE,MSG019
               CALL  PRINT
-              LD    A,(TX_ALLOC)
+              LD    A,(TX_001)
               CALL  HEX
-              CALL  NEWLINE
+              CALL  NEW001
 ; With RESET=1, force standard 2KB per socket. With RESET=0 preserve
 ; existing layout (including $06 used with a 4KB socket 0) and derive
 ; socket-1 bases and circular-buffer masks without modifying allocation.
-              LD    A,(CFG_RESETFLAG)
+              LD    A,(CFG026)
               OR    A
               JP    Z,HW_CHECK_BUFFERS
               LD    HL,001AH
@@ -939,40 +939,40 @@ HW_ALLOCS     LD    HL,001AH
               LD    A,055H
               CALL  WWRITE
               LD    A,055H
-              LD    (RX_ALLOC),A
-              LD    (TX_ALLOC),A
+              LD    (RX_007),A
+              LD    (TX_001),A
 HW_CHECK_BUFFERS
-              LD    A,(TX_ALLOC)
-              CALL  WBUF_TX
-              JP    C,HW_BUFFER_ERR
-              LD    A,(RX_ALLOC)
-              CALL  WBUF_RX
-              JP    C,HW_BUFFER_ERR
-              LD    DE,MSG_TXBUF
+              LD    A,(TX_001)
+              CALL  WBU004
+              JP    C,HW_007
+              LD    A,(RX_007)
+              CALL  WBU005
+              JP    C,HW_007
+              LD    DE,MSG021
               CALL  PRINT
-              LD    A,(TX_BASEHI)
+              LD    A,(TX_002)
               CALL  HEX
               LD    A,0
               CALL  HEX
-              LD    DE,MSG_BUF_MASK
+              LD    DE,MSG023
               CALL  PRINT
-              LD    A,(TX_MASKHI)
+              LD    A,(TX_003)
               CALL  HEX
-              CALL  NEWLINE
-              LD    DE,MSG_RXBUF
+              CALL  NEW001
+              LD    DE,MSG022
               CALL  PRINT
-              LD    A,(RX_BASEHI)
+              LD    A,(RX_008)
               CALL  HEX
               LD    A,0
               CALL  HEX
-              LD    DE,MSG_BUF_MASK
+              LD    DE,MSG023
               CALL  PRINT
-              LD    A,(RX_MASKHI)
+              LD    A,(RX_009)
               CALL  HEX
-              CALL  NEWLINE
+              CALL  NEW001
 ; Print socket states before touching socket 1, so VEDRIVE ownership is
 ; evident on a real Apple //e.  SR codes 00=CLOSED, 22=UDP, 17=TCP.
-              LD    DE,MSG_SOCKALL
+              LD    DE,MSG027
               CALL  PRINT
               LD    HL,0403H
               CALL  WREAD
@@ -992,107 +992,107 @@ HW_CHECK_BUFFERS
               LD    HL,0703H
               CALL  WREAD
               CALL  HEX
-              CALL  NEWLINE
-              LD    A,(CFG_RESETFLAG)
+              CALL  NEW001
+              LD    A,(CFG026)
               OR    A
-              JP    NZ,HW_FRESH_NET
+              JP    NZ,HW_006
 ; VEDRIVE-safe attach: read live hardware IP/netmask/GW/MAC and compare
 ; to TELNET.CFG.  NEVER change these shared registers in attach mode.
-              LD    DE,MSG_ATTACH
+              LD    DE,MSG028
               CALL  PRINT
               LD    HL,0001H
-              LD    DE,HW_GATEWAY
+              LD    DE,HW_010
               LD    B,4
-              CALL  WREADBLOCK
+              CALL  WRE001
               LD    HL,0005H
-              LD    DE,HW_NETMASK
+              LD    DE,HW_011
               LD    B,4
-              CALL  WREADBLOCK
+              CALL  WRE001
               LD    HL,0009H
               LD    DE,HW_MAC
               LD    B,6
-              CALL  WREADBLOCK
+              CALL  WRE001
               LD    HL,000FH
-              LD    DE,HW_IPADDR
+              LD    DE,HW_012
               LD    B,4
-              CALL  WREADBLOCK
-              LD    DE,MSG_ACTGW
-              LD    HL,HW_GATEWAY
-              CALL  PRINT_IP
-              LD    DE,MSG_ACTMASK
-              LD    HL,HW_NETMASK
-              CALL  PRINT_IP
-              LD    DE,MSG_ACTIP
-              LD    HL,HW_IPADDR
-              CALL  PRINT_IP
-              LD    DE,MSG_ACTMAC
+              CALL  WRE001
+              LD    DE,MSG029
+              LD    HL,HW_010
+              CALL  PRI004
+              LD    DE,MSG030
+              LD    HL,HW_011
+              CALL  PRI004
+              LD    DE,MSG031
+              LD    HL,HW_012
+              CALL  PRI004
+              LD    DE,MSG032
               CALL  PRINT
               LD    HL,HW_MAC
               CALL  PRINT_MAC_BYTES
-              LD    HL,HW_GATEWAY
-              LD    DE,CFG_GATEWAY
+              LD    HL,HW_010
+              LD    DE,CFG021
               LD    B,4
-              CALL  COMPARE_BYTES
+              CALL  COM001
               JP    C,HW_NET_MISMATCH
-              LD    HL,HW_NETMASK
-              LD    DE,CFG_NETMASK
+              LD    HL,HW_011
+              LD    DE,CFG020
               LD    B,4
-              CALL  COMPARE_BYTES
+              CALL  COM001
               JP    C,HW_NET_MISMATCH
-              LD    HL,HW_IPADDR
-              LD    DE,CFG_IPADDR
+              LD    HL,HW_012
+              LD    DE,CFG019
               LD    B,4
-              CALL  COMPARE_BYTES
+              CALL  COM001
               JP    C,HW_NET_MISMATCH
               LD    HL,HW_MAC
-              LD    DE,CFG_MAC
+              LD    DE,CFG023
               LD    B,6
-              CALL  COMPARE_BYTES
+              CALL  COM001
               JP    C,HW_NET_MISMATCH
-              LD    DE,MSG_MATCH
+              LD    DE,MSG033
               CALL  PRINT
               OR    A
               RET
 HW_NET_MISMATCH
-              LD    DE,MSG_NETMISMATCH
+              LD    DE,MSG034
               CALL  PRINT
               OR    A                     ; warning only: use live chip config
               RET
 ; Fresh setup is ONLY legal with RESET=1.  RESET tears down VEDRIVE.
-HW_FRESH_NET  LD    DE,MSG_FRESHNET
+HW_006  LD    DE,MSG035
               CALL  PRINT
               LD    HL,0001H
-              LD    DE,CFG_GATEWAY
+              LD    DE,CFG021
               LD    B,4
               CALL  WBLOCK
               LD    HL,0005H
-              LD    DE,CFG_NETMASK
+              LD    DE,CFG020
               LD    B,4
               CALL  WBLOCK
               LD    HL,0009H
-              LD    DE,CFG_MAC
+              LD    DE,CFG023
               LD    B,6
               CALL  WBLOCK
               LD    HL,000FH
-              LD    DE,CFG_IPADDR
+              LD    DE,CFG019
               LD    B,4
               CALL  WBLOCK
               OR    A
               RET
 ; A=(DE) is expected config; (HL) is active W5100 byte.
-COMPARE_BYTES LD    A,(DE)
+COM001 LD    A,(DE)
               CP    (HL)
-              JP    NZ,CMP_DIFFER
+              JP    NZ,CMP001
               INC   DE
               INC   HL
-              DJNZ  COMPARE_BYTES
+              DJNZ  COM001
               OR    A
               RET
-CMP_DIFFER    SCF
+CMP001    SCF
               RET
-HW_BUFFER_ERR LD    DE,MSG_BUFERR
+HW_007 LD    DE,MSG020
               CALL  PRINT
-HW_ERROR      SCF
+HW_008      SCF
               RET
 
 ; Derive socket-1 buffer base (high address byte) and mask (high byte)
@@ -1101,11 +1101,11 @@ HW_ERROR      SCF
 ; B = size of socket 0 in 256-byte pages (4,8,16,32),
 ; C = (size of socket 1 in pages)-1 (3,7,15,31).
 ; Reject only arrangements that put socket 1 past the 8KB RX/TX space.
-WBUF_CALC     PUSH  AF
+WBU001     PUSH  AF
               AND   003H
               LD    L,A
               LD    H,0
-              LD    DE,WBUF_PAGES
+              LD    DE,WBU003
               ADD   HL,DE
               LD    B,(HL)
               POP   AF
@@ -1114,97 +1114,97 @@ WBUF_CALC     PUSH  AF
               AND   003H
               LD    L,A
               LD    H,0
-              LD    DE,WBUF_PAGES
+              LD    DE,WBU003
               ADD   HL,DE
               LD    C,(HL)
               LD    A,B
               ADD   A,C
               CP    021H                 ; 32 pages = 8KB, inclusive
-              JP    NC,WBUF_INVALID
+              JP    NC,WBU002
               DEC   C                     ; bit mask for ring address high
               OR    A                     ; carry clear
               RET
-WBUF_INVALID  SCF
+WBU002  SCF
               RET
-WBUF_PAGES    DEFB  004H,008H,010H,020H
+WBU003    DEFB  004H,008H,010H,020H
 
-WBUF_TX       CALL  WBUF_CALC
+WBU004       CALL  WBU001
               RET   C
               LD    A,B
               ADD   A,040H               ; transmit memory starts at $4000
-              LD    (TX_BASEHI),A
+              LD    (TX_002),A
               LD    A,C
-              LD    (TX_MASKHI),A
+              LD    (TX_003),A
               OR    A
               RET
-WBUF_RX       CALL  WBUF_CALC
+WBU005       CALL  WBU001
               RET   C
               LD    A,B
               ADD   A,060H               ; receive memory starts at $6000
-              LD    (RX_BASEHI),A
+              LD    (RX_008),A
               LD    A,C
-              LD    (RX_MASKHI),A
+              LD    (RX_009),A
               OR    A
               RET
 
 ; -------- SOCKET 1: TCP --------------------------------------------------
-SOCK_SETUP    LD    DE,MSG_SOCK
+SOC001    LD    DE,MSG041
               CALL  PRINT
               LD    HL,S1SR
               CALL  WREAD
               PUSH  AF
               CALL  HEX
-              CALL  NEWLINE
+              CALL  NEW001
               POP   AF
               OR    A
-              JP    NZ,SOCK_BUSY
-              LD    DE,MSG_BRIDGE_PREW
+              JP    NZ,SOC002
+              LD    DE,MSG039
               CALL  PRINT
               LD    HL,S1MR
               LD    A,1
               CALL  WWRITE
-              LD    DE,MSG_BRIDGE_POSTW
+              LD    DE,MSG040
               CALL  PRINT
               ; Check the TCP mode write immediately, before block writes.
               LD    HL,S1MR
               CALL  WREAD
-              LD    (DBG_MR_NOW),A
+              LD    (DBG006),A
               LD    HL,S1PORT
-              LD    DE,LOCAL_PORT
+              LD    DE,LOC001
               LD    B,2
               CALL  WBLOCK
               ; Determine whether the PORT block write changed Sn_MR.
               LD    HL,S1MR
               CALL  WREAD
-              LD    (DBG_MR_PORT),A
+              LD    (DBG007),A
               LD    HL,S1DIP
-              LD    DE,CFG_REMOTE
+              LD    DE,CFG022
               LD    B,4
               CALL  WBLOCK
-              LD    HL,S1DPORT
-              LD    DE,CFG_PORTBE
+              LD    HL,S1D001
+              LD    DE,CFG024
               LD    B,2
               CALL  WBLOCK
               ; Detect whether destination block writes changed Sn_MR.
               LD    HL,S1MR
               CALL  WREAD
-              LD    (DBG_MR_DEST),A
+              LD    (DBG008),A
               ; Read out checkpoints now (after the critical writes).
-              LD    DE,MSG_DBGNOW
+              LD    DE,MSG045
               CALL  PRINT
-              LD    A,(DBG_MR_NOW)
+              LD    A,(DBG006)
               CALL  HEX
-              CALL  NEWLINE
-              LD    DE,MSG_DBGPORTMR
+              CALL  NEW001
+              LD    DE,MSG046
               CALL  PRINT
-              LD    A,(DBG_MR_PORT)
+              LD    A,(DBG007)
               CALL  HEX
-              CALL  NEWLINE
-              LD    DE,MSG_DBGDESTMR
+              CALL  NEW001
+              LD    DE,MSG047
               CALL  PRINT
-              LD    A,(DBG_MR_DEST)
+              LD    A,(DBG008)
               CALL  HEX
-              CALL  NEWLINE
+              CALL  NEW001
               ; Reassert TCP mode LAST, to isolate mode-write problems from
               ; subsequent WBLOCK address-pointer/buffer operations.
               LD    HL,S1MR
@@ -1212,26 +1212,26 @@ SOCK_SETUP    LD    DE,MSG_SOCK
               CALL  WWRITE
               LD    HL,S1MR
               CALL  WREAD
-              LD    (DBG_MR_LAST),A
-              LD    DE,MSG_DBGLASTMR
+              LD    (DBG009),A
+              LD    DE,MSG048
               CALL  PRINT
-              LD    A,(DBG_MR_LAST)
+              LD    A,(DBG009)
               CALL  HEX
-              CALL  NEWLINE
+              CALL  NEW001
               ; Do not issue OPEN if mode still isn't TCP: avoid changing
               ; socket state when we already know initialization failed.
-              LD    A,(DBG_MR_LAST)
+              LD    A,(DBG009)
               CP    1
-              JP    NZ,DBG_BADMODE
+              JP    NZ,DBG005
               ; Do not clear Sn_IR before opening: inspect its old value.
               ; Read all setup fields back, including the source port.
-              LD    DE,MSG_DBGMR
+              LD    DE,MSG049
               CALL  PRINT
               LD    HL,S1MR
               CALL  WREAD
               CALL  HEX
-              CALL  NEWLINE
-              LD    DE,MSG_DBGPORT
+              CALL  NEW001
+              LD    DE,MSG050
               CALL  PRINT
               LD    HL,S1PORT
               CALL  WREAD
@@ -1239,114 +1239,114 @@ SOCK_SETUP    LD    DE,MSG_SOCK
               LD    HL,S1PORT+1
               CALL  WREAD
               CALL  HEX
-              CALL  NEWLINE
-              LD    DE,MSG_DBGCR0
+              CALL  NEW001
+              LD    DE,MSG051
               CALL  PRINT
               LD    HL,S1CR
               CALL  WREAD
               CALL  HEX
-              CALL  NEWLINE
-              LD    DE,MSG_DBGIR0
+              CALL  NEW001
+              LD    DE,MSG052
               CALL  PRINT
               LD    HL,S1IR
               CALL  WREAD
               CALL  HEX
-              CALL  NEWLINE
+              CALL  NEW001
               ; No BDOS calls between command write and immediate CR sample.
               LD    HL,S1CR
               LD    A,1
               CALL  WWRITE
               LD    HL,S1CR
               CALL  WREAD
-              LD    (DBG_IMMCR),A
+              LD    (DBG010),A
               ; Poll Sn_CR; do not rely on one immediate Sn_SR sample.
               LD    BC,8000
-DBG_CRWAIT    LD    HL,S1CR
+DBG001    LD    HL,S1CR
               CALL  WREAD
               OR    A
-              JP    Z,DBG_CRDONE
+              JP    Z,DBG002
               DEC   BC
               LD    A,B
               OR    C
-              JP    NZ,DBG_CRWAIT
-              LD    DE,MSG_CMDTIME
+              JP    NZ,DBG001
+              LD    DE,MSG065
               CALL  PRINT
               SCF
               RET
-DBG_CRDONE    LD    HL,S1SR
+DBG002    LD    HL,S1SR
               CALL  WREAD
-              LD    (DBG_IMMSR),A
+              LD    (DBG011),A
               LD    HL,S1IR
               CALL  WREAD
-              LD    (DBG_IMMIR),A
-              LD    DE,MSG_DBGCR1
+              LD    (DBG012),A
+              LD    DE,MSG053
               CALL  PRINT
-              LD    A,(DBG_IMMCR)
+              LD    A,(DBG010)
               CALL  HEX
-              CALL  NEWLINE
-              LD    DE,MSG_DBGCR2
+              CALL  NEW001
+              LD    DE,MSG054
               CALL  PRINT
               LD    HL,S1CR
               CALL  WREAD
               CALL  HEX
-              CALL  NEWLINE
-              LD    DE,MSG_DBGSR1
+              CALL  NEW001
+              LD    DE,MSG055
               CALL  PRINT
-              LD    A,(DBG_IMMSR)
+              LD    A,(DBG011)
               CALL  HEX
-              CALL  NEWLINE
-              LD    DE,MSG_DBGIR1
+              CALL  NEW001
+              LD    DE,MSG056
               CALL  PRINT
-              LD    A,(DBG_IMMIR)
+              LD    A,(DBG012)
               CALL  HEX
-              CALL  NEWLINE
+              CALL  NEW001
               ; Probe status repeatedly before declaring failure.
               LD    BC,16000
-DBG_SRWAIT    LD    HL,S1SR
+DBG003    LD    HL,S1SR
               CALL  WREAD
               CP    013H
-              JP    Z,DBG_SROK
+              JP    Z,DBG004
               DEC   BC
               LD    A,B
               OR    C
-              JP    NZ,DBG_SRWAIT
-              LD    DE,MSG_DBGFINAL
+              JP    NZ,DBG003
+              LD    DE,MSG057
               CALL  PRINT
               LD    HL,S1MR
               CALL  WREAD
               CALL  HEX
-              CALL  NEWLINE
-              JP    SOCK_BUSY
-DBG_SROK     LD    HL,S1SR
+              CALL  NEW001
+              JP    SOC002
+DBG004     LD    HL,S1SR
               CALL  WREAD
-              LD    DE,MSG_OPENSTATE
+              LD    DE,MSG043
               PUSH  AF
               CALL  PRINT
               POP   AF
               CALL  HEX
-              CALL  NEWLINE
+              CALL  NEW001
               OR    A
               RET
-DBG_BADMODE   LD    DE,MSG_BADMODE
+DBG005   LD    DE,MSG044
               CALL  PRINT
               SCF
               RET
-SOCK_BUSY     LD    DE,MSG_SOCKBUSY
+SOC002     LD    DE,MSG042
               CALL  PRINT
               SCF
               RET
 
-SOCK_CONNECT  LD    A,4
-              CALL  COMMAND
+SOC003  LD    A,4
+              CALL  COM002
               RET   C
               LD    BC,30000
               LD    DE,0
-CONNECT_WAIT  LD    HL,S1SR
+CON003  LD    HL,S1SR
               CALL  WREAD
               CP    017H
-              JP    Z,CONNECT_OK
+              JP    Z,CON004
               CP    000H
-              JP    Z,CONNECT_BAD
+              JP    Z,CON005
               LD    HL,S1IR
               CALL  WREAD
               BIT   3,A
@@ -1357,21 +1357,21 @@ CONNECT_WAIT  LD    HL,S1SR
               JP    Z,CONNECT_TIMEOUT
               LD    A,C
               OR    A
-              JP    NZ,CONNECT_WAIT
+              JP    NZ,CON003
               PUSH  BC
-              LD    DE,MSG_WAIT
+              LD    DE,MSG060
               CALL  PRINT
               LD    HL,S1SR
               CALL  WREAD
               CALL  HEX
-              CALL  NEWLINE
+              CALL  NEW001
               LD    C,11
               CALL  BDOS
               POP   BC
-              JP    CONNECT_WAIT
-CONNECT_OK    OR    A
+              JP    CON003
+CON004    OR    A
               RET
-CONNECT_BAD   LD    DE,MSG_CLOSED
+CON005   LD    DE,MSG062
               CALL  PRINT
               SCF
               RET
@@ -1381,24 +1381,24 @@ CONNECT_TIMEOUT
               LD    HL,S1IR
               CALL  WREAD
               CALL  HEX
-              CALL  NEWLINE
-              LD    DE,MSG_TIMEOUT
+              CALL  NEW001
+              LD    DE,MSG061
               CALL  PRINT
               SCF
               RET
 ; A=command, waits for CR to clear with finite counter.
-COMMAND       LD    HL,S1CR
+COM002       LD    HL,S1CR
               CALL  WWRITE
               LD    BC,8000
-CMD_WAIT      LD    HL,S1CR
+CMD001      LD    HL,S1CR
               CALL  WREAD
               OR    A
               RET   Z
               DEC   BC
               LD    A,B
               OR    C
-              JP    NZ,CMD_WAIT
-              LD    DE,MSG_CMDTIME
+              JP    NZ,CMD001
+              LD    DE,MSG065
               CALL  PRINT
               SCF
               RET
@@ -1407,26 +1407,26 @@ CMD_WAIT      LD    HL,S1CR
 ; for every incoming byte. Only defer RX_RD/RECV acknowledgment to once
 ; per batch. No W5100 sequential-auto-increment assumptions.
 ; At most 16 bytes buffered: a deliberately small first experiment.
-RX_ONE        LD    A,(RX_LEFT)
+RX_ONE        LD    A,(RX_011)
               OR    A
-              JP    Z,RX_REFILL
-RX_POP        LD    A,(RX_INDEX)
+              JP    Z,RX_001
+RX_POP        LD    A,(RX_012)
               LD    E,A
               LD    D,0
-              LD    HL,RX_BUFFER
+              LD    HL,RX_014
               ADD   HL,DE
               LD    A,(HL)
-              LD    (RX_CHAR),A
-              LD    A,(RX_INDEX)
+              LD    (RX_010),A
+              LD    A,(RX_012)
               INC   A
-              LD    (RX_INDEX),A
-              LD    A,(RX_LEFT)
+              LD    (RX_012),A
+              LD    A,(RX_011)
               DEC   A
-              LD    (RX_LEFT),A
-              LD    A,(RX_CHAR)
+              LD    (RX_011),A
+              LD    A,(RX_010)
               OR    A
               RET
-RX_REFILL     LD    HL,S1RXRSR
+RX_001     LD    HL,S1R001
               CALL  WREAD
               LD    B,A
               INC   HL
@@ -1434,81 +1434,81 @@ RX_REFILL     LD    HL,S1RXRSR
               LD    C,A
               LD    A,B
               OR    A
-              JP    NZ,RX_LIMIT
+              JP    NZ,RX_002
               LD    A,C
               OR    A
-              JP    Z,RX_EMPTY
+              JP    Z,RX_006
               CP    17
-              JP    C,RX_COUNT
-RX_LIMIT      LD    A,16
-RX_COUNT      LD    (RX_CHUNK),A
+              JP    C,RX_003
+RX_002      LD    A,16
+RX_003      LD    (RX_013),A
               LD    HL,S1RXRD
               CALL  WREAD
-              LD    (RX_PTRHI),A
+              LD    (RX_015),A
               INC   HL
               CALL  WREAD
-              LD    (RX_PTRLO),A
+              LD    (RX_016),A
               XOR   A
-              LD    (RX_INDEX),A
-RX_FILL_LOOP  ; Each byte recomputes its W5100 ring address and WREAD
+              LD    (RX_012),A
+RX_004  ; Each byte recomputes its W5100 ring address and WREAD
               ; selects that address explicitly, as v1.7 did.
-              LD    A,(RX_PTRHI)
+              LD    A,(RX_015)
               LD    H,A
-              LD    A,(RX_MASKHI)
+              LD    A,(RX_009)
               AND   H
               LD    H,A
-              LD    A,(RX_BASEHI)
+              LD    A,(RX_008)
               OR    H
               LD    H,A
-              LD    A,(RX_PTRLO)
+              LD    A,(RX_016)
               LD    L,A
               CALL  WREAD
               PUSH  AF
-              LD    A,(RX_INDEX)
+              LD    A,(RX_012)
               LD    E,A
               LD    D,0
-              LD    HL,RX_BUFFER
+              LD    HL,RX_014
               ADD   HL,DE
               POP   AF
               LD    (HL),A
-              LD    A,(RX_PTRLO)
+              LD    A,(RX_016)
               INC   A
-              LD    (RX_PTRLO),A
-              JP    NZ,RX_NO_CARRY
-              LD    A,(RX_PTRHI)
+              LD    (RX_016),A
+              JP    NZ,RX_005
+              LD    A,(RX_015)
               INC   A
-              LD    (RX_PTRHI),A
-RX_NO_CARRY   LD    A,(RX_INDEX)
+              LD    (RX_015),A
+RX_005   LD    A,(RX_012)
               INC   A
-              LD    (RX_INDEX),A
+              LD    (RX_012),A
               LD    B,A
-              LD    A,(RX_CHUNK)
+              LD    A,(RX_013)
               CP    B
-              JP    NZ,RX_FILL_LOOP
+              JP    NZ,RX_004
               ; Both pointer bytes are now ready, one RECV per batch.
               LD    HL,S1RXRD
-              LD    DE,RX_PTRHI
+              LD    DE,RX_015
               LD    B,2
               CALL  WBLOCK
               LD    A,040H
-              CALL  COMMAND
-              JP    C,RX_EMPTY
+              CALL  COM002
+              JP    C,RX_006
               XOR   A
-              LD    (RX_INDEX),A
-              LD    A,(RX_CHUNK)
-              LD    (RX_LEFT),A
+              LD    (RX_012),A
+              LD    A,(RX_013)
+              LD    (RX_011),A
               JP    RX_POP
-RX_EMPTY      SCF
+RX_006      SCF
               RET
 
 ; Send B bytes from DE: Sn_TX_WR, ring wrap according to TMSR.
 ; Never call BDOS while an indirect W5100 pointer is active.
-SEND_BYTES    LD    A,B
+SEN001    LD    A,B
               OR    A
               RET   Z
-              LD    (SEND_COUNT),A
-              LD    (SEND_SRCPTR),DE
-              LD    HL,S1TXFSR
+              LD    (SEN005),A
+              LD    (SEN006),DE
+              LD    HL,S1T001
               CALL  WREAD
               LD    C,A
               INC   HL
@@ -1516,369 +1516,369 @@ SEND_BYTES    LD    A,B
               LD    B,A
               LD    A,C
               OR    A
-              JP    NZ,SEND_HAS_ROOM       ; available >=256
-              LD    A,(SEND_COUNT)
+              JP    NZ,SEN002       ; available >=256
+              LD    A,(SEN005)
               CP    B
-              JP    C,SEND_HAS_ROOM
-              JP    Z,SEND_HAS_ROOM
-              LD    DE,MSG_TXFULL
+              JP    C,SEN002
+              JP    Z,SEN002
+              LD    DE,MSG069
               CALL  PRINT
               SCF
               RET
-SEND_HAS_ROOM LD    HL,S1TXWR
+SEN002 LD    HL,S1TXWR
               CALL  WREAD
               LD    B,A
               INC   HL
               CALL  WREAD
               LD    C,A
               LD    A,B
-              LD    (TX_PTRHI),A
+              LD    (TX_004),A
               LD    A,C
-              LD    (TX_PTRLO),A
-SEND_LOOP     LD    DE,(SEND_SRCPTR)
+              LD    (TX_005),A
+SEN003     LD    DE,(SEN006)
               LD    A,(DE)
-              LD    (TX_CHAR),A
+              LD    (TX_006),A
               INC   DE
-              LD    (SEND_SRCPTR),DE
-              LD    A,(TX_PTRHI)
+              LD    (SEN006),DE
+              LD    A,(TX_004)
               LD    H,A
-              LD    A,(TX_MASKHI)
+              LD    A,(TX_003)
               AND   H
               LD    H,A
-              LD    A,(TX_BASEHI)
+              LD    A,(TX_002)
               OR    H
               LD    H,A
-              LD    A,(TX_PTRLO)
+              LD    A,(TX_005)
               LD    L,A
-              LD    A,(TX_CHAR)
+              LD    A,(TX_006)
               CALL  WWRITE
-              LD    A,(TX_PTRLO)
+              LD    A,(TX_005)
               INC   A
-              LD    (TX_PTRLO),A
+              LD    (TX_005),A
               JP    NZ,SEND_NEXT
-              LD    A,(TX_PTRHI)
+              LD    A,(TX_004)
               INC   A
-              LD    (TX_PTRHI),A
+              LD    (TX_004),A
 SEND_NEXT
-              LD    A,(SEND_COUNT)
+              LD    A,(SEN005)
               DEC   A
-              LD    (SEND_COUNT),A
-              JP    NZ,SEND_LOOP
+              LD    (SEN005),A
+              JP    NZ,SEN003
               LD    HL,S1TXWR
-              LD    DE,TX_PTRHI
+              LD    DE,TX_004
               LD    B,2
               CALL  WBLOCK
               LD    A,020H
-              JP    COMMAND
+              JP    COM002
 ; Send one keyboard byte (CR as CR LF); IAC $FF escaped as $FF $FF.
-SEND_KEY      LD    (SEND_KEYBUF),A
+SEN004      LD    (SEN007),A
               LD    B,1
               CP    13
-              JP    NZ,SK_CHECKFF
+              JP    NZ,SK_001
               LD    A,10
-              LD    (SEND_KEYBUF+1),A
+              LD    (SEN007+1),A
               LD    B,2
-SK_CHECKFF    LD    A,(SEND_KEYBUF)
+SK_001    LD    A,(SEN007)
               CP    0FFH
-              JP    NZ,SK_SEND
+              JP    NZ,SK_002
               LD    A,0FFH
-              LD    (SEND_KEYBUF+1),A
+              LD    (SEN007+1),A
               LD    B,2
-SK_SEND       LD    DE,SEND_KEYBUF
-              JP    SEND_BYTES
+SK_002       LD    DE,SEN007
+              JP    SEN001
 
 ; Basic TELNET IAC: accept remote ECHO/SGA; reject other options.
 ; Reply to every incoming WILL/WONT/DO/DONT; ignore subnegotiations.
 TEL_IN        LD    B,A
-              LD    A,(TN_STATE)
+              LD    A,(TN_013)
               OR    A
-              JP    Z,TN_TEXT
+              JP    Z,TN_001
               CP    1
               JP    Z,TN_IAC
               CP    2
-              JP    Z,TN_OPTION
+              JP    Z,TN_008
               CP    3
               JP    Z,TN_SUB
               CP    4
-              JP    Z,TN_SUBIAC
+              JP    Z,TN_006
               XOR   A
-              LD    (TN_STATE),A
+              LD    (TN_013),A
               RET
-TN_TEXT       LD    A,B
+TN_001       LD    A,B
               CP    0FFH
-              JP    NZ,TN_OUTPUT
+              JP    NZ,TN_002
               LD    A,1
-              LD    (TN_STATE),A
+              LD    (TN_013),A
               RET
-TN_OUTPUT     LD    E,A
+TN_002     LD    E,A
               LD    C,6                      ; BDOS 6: raw console output
               JP    BDOS
 TN_IAC        LD    A,B
               CP    0FFH
-              JP    Z,TN_LITERALFF
+              JP    Z,TN_003
               CP    0FAH                    ; SB
-              JP    Z,TN_STARTSUB
+              JP    Z,TN_004
               CP    0FBH                    ; WILL
-              JP    Z,TN_SETCMD
+              JP    Z,TN_005
               CP    0FCH                    ; WONT
-              JP    Z,TN_SETCMD
+              JP    Z,TN_005
               CP    0FDH                    ; DO
-              JP    Z,TN_SETCMD
+              JP    Z,TN_005
               CP    0FEH                    ; DONT
-              JP    Z,TN_SETCMD
+              JP    Z,TN_005
               XOR   A
-              LD    (TN_STATE),A
+              LD    (TN_013),A
               RET
-TN_LITERALFF  XOR   A
-              LD    (TN_STATE),A
+TN_003  XOR   A
+              LD    (TN_013),A
               LD    A,'?'                  ; BDOS 6 uses $FF as CONIN, not output
-              JP    TN_OUTPUT
-TN_STARTSUB   LD    A,3
-              LD    (TN_STATE),A
+              JP    TN_002
+TN_004   LD    A,3
+              LD    (TN_013),A
               RET
-TN_SETCMD     LD    (TN_COMMAND),A
+TN_005     LD    (TN_014),A
               LD    A,2
-              LD    (TN_STATE),A
+              LD    (TN_013),A
               RET
 TN_SUB        LD    A,B
               CP    0FFH
               RET   NZ
               LD    A,4
-              LD    (TN_STATE),A
+              LD    (TN_013),A
               RET
-TN_SUBIAC     LD    A,B
+TN_006     LD    A,B
               CP    0F0H                    ; SE
-              JP    Z,TN_SUBDONE
+              JP    Z,TN_007
               LD    A,3
-              LD    (TN_STATE),A
+              LD    (TN_013),A
               RET
-TN_SUBDONE    XOR   A
-              LD    (TN_STATE),A
+TN_007    XOR   A
+              LD    (TN_013),A
               RET
-TN_OPTION     XOR   A
-              LD    (TN_STATE),A
+TN_008     XOR   A
+              LD    (TN_013),A
               LD    A,B
               LD    (TN_BUF+2),A
-              LD    A,(TN_COMMAND)
+              LD    A,(TN_014)
               CP    0FBH                    ; WILL -> DO or DONT
-              JP    Z,TN_WILL
+              JP    Z,TN_009
               CP    0FDH                    ; DO -> WILL or WONT
               JP    Z,TN_DO
               RET                            ; WONT/DONT: accept silently
-TN_WILL       LD    A,B
+TN_009       LD    A,B
               CP    1                       ; ECHO
-              JP    Z,TN_ALLOWDO
+              JP    Z,TN_010
               CP    3                       ; SUPPRESS-GO-AHEAD
-              JP    Z,TN_ALLOWDO
+              JP    Z,TN_010
               LD    A,0FEH                   ; DONT
-              JP    TN_REPLY
-TN_ALLOWDO    LD    A,0FDH                   ; DO
-              JP    TN_REPLY
+              JP    TN_012
+TN_010    LD    A,0FDH                   ; DO
+              JP    TN_012
 TN_DO         LD    A,B
               CP    3
-              JP    Z,TN_ALLOWWILL
+              JP    Z,TN_011
               LD    A,0FCH                   ; WONT
-              JP    TN_REPLY
-TN_ALLOWWILL  LD    A,0FBH                   ; WILL
-TN_REPLY      LD    (TN_BUF+1),A
+              JP    TN_012
+TN_011  LD    A,0FBH                   ; WILL
+TN_012      LD    (TN_BUF+1),A
               LD    DE,TN_BUF
               LD    B,3
-              CALL  SEND_BYTES
+              CALL  SEN001
               RET
 
-MAIN_LOOP     XOR   A
-              LD    (QUIET_MUTE),A
+MAI001     XOR   A
+              LD    (QUI001),A
               CALL  RX_ONE
-              JP    C,MAIN_NO_RX
+              JP    C,MAI002
               CALL  TEL_IN
-MAIN_NO_RX    LD    HL,(POLL_COUNT)
+MAI002    LD    HL,(POL001)
               INC   HL
-              LD    (POLL_COUNT),HL
+              LD    (POL001),HL
               LD    A,H
               AND   00FH
               OR    L
-              JP    NZ,MAIN_NO_HB
-              LD    DE,MSG_HEART
+              JP    NZ,MAI003
+              LD    DE,MSG066
               CALL  PRINT
               LD    HL,S1SR
               CALL  WREAD
               CALL  HEX
-              CALL  NEWLINE
-MAIN_NO_HB    XOR   A
-              LD    (QUIET_MUTE),A
+              CALL  NEW001
+MAI003    XOR   A
+              LD    (QUI001),A
               LD    HL,S1SR
               CALL  WREAD
               CP    017H
-              JP    Z,MAIN_KEY
+              JP    Z,MAI004
               CP    01CH                    ; CLOSE_WAIT: drain outstanding data first
-              JP    Z,MAIN_KEY
-              LD    DE,MSG_DISCONNECT
+              JP    Z,MAI004
+              LD    DE,MSG068
               CALL  PRINT
-              JP    CLOSE_EXIT
-MAIN_KEY      LD    C,11                    ; cooperative scheduler+keyboard status
+              JP    CLO001
+MAI004      LD    C,11                    ; cooperative scheduler+keyboard status
               CALL  BDOS
               OR    A
-              JP    Z,MAIN_LOOP
+              JP    Z,MAI001
               LD    E,0FFH
               LD    C,6                     ; non-blocking read
               CALL  BDOS
               AND   07FH
               CP    01DH                    ; Ctrl-] leaves telnet
-              JP    Z,CLOSE_EXIT
+              JP    Z,CLO001
               ; Ctrl-C (03h) is forwarded to the remote host.
-              CALL  SEND_KEY
-              JP    C,CLOSE_EXIT
-              JP    MAIN_LOOP
-CLOSE_EXIT    LD    DE,MSG_CLOSE
+              CALL  SEN004
+              JP    C,CLO001
+              JP    MAI001
+CLO001    LD    DE,MSG070
               CALL  PRINT
               LD    A,010H
-              CALL  COMMAND               ; CLOSE socket 1 only
+              CALL  COM002               ; CLOSE socket 1 only
               JP    EXIT
 
 ; --- Data and ASCII diagnostics ------------------------------------------
-MSG_BANNER    DEFB  13,10
+MSG001    DEFB  13,10
               DEFM  'Zapple-II TELNET/W5100 v1.9'
               DEFB  13,10
               DEFB  '$'
-MSG_USAGE    DEFB  13,10
+MSG002    DEFB  13,10
               DEFM  'Usage: TELNET [a.b.c.d [port]] [-v]'
               DEFB  13,10,'$'
-MSG_CFGOPEN   DEFM  '[01] opening TELNET.CFG'
+MSG003   DEFM  '[01] opening TELNET.CFG'
               DEFB  13,10
               DEFB  '$'
-MSG_CFG       DEFM  '[02] configuration (IPs shown as HEX octets)'
+MSG004       DEFM  '[02] configuration (IPs shown as HEX octets)'
               DEFB  13,10
               DEFB  '$'
-MSG_SLOT      DEFM  ' slot = $'
-MSG_MAC       DEFM  ' MAC = $'
-MSG_LOCAL     DEFM  ' local IP = $'
-MSG_MASK      DEFM  ' netmask  = $'
-MSG_GATEWAY   DEFM  ' gateway  = $'
-MSG_REMOTE    DEFM  ' remote IP= $'
-MSG_PORT      DEFM  ' remote port HEX = $'
-MSG_RESET     DEFM  ' reset W5100 = $'
-MSG_BADCFG    DEFM  'ERROR: TELNET.CFG missing or IP/MASK/HOST invalid'
+MSG005      DEFM  ' slot = $'
+MSG006       DEFM  ' MAC = $'
+MSG007     DEFM  ' local IP = $'
+MSG008      DEFM  ' netmask  = $'
+MSG009   DEFM  ' gateway  = $'
+MSG010    DEFM  ' remote IP= $'
+MSG011      DEFM  ' remote port HEX = $'
+MSG012     DEFM  ' reset W5100 = $'
+MSG013    DEFM  'ERROR: TELNET.CFG missing or IP/MASK/HOST invalid'
               DEFB  13,10
               DEFB  '$'
-MSG_UNKNOWN   DEFM  '[CFG] unknown key: $'
-MSG_INVALID   DEFM  '[CFG] INVALID value: $'
+MSG014   DEFM  '[CFG] unknown key: $'
+MSG015   DEFM  '[CFG] INVALID value: $'
 MSG_HW        DEFM  '[03] probing W5100 / attach or reset mode'
               DEFB  13,10
               DEFB  '$'
-MSG_RESETWARN DEFM  '[WARN] RESET=1: resetting ALL W5100 sockets!'
+MSG016 DEFM  '[WARN] RESET=1: resetting ALL W5100 sockets!'
               DEFB  13,10
               DEFB  '$'
-MSG_MODERB    DEFM  ' [W5100] mode readback = $'
-MSG_RXALLOC   DEFM  ' [W5100] RMSR = $'
-MSG_TXALLOC   DEFM  ' [W5100] TMSR = $'
-MSG_BUFERR    DEFM  ' [W5100] socket 1 TX/RX allocation invalid (over 8KB)'
+MSG017    DEFM  ' [W5100] mode readback = $'
+MSG018   DEFM  ' [W5100] RMSR = $'
+MSG019   DEFM  ' [W5100] TMSR = $'
+MSG020    DEFM  ' [W5100] socket 1 TX/RX allocation invalid (over 8KB)'
               DEFB  13,10
               DEFB  '$'
-MSG_TXBUF     DEFM  ' [W5100] socket 1 TX base = $'
-MSG_RXBUF     DEFM  ' [W5100] socket 1 RX base = $'
-MSG_BUF_MASK  DEFM  ' mask high = $'
-MSG_MODEKEEP  DEFM  ' [SAFE] mode bit 0 (IND) is OFF; cannot access W5100 safely'
+MSG021     DEFM  ' [W5100] socket 1 TX base = $'
+MSG022     DEFM  ' [W5100] socket 1 RX base = $'
+MSG023  DEFM  ' mask high = $'
+MSG024  DEFM  ' [SAFE] mode bit 0 (IND) is OFF, cannot access W5100 safely'
               DEFB  13,10
               DEFB  '$'
-MSG_AI_OFF    DEFM  ' [W5100] auto-increment OFF; using per-byte addressing'
+MSG025    DEFM  ' [W5100] auto-increment OFF, using per-byte addressing'
               DEFB  13,10
               DEFB  '$'
-MSG_AI_ON     DEFM  ' [W5100] auto-increment ON; using block transfers'
+MSG026     DEFM  ' [W5100] auto-increment ON, using block transfers'
               DEFB  13,10
               DEFB  '$'
-MSG_SOCKALL   DEFM  ' [W5100] sockets 0/1/2/3 status = $'
-MSG_ATTACH    DEFM  ' [SAFE] RESET=0: keeping VEDRIVE network configuration'
+MSG027   DEFM  ' [W5100] sockets 0/1/2/3 status = $'
+MSG028    DEFM  ' [SAFE] RESET=0: keeping VEDRIVE network configuration'
               DEFB  13,10
               DEFB  '$'
-MSG_ACTGW     DEFM  '  active GW  = $'
-MSG_ACTMASK   DEFM  '  active MASK= $'
-MSG_ACTIP     DEFM  '  active IP  = $'
-MSG_ACTMAC    DEFM  '  active MAC = $'
-MSG_MATCH     DEFM  ' [SAFE] config matches; shared registers untouched'
+MSG029     DEFM  '  active GW  = $'
+MSG030   DEFM  '  active MASK= $'
+MSG031     DEFM  '  active IP  = $'
+MSG032    DEFM  '  active MAC = $'
+MSG033     DEFM  ' [SAFE] config matches, shared registers untouched'
               DEFB  13,10
               DEFB  '$'
-MSG_NETMISMATCH DEFM  ' [SAFE] CONFIG MISMATCH: using active W5100 config (no writes)'
+MSG034 DEFM  ' [SAFE] CONFIG MISMATCH: using active W5100 config (no writes)'
               DEFB  13,10
               DEFB  '$'
-MSG_FRESHNET  DEFM  ' [WARN] RESET=1: programming GW/MASK/MAC/IP'
+MSG035  DEFM  ' [WARN] RESET=1: programming GW/MASK/MAC/IP'
               DEFB  13,10
               DEFB  '$'
-MSG_BADHW     DEFM  'ERROR: W5100 mode or socket 1 buffer layout invalid'
+MSG036     DEFM  'ERROR: W5100 mode or socket 1 buffer layout invalid'
               DEFB  13,10
               DEFB  '$'
-MSG_BRIDGE_BELL DEFM '[BRIDGE] Calling existing 6502 B809 bell...' 
+MSG037 DEFM '[BRIDGE] Calling existing 6502 B809 bell...' 
                DEFB 13,10,'$'
-MSG_BRIDGE_RETURN DEFM '[BRIDGE] Existing 6502 B809 returned'
+MSG038 DEFM '[BRIDGE] Existing 6502 B809 returned'
                DEFB 13,10,'$'
-MSG_BRIDGE_PREW DEFM '[BRIDGE] Entering AUX BDOS F9 write'
+MSG039 DEFM '[BRIDGE] Entering AUX BDOS F9 write'
                DEFB 13,10,'$'
-MSG_BRIDGE_POSTW DEFM '[BRIDGE] AUX BDOS F9 returned'
+MSG040 DEFM '[BRIDGE] AUX BDOS F9 returned'
                DEFB 13,10,'$'
-MSG_SOCK      DEFM  '[04] socket 1 previous status = $'
-MSG_SOCKBUSY  DEFM  ' [W5100] socket 1 busy / TCP OPEN failed'
+MSG041      DEFM  '[04] socket 1 previous status = $'
+MSG042  DEFM  ' [W5100] socket 1 busy / TCP OPEN failed'
               DEFB  13,10
               DEFB  '$'
-MSG_OPENSTATE DEFM  ' [W5100] after OPEN status = $'
-MSG_BADMODE   DEFM  ' [DBG] TCP mode readback failed; OPEN skipped'
+MSG043 DEFM  ' [W5100] after OPEN status = $'
+MSG044   DEFM  ' [DBG] TCP mode readback failed, OPEN skipped'
               DEFB  13,10
               DEFB  '$'
-MSG_DBGNOW    DEFM  ' [DBG] MR right after write = $'
-MSG_DBGPORTMR DEFM  ' [DBG] MR after PORT block = $'
-MSG_DBGDESTMR DEFM  ' [DBG] MR after destination = $'
-MSG_DBGLASTMR DEFM  ' [DBG] MR last re-write = $'
-MSG_DBGMR     DEFM  ' [DBG] Sn_MR = $'
-MSG_DBGPORT   DEFM  ' [DBG] Sn_PORT = $'
-MSG_DBGCR0    DEFM  ' [DBG] Sn_CR before OPEN = $'
-MSG_DBGIR0    DEFM  ' [DBG] Sn_IR before OPEN = $'
-MSG_DBGCR1    DEFM  ' [DBG] Sn_CR immediate = $'
-MSG_DBGCR2    DEFM  ' [DBG] Sn_CR after poll = $'
-MSG_DBGSR1    DEFM  ' [DBG] Sn_SR after poll = $'
-MSG_DBGIR1    DEFM  ' [DBG] Sn_IR after poll = $'
-MSG_DBGFINAL  DEFM  ' [DBG] timeout: Sn_MR = $'
-MSG_BADSOCK   DEFM  'ERROR: socket setup'
+MSG045    DEFM  ' [DBG] MR right after write = $'
+MSG046 DEFM  ' [DBG] MR after PORT block = $'
+MSG047 DEFM  ' [DBG] MR after destination = $'
+MSG048 DEFM  ' [DBG] MR last re-write = $'
+MSG049     DEFM  ' [DBG] Sn_MR = $'
+MSG050   DEFM  ' [DBG] Sn_PORT = $'
+MSG051    DEFM  ' [DBG] Sn_CR before OPEN = $'
+MSG052    DEFM  ' [DBG] Sn_IR before OPEN = $'
+MSG053    DEFM  ' [DBG] Sn_CR immediate = $'
+MSG054    DEFM  ' [DBG] Sn_CR after poll = $'
+MSG055    DEFM  ' [DBG] Sn_SR after poll = $'
+MSG056    DEFM  ' [DBG] Sn_IR after poll = $'
+MSG057  DEFM  ' [DBG] timeout: Sn_MR = $'
+MSG058   DEFM  'ERROR: socket setup'
               DEFB  13,10
               DEFB  '$'
-MSG_CONNECT   DEFM  '[05] CONNECT / wait for ESTABLISHED'
+MSG059   DEFM  '[05] CONNECT / wait for ESTABLISHED'
               DEFB  13,10
               DEFB  '$'
-MSG_WAIT      DEFM  ' [WAIT] socket status = $'
+MSG060      DEFM  ' [WAIT] socket status = $'
 MSG_IR        DEFM  ' [W5100] socket IR = $'
-MSG_TIMEOUT   DEFM  ' [TIMEOUT] SYN not established (check host/port/gateway)'
+MSG061   DEFM  ' [TIMEOUT] SYN not established (check host/port/gateway)'
               DEFB  13,10
               DEFB  '$'
-MSG_CLOSED    DEFM  ' [W5100] CLOSED before ESTABLISHED'
+MSG062    DEFM  ' [W5100] CLOSED before ESTABLISHED'
               DEFB  13,10
               DEFB  '$'
-MSG_CONN_CLEAN DEFM  ' [cleanup] closing socket 1 after failed CONNECT'
+MSG063 DEFM  ' [cleanup] closing socket 1 after failed CONNECT'
               DEFB  13,10
               DEFB  '$'
-MSG_BADCONN   DEFM  'ERROR: failed to connect'
+MSG064   DEFM  'ERROR: failed to connect'
               DEFB  13,10
               DEFB  '$'
-MSG_CMDTIME   DEFM  ' [W5100] socket command never cleared'
+MSG065   DEFM  ' [W5100] socket command never cleared'
               DEFB  13,10
               DEFB  '$'
-MSG_HEART     DEFM  '[POLL] socket status = $'
-MSG_CONNECTED DEFM  '[06] CONNECTED - Ctrl-] to exit'
+MSG066     DEFM  '[POLL] socket status = $'
+MSG067 DEFM  '[06] CONNECTED - Ctrl-] to exit'
               DEFB  13,10
               DEFB  '$'
-MSG_DISCONNECT DEFB  13,10
+MSG068 DEFB  13,10
               DEFM  '[TCP] socket disconnected'
               DEFB  13,10
               DEFB  '$'
-MSG_TXFULL    DEFM  '[TX] free buffer low; send aborted'
+MSG069    DEFM  '[TX] free buffer low, send aborted'
               DEFB  13,10
               DEFB  '$'
-MSG_CLOSE     DEFB  13,10
+MSG070     DEFB  13,10
               DEFM  '[07] closing socket 1'
               DEFB  13,10
               DEFB  '$'
-MSG_EXIT      DEFM  '[08] exit to CCP'
+MSG071      DEFM  '[08] exit to CCP'
               DEFB  13,10
               DEFB  '$'
 K_IP          DEFM  'IP='
               DEFB  0
-K_NETMASK     DEFM  'NETMASK='
+K_N001     DEFM  'NETMASK='
               DEFB  0
 K_MASK        DEFM  'MASK='
               DEFB  0
@@ -1892,71 +1892,71 @@ K_SLOT        DEFM  'SLOT='
               DEFB  0
 K_PORT        DEFM  'PORT='
               DEFB  0
-K_RESET       DEFM  'RESET='
+K_R001       DEFM  'RESET='
               DEFB  0
 
-VERBOSE       DEFB  0
-QUIET_MUTE    DEFB  0
-ARG_STAGE     DEFB  0
+VER001       DEFB  0
+QUI001    DEFB  0
+ARG018     DEFB  0
 ARG_IP        DEFS  4
-ARG_PORTBE    DEFS  2
-ARG_TOKEN     DEFW  0
-ARG_NEXT      DEFW  0
-ARG_BUF       DEFS  121
-CONFIG_FCB    DEFB  0
+ARG019    DEFS  2
+ARG020     DEFW  0
+ARG021      DEFW  0
+ARG022       DEFS  121
+CON006    DEFB  0
               DEFM  'TELNET  CFG'
               DEFS  24
-LOCAL_PORT    DEFB  0C0H,0DEH
-CFG_IPADDR    DEFB  0,0,0,0
-CFG_NETMASK   DEFB  0,0,0,0
-CFG_GATEWAY   DEFB  0,0,0,0
-CFG_REMOTE    DEFB  0,0,0,0
-CFG_MAC       DEFB  002H,05AH,050H,04CH,045H,001H
-CFG_PORTBE    DEFB  0,23
-CFG_SLOTNUM   DEFB  3
-CFG_RESETFLAG DEFB  0
-LINE_LEN      DEFB  0
-POLL_COUNT    DEFW  0
-IP_COUNT      DEFB  0
-MAC_COUNT     DEFB  0
-DIG_COUNT     DEFB  0
+LOC001    DEFB  0C0H,0DEH
+CFG019    DEFB  0,0,0,0
+CFG020   DEFB  0,0,0,0
+CFG021   DEFB  0,0,0,0
+CFG022    DEFB  0,0,0,0
+CFG023       DEFB  002H,05AH,050H,04CH,045H,001H
+CFG024    DEFB  0,23
+CFG025   DEFB  3
+CFG026 DEFB  0
+LIN001      DEFB  0
+POL001    DEFW  0
+IP_003      DEFB  0
+MAC005     DEFB  0
+DIG001     DEFB  0
 DIGIT         DEFB  0
-HW_MODE       DEFB  0
-HW_GATEWAY    DEFS  4
-HW_NETMASK    DEFS  4
+HW_009       DEFB  0
+HW_010    DEFS  4
+HW_011    DEFS  4
 HW_MAC        DEFS  6
-HW_IPADDR     DEFS  4
-RX_ALLOC      DEFB  0
-TX_ALLOC      DEFB  0
-RX_BASEHI     DEFB  0
-RX_MASKHI     DEFB  0
-TX_BASEHI     DEFB  0
-TX_MASKHI     DEFB  0
-RX_CHAR       DEFB  0
-RX_LEFT       DEFB  0
-RX_INDEX      DEFB  0
-RX_CHUNK      DEFB  0
-RX_BUFFER     DEFS  16
-RX_PTRHI      DEFB  0
-RX_PTRLO      DEFB  0
-TX_PTRHI      DEFB  0
-TX_PTRLO      DEFB  0
-TX_CHAR       DEFB  0
-SEND_COUNT    DEFB  0
-SEND_SRCPTR   DEFW  0
-SEND_KEYBUF   DEFB  0,0
-TN_STATE      DEFB  0
-TN_COMMAND    DEFB  0
+HW_012     DEFS  4
+RX_007      DEFB  0
+TX_001      DEFB  0
+RX_008     DEFB  0
+RX_009     DEFB  0
+TX_002     DEFB  0
+TX_003     DEFB  0
+RX_010       DEFB  0
+RX_011       DEFB  0
+RX_012      DEFB  0
+RX_013      DEFB  0
+RX_014     DEFS  16
+RX_015      DEFB  0
+RX_016      DEFB  0
+TX_004      DEFB  0
+TX_005      DEFB  0
+TX_006       DEFB  0
+SEN005    DEFB  0
+SEN006   DEFW  0
+SEN007   DEFB  0,0
+TN_013      DEFB  0
+TN_014    DEFB  0
 TN_BUF        DEFB  0FFH,0,0
-LINE_BUF      DEFS  64
-REC_BUF       DEFS  128
-DBG_MR_NOW    DEFB  0
-DBG_MR_PORT   DEFB  0
-DBG_MR_DEST   DEFB  0
-DBG_MR_LAST   DEFB  0
-DBG_IMMCR     DEFB  0
-DBG_IMMSR     DEFB  0
-DBG_IMMIR     DEFB  0
+LIN002      DEFS  64
+REC001       DEFS  128
+DBG006    DEFB  0
+DBG007   DEFB  0
+DBG008   DEFB  0
+DBG009   DEFB  0
+DBG010     DEFB  0
+DBG011     DEFB  0
+DBG012     DEFB  0
 STACK         DEFS  256
 STACKTOP
               END
