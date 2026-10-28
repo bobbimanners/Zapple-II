@@ -3,8 +3,8 @@
 ; Configuration is TELNET.CFG on the current drive/user.
 ; NOTE: RESET=1 RESETS THE ENTIRE W5100, INCLUDING VEDRIVE CONNECTIONS.
 ; With RESET=0, attach to existing chip configuration without altering it.
-; Compatible with VEDRIVE only if socket 1 is unused; check for mismatches.
-; Socket 1, dynamic TX/RX bases and sizes from W5100 allocation registers.
+; VEDRIVE uses UDP socket 3 here; CLOSED socket 0 is eligible.
+; Dynamic W5100 socket selection and per-socket TX/RX ring layout.
 ; Full trace before/after every important hardware phase.
 ;
 ; Z80 SoftCard mapping: Apple II $C0n0-$C0nF => Z80 $E0n0-$E0nF.
@@ -22,7 +22,7 @@ S1T001       EQU   0520H
 S1TXWR        EQU   0524H
 S1R001       EQU   0526H
 S1RXRD        EQU   0528H
-; TX/RX socket 1 buffer addresses are determined at run time.
+; TX/RX selected socket buffer addresses are determined at run time.
 
               ORG   0100H
 START         LD    SP,STACKTOP
@@ -47,6 +47,8 @@ START         LD    SP,STACKTOP
               CALL  PRINT
               CALL  HW_001
               JP    C,FAT003
+              CALL  SOCK_PICK
+              JP    C,FAT004
               CALL  SOC001
               JP    C,FAT004
               LD    DE,MSG059
@@ -68,7 +70,7 @@ FAT005    LD    DE,MSG064
               CALL  PRINT
               LD    DE,MSG063
               CALL  PRINT
-              LD    A,010H                 ; we own socket 1 after successful OPEN
+              LD    A,010H                 ; close our selected socket after OPEN
               CALL  COM002              ; close failed connection before leaving
               JP    EXIT
 ERR001    CALL  PRINT
@@ -800,9 +802,24 @@ DAT002       PUSH  HL
               LD    (HL),A
               POP   HL
               RET
+; Map socket-1 register references ($0500-$052F) to selected socket.
+; Leave all global registers and TX/RX RAM addresses unchanged.
+; Input A=high byte, L=low byte; output A=translated high byte.
+MAPREG        CP    005H
+              RET   NZ
+              PUSH  AF
+              LD    A,L
+              CP    030H
+              JP    NC,MAPNO
+              POP   AF
+              LD    A,(SOCK_HI)
+              RET
+MAPNO         POP   AF
+              RET
 ; Set W5100 16-bit internal pointer HL high then low, preserve HL.
 WSEL          PUSH  AF
               LD    A,H
+              CALL  MAPREG
               CALL  ADD003
               LD    A,L
               CALL  ADD004
@@ -839,6 +856,7 @@ WWRITE        PUSH  AF
               PUSH  DE
               PUSH  HL
               LD    A,H
+              CALL  MAPREG
               LD    (W5P001),A
               LD    A,L
               LD    (W5P001+1),A
@@ -942,6 +960,8 @@ HW_005     LD    HL,001AH
               LD    (RX_007),A
               LD    (TX_001),A
 HW_CHECK_BUFFERS
+              JP    HBDONE
+HBCALC
               LD    A,(TX_001)
               CALL  WBU004
               JP    C,HW_007
@@ -970,7 +990,10 @@ HW_CHECK_BUFFERS
               LD    A,(RX_009)
               CALL  HEX
               CALL  NEW001
-; Print socket states before touching socket 1, so VEDRIVE ownership is
+              OR    A
+              RET
+HBDONE
+; Print socket states before touching a socket, so VEDRIVE ownership is
 ; evident on a real Apple //e.  SR codes 00=CLOSED, 22=UDP, 17=TCP.
               LD    DE,MSG027
               CALL  PRINT
@@ -1097,36 +1120,50 @@ HW_008      SCF
 
 ; Derive socket-1 buffer base (high address byte) and mask (high byte)
 ; from one W5100 allocation register (RX or TX).  Each socket's two-bit
-; field encodes 1, 2, 4 or 8 KB; socket 1 starts after socket 0.
+; field encodes 1, 2, 4 or 8 KB; selected socket starts after socket 0.
 ; B = size of socket 0 in 256-byte pages (4,8,16,32),
-; C = (size of socket 1 in pages)-1 (3,7,15,31).
-; Reject only arrangements that put socket 1 past the 8KB RX/TX space.
-WBU001     PUSH  AF
+; C = (size of selected socket in pages)-1 (3,7,15,31).
+; Reject only arrangements that put selected socket past the 8KB RX/TX space.
+WBU001     LD    (BU_REG),A
+              LD    A,(SOCK_NO)
+              LD    (BU_IDX),A
+              XOR   A
+              LD    (BU_OFF),A
+              LD    A,(BU_REG)
+              LD    (BU_TMP),A
+BU_LOOP       LD    A,(BU_TMP)
               AND   003H
               LD    L,A
               LD    H,0
               LD    DE,WBU003
               ADD   HL,DE
-              LD    B,(HL)
-              POP   AF
-              RRCA
-              RRCA
-              AND   003H
-              LD    L,A
-              LD    H,0
-              LD    DE,WBU003
-              ADD   HL,DE
-              LD    C,(HL)
-              LD    A,B
+              LD    A,(HL)            ; pages for current socket
+              LD    C,A
+              LD    A,(BU_IDX)
+              OR    A
+              JP    Z,BU_DONE
+              DEC   A
+              LD    (BU_IDX),A
+              LD    A,(BU_OFF)
               ADD   A,C
-              CP    021H                 ; 32 pages = 8KB, inclusive
+              LD    (BU_OFF),A
+              LD    A,(BU_TMP)
+              RRCA
+              RRCA
+              LD    (BU_TMP),A
+              JP    BU_LOOP
+BU_DONE       LD    A,(BU_OFF)
+              ADD   A,C
+              CP    021H             ; must fit in 8KB (32 pages)
               JP    NC,WBU002
-              DEC   C                     ; bit mask for ring address high
-              OR    A                     ; carry clear
+              LD    A,(BU_OFF)
+              LD    B,A
+              DEC   C                ; high-byte ring mask
+              OR    A
               RET
-WBU002  SCF
+WBU002        SCF
               RET
-WBU003    DEFB  004H,008H,010H,020H
+WBU003        DEFB  004H,008H,010H,020H
 
 WBU004       CALL  WBU001
               RET   C
@@ -1147,7 +1184,41 @@ WBU005       CALL  WBU001
               OR    A
               RET
 
-; -------- SOCKET 1: TCP --------------------------------------------------
+; Pick a CLOSED socket (preferred order 1,2,3,0).
+; Never alter any socket that is not CLOSED. With VEDRIVE, RESET=0.
+SOCK_PICK     LD    A,1
+SP_LOOP       LD    (SOCK_NO),A
+              ADD   A,4
+              LD    (SOCK_HI),A
+              LD    H,A
+              LD    L,3
+              CALL  WREAD
+              OR    A
+              JP    NZ,SP_NEXT
+SP_FOUND      CALL  HBCALC
+              JP    C,SP_NEXT
+              LD    DE,MSG_PICK
+              CALL  PRINT
+              LD    A,(SOCK_NO)
+              CALL  HEX
+              CALL  NEW001
+              ; Make local TCP port unique across concurrent clients.
+              LD    A,(SOCK_NO)
+              ADD   A,0DEH
+              LD    (LOC001+1),A
+              OR    A
+              RET
+SP_NEXT       LD    A,(SOCK_NO)
+              INC   A
+              AND   003H
+              CP    1
+              JP    NZ,SP_LOOP
+              LD    DE,MSG_NOSOCK
+              CALL  PRINT
+              SCF
+              RET
+
+; -------- SELECTED SOCKET: TCP --------------------------------------------------
 SOC001    LD    DE,MSG041
               CALL  PRINT
               LD    HL,S1SR
@@ -1458,7 +1529,7 @@ RX_004  ; Each byte recomputes its W5100 ring address and WREAD
               AND   H
               LD    H,A
               LD    A,(RX_008)
-              OR    H
+              ADD   A,H
               LD    H,A
               LD    A,(RX_016)
               LD    L,A
@@ -1546,7 +1617,7 @@ SEN003     LD    DE,(SEN006)
               AND   H
               LD    H,A
               LD    A,(TX_002)
-              OR    H
+              ADD   A,H
               LD    H,A
               LD    A,(TX_005)
               LD    L,A
@@ -1732,12 +1803,21 @@ MAI004      LD    C,11                    ; cooperative scheduler+keyboard statu
 CLO001    LD    DE,MSG070
               CALL  PRINT
               LD    A,010H
-              CALL  COM002               ; CLOSE socket 1 only
+              CALL  COM002               ; CLOSE selected socket only
               JP    EXIT
 
 ; --- Data and ASCII diagnostics ------------------------------------------
+MSG_PICK      DEFM  '[NET] selected socket = $'
+MSG_NOSOCK    DEFM  '[NET] no free CLOSED socket'
+              DEFB  13,10,'$'
+SOCK_NO       DEFB  1
+SOCK_HI       DEFB  5
+BU_REG        DEFB  0
+BU_IDX        DEFB  0
+BU_OFF        DEFB  0
+BU_TMP        DEFB  0
 MSG001    DEFB  13,10
-              DEFM  'Zapple-II TELNET/W5100 v1.9'
+              DEFM  'Zapple-II TELNET/W5100 v2.0'
               DEFB  13,10
               DEFB  '$'
 MSG002    DEFB  13,10
@@ -1771,11 +1851,11 @@ MSG016 DEFM  '[WARN] RESET=1: resetting ALL W5100 sockets!'
 MSG017    DEFM  ' [W5100] mode readback = $'
 MSG018   DEFM  ' [W5100] RMSR = $'
 MSG019   DEFM  ' [W5100] TMSR = $'
-MSG020    DEFM  ' [W5100] socket 1 TX/RX allocation invalid (over 8KB)'
+MSG020    DEFM  ' [W5100] selected socket TX/RX allocation invalid (over 8KB)'
               DEFB  13,10
               DEFB  '$'
-MSG021     DEFM  ' [W5100] socket 1 TX base = $'
-MSG022     DEFM  ' [W5100] socket 1 RX base = $'
+MSG021     DEFM  ' [W5100] selected socket TX base = $'
+MSG022     DEFM  ' [W5100] selected socket RX base = $'
 MSG023  DEFM  ' mask high = $'
 MSG024  DEFM  ' [SAFE] mode bit 0 (IND) is OFF, cannot access W5100 safely'
               DEFB  13,10
@@ -1803,7 +1883,7 @@ MSG034 DEFM  ' [SAFE] CONFIG MISMATCH: using active W5100 config (no writes)'
 MSG035  DEFM  ' [WARN] RESET=1: programming GW/MASK/MAC/IP'
               DEFB  13,10
               DEFB  '$'
-MSG036     DEFM  'ERROR: W5100 mode or socket 1 buffer layout invalid'
+MSG036     DEFM  'ERROR: W5100 mode or selected socket buffer layout invalid'
               DEFB  13,10
               DEFB  '$'
 MSG037 DEFM '[BRIDGE] Calling existing 6502 B809 bell...' 
@@ -1814,8 +1894,8 @@ MSG039 DEFM '[BRIDGE] Entering AUX BDOS F9 write'
                DEFB 13,10,'$'
 MSG040 DEFM '[BRIDGE] AUX BDOS F9 returned'
                DEFB 13,10,'$'
-MSG041      DEFM  '[04] socket 1 previous status = $'
-MSG042  DEFM  ' [W5100] socket 1 busy / TCP OPEN failed'
+MSG041      DEFM  '[04] selected socket previous status = $'
+MSG042  DEFM  ' [W5100] selected socket busy / TCP OPEN failed'
               DEFB  13,10
               DEFB  '$'
 MSG043 DEFM  ' [W5100] after OPEN status = $'
@@ -1849,7 +1929,7 @@ MSG061   DEFM  ' [TIMEOUT] SYN not established (check host/port/gateway)'
 MSG062    DEFM  ' [W5100] CLOSED before ESTABLISHED'
               DEFB  13,10
               DEFB  '$'
-MSG063 DEFM  ' [cleanup] closing socket 1 after failed CONNECT'
+MSG063 DEFM  ' [cleanup] closing selected socket after failed CONNECT'
               DEFB  13,10
               DEFB  '$'
 MSG064   DEFM  'ERROR: failed to connect'
@@ -1870,7 +1950,7 @@ MSG069    DEFM  '[TX] free buffer low, send aborted'
               DEFB  13,10
               DEFB  '$'
 MSG070     DEFB  13,10
-              DEFM  '[07] closing socket 1'
+              DEFM  '[07] closing selected socket'
               DEFB  13,10
               DEFB  '$'
 MSG071      DEFM  '[08] exit to CCP'
