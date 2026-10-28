@@ -10330,10 +10330,16 @@ NETNEXT       INC       B
 NETFREE       LD        A,D
               CP        4
               JR        NC,NETBAD
+              LD        C,A                            ; preserve socket number
               CALL      NETPTR
               LD        A,(TABMODE)
               CP        (HL)
               JR        NZ,NETBAD
+              PUSH      HL                             ; ownership entry
+              LD        A,C
+              CALL      NETCLOSE                       ; CLOSE and verify SOCK_CLOSED
+              POP       HL
+              JR        C,NETBAD                       ; retain ownership on failure
               LD        (HL),0FFH
               XOR       A
               JR        NETRET
@@ -10362,28 +10368,64 @@ NETPTR        LD        E,A
               ADD       HL,DE
               RET
 ; B=owner task. Only close sockets allocated through this API.
+; Close a specific physical socket, verifying it reaches CLOSED.
+; A=socket 0..3. Carry clear if closed, set if timeout.
+; Preserves BC, DE, HL. W5100 CR=01, SR=03, socket base=0400+0100*n.
+; Never touches external sockets: caller must check ownership first.
+NETCLOSE      PUSH      BC
+              PUSH      DE
+              PUSH      HL
+              LD        E,A                            ; socket number
+              ADD       A,4
+              LD        D,A                            ; address high
+              LD        (AREG),A
+              LD        A,1
+              LD        (XREG),A                        ; socket command register
+              LD        A,010H
+              LD        (YREG),A                        ; CLOSE command
+              LD        HL,0B827H                       ; 6502 W5WRITE
+              LD        (ADDR),HL
+              LD        A,1
+              LD        (CMD),A
+              LD        (SOFTCARD),A
+              LD        B,128                          ; bounded confirmation polling
+NCLPOLL       LD        A,D
+              LD        (AREG),A
+              LD        A,3
+              LD        (XREG),A                        ; Sn_SR
+              LD        HL,0B824H                       ; 6502 W5READ
+              LD        (ADDR),HL
+              LD        A,1
+              LD        (CMD),A
+              LD        (SOFTCARD),A
+              LD        A,(AREG)
+              OR        A
+              JR        Z,NCLOK
+              DJNZ      NCLPOLL
+              SCF                                      ; still not CLOSED
+              JR        NCLDONE
+NCLOK         OR        A                              ; clear carry
+NCLDONE       POP       HL
+              POP       DE
+              POP       BC
+              RET
+
+; B=owner task. Close only sockets owned by that task.
+; Keep ownership if hardware closure cannot be confirmed.
 NETCLN        LD        C,0
 NETCLP        LD        A,C
               CALL      NETPTR
               LD        A,(HL)
               CP        B
               JR        NZ,NETCLNEXT
-              LD        (HL),0FFH
-              ; Hardware CLOSE command (10h) to socket register CR (01h).
               PUSH      BC
+              PUSH      HL
               LD        A,C
-              ADD       A,4
-              LD        (AREG),A
-              LD        A,1
-              LD        (XREG),A
-              LD        A,010H
-              LD        (YREG),A
-              LD        HL,0B827H
-              LD        (ADDR),HL
-              LD        A,1
-              LD        (CMD),A
-              LD        (SOFTCARD),A
+              CALL      NETCLOSE
+              POP       HL
               POP       BC
+              JR        C,NETCLNEXT
+              LD        (HL),0FFH
 NETCLNEXT     INC       C
               LD        A,C
               CP        4
