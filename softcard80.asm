@@ -720,7 +720,9 @@ SMLOOP        LD        A,(TABREQ)
               JR        Z,SMLOOP                       ; input not ready; don't enter VGET
               CALL      CUOFF
               CALL      SCHWAKE                        ; input can complete: make task runnable
-SMRUN         CALL      CUOFF                          ; restore cell before foreground runs
+SMRUN         NOP                                      ; cursor stays on
+              NOP
+              NOP
               LD        A,SCHFGQ
               LD        (SCHQLEFT),A                   ; foreground receives longer quantum
               CALL      TABRESUM                       ; foreground until next yield/exit
@@ -4735,14 +4737,143 @@ S8COUNT       DEFB      0
 S8EXT         DEFW      0
 S8TABLE       DEFS      336
 
+; ========================================================================
+; Stage 31: Z80 direct-character fast path (October 27 baseline).
+; The Z80 can access Apple II text memory at $F400..$F7FF directly.
+; The 6502 driver still handles controls, escapes, scrolling, inverse
+; video, output for background sessions, and row-end wrapping.
+;
+; This must run in MAIN memory.  Temporarily select physical RamWorks bank
+; zero for even-column AUX text, then restore this session's physical bank.
+; No 6502 call is made on an eligible printable character.
+;
+; For A/B testing, set ZVON to 0 and rebuild (no fast writes); or 1
+; to enable.  Do not alter the 6502 software-cursor/terminal-state ABI.
+; ========================================================================
+              ORG       06E00H
+ZVOUTPUT      PUSH      AF                             ; original char for fallback
+              PUSH      HL                             ; $B803 or $B80F 6502 vector
+              CALL      ZVTRY
+              JR        C,ZVDONE
+              POP       HL                             ; preserve old 6502 behaviour
+              POP       AF
+              LD        (AREG),A
+              LD        (ADDR),HL
+              LD        A,1
+              LD        (CMD),A
+              LD        (SOFTCARD),A
+              RET
+ZVDONE        POP       HL
+              POP       AF
+              RET
+
+; Input: A=character, HL=output vector. Output: carry set if handled.
+; BC,DE,HL preserved. No bank or 80STORE softswitch left changed.
+ZVTRY         PUSH      BC
+              PUSH      DE
+              PUSH      HL
+              LD        B,A
+              LD        A,(ZVON)
+              OR        A
+              JP        Z,ZVNO
+              LD        A,(IOBYTE)
+              AND       3
+              CP        1                              ; CRT only
+              JP        NZ,ZVNO
+              CALL      SCHISFG                        ; physical screen owner only
+              JP        NZ,ZVNO
+              LD        A,(VSOK)
+              OR        A
+              JP        Z,ZVNO
+              LD        A,B
+              AND       07FH
+              CP        020H                           ; printable ASCII, not controls
+              JP        C,ZVNO
+              CP        07FH
+              JP        NC,ZVNO
+              LD        B,A                            ; seven-bit glyph
+              LD        HL,(VSPTR)                     ; shared 6502 VCOL/VROW state
+              LD        A,(HL)
+              CP        79                             ; leave col 79 wrap to 6502
+              JP        NC,ZVNO
+              LD        C,A                            ; 0..78, physical column
+              INC       HL
+              LD        A,(HL)
+              CP        24                             ; valid physical screen row
+              JP        NC,ZVNO
+              LD        E,A
+              INC       HL                             ; VTCNT
+              INC       HL                             ; VUNDER
+              INC       HL                             ; VMODE
+              INC       HL                             ; VSTATE (6502 escape parser)
+              LD        A,(HL)
+              OR        A
+              JP        NZ,ZVNO
+              INC       HL                             ; VCOORD
+              INC       HL                             ; VCRP
+              INC       HL                             ; VATTR
+              LD        A,(HL)
+              OR        A                              ; defer inverse to 6502
+              JP        NZ,ZVNO
+
+; Build physical 40-byte column address using the existing interleaved
+; Apple II text-row table used by the software cursor and MouseText.
+              LD        A,E
+              ADD       A,A
+              LD        E,A
+              LD        D,0
+              LD        HL,CUROWTAB
+              ADD       HL,DE
+              LD        E,(HL)
+              INC       HL
+              LD        D,(HL)
+              LD        A,C
+              SRL       A                              ; column / 2
+              LD        L,A
+              LD        H,0
+              ADD       HL,DE                          ; HL=$F400..$F7FF
+
+; Direct Z80 softswitch operations (same mapping as working CUMAP).
+; Writing $C001 enables 80STORE; reading $C001 does NOT. With 80STORE on,
+; PAGE1 ($C054) selects MAIN text and PAGE2 ($C055) AUX text. Reading
+; either page switch selects that half. Odd columns are MAIN, even AUX.
+; $C073 selects physical RamWorks bank 0; restore the session bank below.
+              XOR       A
+              LD        (0E073H),A                     ; bank 0, without 6502 handoff
+              LD        (VS80ON),A                     ; WRITE $C001: 80STORE ON
+              LD        A,C
+              AND       1
+              JR        Z,ZVEVEN
+              LD        A,(VSPAGE1)                    ; odd column = MAIN
+              JR        ZVSTORE                       ; skip AUX selection for odd column
+ZVEVEN        LD        A,(VSPAGE2)                    ; even column = AUX
+ZVSTORE       LD        A,B
+              OR        080H                           ; normal ALTCHARSET glyph
+              LD        (HL),A
+              CALL      VSPREP                         ; 80STORE OFF, MAIN access, PAGE1
+              LD        A,(TABMODE)
+              CALL      TABPHYS
+              LD        (0E073H),A                     ; restore selected CP/M AUX bank
+              LD        HL,(VSPTR)
+              INC       (HL)                           ; 6502 VCOL += 1
+              LD        DE,7
+              ADD       HL,DE                          ; 6502 VCRP (offset +7)
+              LD        (HL),0                          ; VPUT clears pending CRLF
+              SCF
+              JR        ZVRETURN
+ZVNO          OR        A                              ; clear carry -> old renderer
+ZVRETURN      POP       HL
+              POP       DE
+              POP       BC
+              RET
+ZVON          DEFB      0                              ; disable direct Z80 text writes
+
               ORG       07000H
 
 AXBDOS        CALL      XSPRE                          ; skip physical keyboard wait if XSUB
               RET       C
               LD        A,C
               LD        (AXBADFN),A                    ; diagnostic: remember original BDOS C
-              CP        0F9H                           ; private W5100 bridge: DE=AUX [hi,lo,data]
-              JP        Z,AXW5WRITE                     ; use MAIN AXGATE before switching to 6502
               CP        0F7H                           ; AUX CCP: chain/load next .COM via MAIN supervisor
               JP        NC,AXF7F8                     ; F7 launch or F8 native CCP builtin
               CP        0F0H                           ; private TERM: 0 VT100 / 1 Soroc / 2 H19
@@ -4838,30 +4969,6 @@ AXERRMODE     XOR       A
               LD        L,A
               RET
 ; Unsupported calls must not pass AUX pointers to the MAIN BDOS.
-; Private AUX BDOS $F9: socket-one W5100 register write via native 6502.
-; On entry DE points to 3 AUX bytes: address high, address low, data.
-; The AUX->MAIN copy is performed before the SoftCard CPU handoff.
-; The calling AUX stack is parked by AXGATE, so the 6502 can return safely.
-; Returns A=L=0. No reset or access to socket 0 is performed by service.
-AXW5WRITE     EX        DE,HL                         ; HL = AUX parameter pointer
-              LD        DE,AXW5BUF                     ; MAIN staging in $78xx
-              LD        BC,3
-              CALL      LCA2M                          ; existing AUX->MAIN copier
-              LD        A,(AXW5BUF)
-              LD        (AREG),A                        ; W5100 address high
-              LD        A,(AXW5BUF+1)
-              LD        (XREG),A                        ; W5100 address low
-              LD        A,(AXW5BUF+2)
-              LD        (YREG),A                        ; value
-              LD        HL,0B827H                       ; new native W5WRITE vector
-              LD        (ADDR),HL
-              LD        A,1
-              LD        (CMD),A
-              LD        (SOFTCARD),A                    ; MAIN-safe existing handoff
-              XOR       A
-              LD        L,A
-              RET
-
 AXBAD         LD        A,2
               LD        (LCQUIT),A
               LD        A,0FFH
@@ -5616,7 +5723,6 @@ AXLIP         DEFW      0
 AXLBUF        DEFS      260
 AXLRESUME     DEFB      0                              ; set only on AXRETRY BDOS 10
 AXBADFN       DEFB      0                              ; last AUX BDOS function for diagnostics
-AXW5BUF       DEFS      3                              ; private MAIN staging for AUX W5100 writes
 BDOSFN        DEFB      0                              ; last MAIN BDOS function for diagnostics
 
  ; MAIN-to-AUX-LC resident transition helper, entirely in ordinary MAIN RAM.
@@ -6770,15 +6876,10 @@ VTNOGATE      POP       HL
 ; Only remap AUX on the uncommon path where a cursor was active.
 C_SENDA       PUSH      AF                             ; A is the character being sent
               PUSH      HL                             ; HL is the 6502 output vector
-              CALL      CSOUTPRE                       ; compact: same size as Stage 28.6
+              CALL      CSOUTPRE                       ; hide cursor, honour ^S/^Q
               POP       HL
               POP       AF
-              LD        (AREG),A
-              LD        (ADDR),HL
-              LD        A,1
-              LD        (CMD),A
-              LD        (SOFTCARD),A
-              RET
+              JP        ZVOUTPUT                       ; fast text or original 6502 fallback
 
 ; Read Apple II $C000 keyboard latch from SoftCard Z80 $E000.
 ; Reading $C010 ($E010 to Z80) clears the keyboard strobe.
