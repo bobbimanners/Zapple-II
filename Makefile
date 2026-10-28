@@ -18,6 +18,7 @@ SRC65       ?= softcard65.asm
 SRC80       ?= softcard80.asm
 RAW65       := softcard65
 RAW80       := softcard80.bin
+CFGFILE     := zapple2.cnf
 PRODOS65    := SOFTCARD65\#ff2000
 PRODOS80    := SOFTCARD80.BIN\#041000
 
@@ -96,9 +97,10 @@ $(DISK_IMAGE): $(PRODOS65) $(PRODOS80) $(CPM_CCP) $(CPM_TELNET)
 	echo 'Creating $@ with Cadius...'
 	$(CADIUS) createvolume "$@" "$(DISK_VOLUME)" 4096KB
 	$(CADIUS) addfile "$@" "/$(DISK_VOLUME)" prodos.242/PRODOS*
-	$(CADIUS) addfile "$@" "/$(DISK_VOLUME)" prodos.242/BASIC*
 	$(CADIUS) addfile "$@" "/$(DISK_VOLUME)" "$(PRODOS65)"
+	$(CADIUS) addfile "$@" "/$(DISK_VOLUME)" prodos.242/BASIC*
 	$(CADIUS) addfile "$@" "/$(DISK_VOLUME)" "$(PRODOS80)"
+	$(CADIUS) addfile "$@" "/$(DISK_VOLUME)" "$(CFGFILE)"
 	$(CADIUS) createfolder "$@" "/$(DISK_VOLUME)/A"
 	$(CADIUS) createfolder "$@" "/$(DISK_VOLUME)/B"
 	$(CADIUS) createfolder "$@" "/$(DISK_VOLUME)/C"

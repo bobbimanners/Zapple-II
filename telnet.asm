@@ -1,7 +1,7 @@
 ; TELNET.COM v1.7 - Zapple-II / CP/M 2.2 / Uthernet II W5100
 ; Udo Munk Z80ASM dialect.  Standalone: NO resident kernel changes.
-; Configuration is TELNET.CFG on the current drive/user.
-; NOTE: RESET=1 RESETS THE ENTIRE W5100, INCLUDING VEDRIVE CONNECTIONS.
+; Phase 2C: no TELNET.CFG. Kernel initializes network via ZAPPLE2.CNF.
+; Client NEVER resets or reconfigures the W5100.
 ; With RESET=0, attach to existing chip configuration without altering it.
 ; VEDRIVE uses UDP socket 3 here; CLOSED socket 0 is eligible.
 ; Dynamic W5100 socket selection and per-socket TX/RX ring layout.
@@ -30,22 +30,20 @@ START         LD    SP,STACKTOP
               CALL  PRINT
               CALL  ARG001
               JP    C,FAT001
-              CALL  CON001
-              JP    C,FAT002
-              CALL  ARG015
-              CALL  PRI003
-              CALL  VAL001
-              JP    C,FAT002
-              LD    A,(CFG025)
-              CP    5
-              JP    NZ,FAT002
-              LD    A,(CFG026)
+              ; Phase 2C: network hardware initialized by kernel at boot.
+              ; Server IP is required on command line; optional TCP port.
+              LD    A,(ARG018)
               OR    A
-              JP    NZ,FAT002
+              JP    Z,FAT001
+              CALL  ARG015
+              LD    A,5                      ; kernel W5100 bridge uses slot 5
+              LD    (CFG025),A
+              XOR   A
+              LD    (CFG026),A               ; never RESET from TELNET
               CALL  SET001
               LD    DE,MSG_HW
               CALL  PRINT
-              CALL  HW_001
+              CALL  HW_001                  ; probe existing card read-only
               JP    C,FAT003
               CALL  SOCK_PICK
               JP    C,FAT004
@@ -289,7 +287,7 @@ ARG017    LD    A,(HL)
               JP    NZ,ARG017
               RET
 
-; -------- CONFIG FILE ----------------------------------------------------
+; -------- LEGACY CONFIG PARSER (UNUSED IN PHASE 2C) ---------------------
 ; File is read as sequential CP/M 128-byte records (up to EOF), line-by-line.
 ; No comments on key=value lines; '#' or ';' at line beginning = comment.
 CON001   LD    DE,MSG003
@@ -888,20 +886,7 @@ WBLOCK        LD    A,(DE)
               DJNZ  WBLOCK
               RET
 
-HW_001       LD    A,(CFG026)
-              OR    A
-              JP    Z,HW_002
-              LD    DE,MSG016
-              CALL  PRINT
-              LD    A,080H
-              CALL  MOD002
-HW_002   LD    A,(CFG026)
-              OR    A
-              JP    Z,HW_003
-; Fresh reset only: program our preferred mode.  With VEDRIVE active,
-; use the pre-existing mode without writing even a single byte to MR.
-              LD    A,003H
-              CALL  MOD002
+HW_001       ; Phase 2C: attach only; never reset or change W5100 mode.
 HW_003 CALL  MOD001
               LD    (HW_009),A
 ; Always print *actual* mode, even for a failed probe (v0.3 omitted it).
@@ -1052,34 +1037,9 @@ HBDONE
               CALL  PRINT
               LD    HL,HW_MAC
               CALL  PRINT_MAC_BYTES
-              LD    HL,HW_010
-              LD    DE,CFG021
-              LD    B,4
-              CALL  COM001
-              JP    C,HW_NET_MISMATCH
-              LD    HL,HW_011
-              LD    DE,CFG020
-              LD    B,4
-              CALL  COM001
-              JP    C,HW_NET_MISMATCH
-              LD    HL,HW_012
-              LD    DE,CFG019
-              LD    B,4
-              CALL  COM001
-              JP    C,HW_NET_MISMATCH
-              LD    HL,HW_MAC
-              LD    DE,CFG023
-              LD    B,6
-              CALL  COM001
-              JP    C,HW_NET_MISMATCH
-              LD    DE,MSG033
-              CALL  PRINT
+              ; Kernel owns network configuration. Hardware values above
+              ; are informative only; no duplicate TELNET.CFG comparisons.
               OR    A
-              RET
-HW_NET_MISMATCH
-              LD    DE,MSG034
-              CALL  PRINT
-              OR    A                     ; warning only: use live chip config
               RET
 ; Fresh setup is ONLY legal with RESET=1.  RESET tears down VEDRIVE.
 HW_006  LD    DE,MSG035
@@ -1817,11 +1777,11 @@ BU_IDX        DEFB  0
 BU_OFF        DEFB  0
 BU_TMP        DEFB  0
 MSG001    DEFB  13,10
-              DEFM  'Zapple-II TELNET/W5100 v2.0'
+              DEFM  'Zapple-II TELNET/W5100 v2.1 (Phase 2C)'
               DEFB  13,10
               DEFB  '$'
 MSG002    DEFB  13,10
-              DEFM  'Usage: TELNET [a.b.c.d [port]] [-v]'
+              DEFM  'Usage: TELNET a.b.c.d [port] [-v]'
               DEFB  13,10,'$'
 MSG003   DEFM  '[01] opening TELNET.CFG'
               DEFB  13,10
@@ -1837,12 +1797,12 @@ MSG009   DEFM  ' gateway  = $'
 MSG010    DEFM  ' remote IP= $'
 MSG011      DEFM  ' remote port HEX = $'
 MSG012     DEFM  ' reset W5100 = $'
-MSG013    DEFM  'ERROR: TELNET.CFG missing or IP/MASK/HOST invalid'
+MSG013    DEFM  'ERROR: specify server IP on command line'
               DEFB  13,10
               DEFB  '$'
 MSG014   DEFM  '[CFG] unknown key: $'
 MSG015   DEFM  '[CFG] INVALID value: $'
-MSG_HW        DEFM  '[03] probing W5100 / attach or reset mode'
+MSG_HW        DEFM  '[03] attaching to kernel-configured W5100'
               DEFB  13,10
               DEFB  '$'
 MSG016 DEFM  '[WARN] RESET=1: resetting ALL W5100 sockets!'
@@ -1867,7 +1827,7 @@ MSG026     DEFM  ' [W5100] auto-increment ON, using block transfers'
               DEFB  13,10
               DEFB  '$'
 MSG027   DEFM  ' [W5100] sockets 0/1/2/3 status = $'
-MSG028    DEFM  ' [SAFE] RESET=0: keeping VEDRIVE network configuration'
+MSG028    DEFM  ' [SAFE] preserving kernel network config / VEDRIVE'
               DEFB  13,10
               DEFB  '$'
 MSG029     DEFM  '  active GW  = $'

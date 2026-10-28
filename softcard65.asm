@@ -59,6 +59,7 @@ STADDR        EQU       $B800                          ; Code will be relocated 
               BNE       :LDRL1                         ; Nope. Loop
 
               JSR       RWAUTODETECT                   ; One-time test; loader code is disposable
+              JSR       NCFGLOAD                       ; read system config in ProDOS boot environment
               JMP       STADDR                         ; Jump to reloc'd code
 
 * Probe up to 128 distinct RamWorks banks using physical AUX $07FE.
@@ -117,6 +118,444 @@ RWAUTODETECT
               RTS
 RWTESTX       DB        0
 RWORIGINAL    DS        128
+
+* Phase 2B: initialize network from optional ProDOS configuration.
+* CONFIGURATION SAFETY:
+*   RESET=0 : NO W5100 writes, preserving VEDRIVE and open TCP sockets.
+*   RESET=1 : reset entire chip, configure IP/NM/GW/MAC, default 2K sockets.
+*   SLOT must equal 5 (this kernel's W5100 6502 bridge is fixed to slot 5).
+* Invalid, absent or incomplete configuration leaves hardware untouched.
+* IMPORTANT: RESET=1 destroys ALL existing VEDRIVE/TCP sessions.
+* Loader and parser run before relocated 6502 driver and Z80 startup.
+NCFGLOAD      LDA       #0
+              STA       NCFOK
+              STA       NCFRST
+              STA       NCFENA
+              STA       NCFSEEN
+              STA       NCFSLOT
+              JSR       $BF00
+              DB        $C8                         ; OPEN
+              DW        NCFOP
+              BCS       NCFDONE
+              LDA       NCFREF
+              STA       NCFRN
+              STA       NCFCLREF
+              JSR       $BF00
+              DB        $CA                         ; READ
+              DW        NCFRD
+              PHP
+              JSR       $BF00
+              DB        $CC                         ; CLOSE
+              DW        NCFCL
+              PLP
+              BCS       NCFDONE
+              JSR       NCFPARSE
+              LDA       NCFENA
+              BEQ       NCFDONE
+              LDA       NCFRST
+              BEQ       NCFDONE                 ; RESET=0 means no chip writes
+              LDA       NCFSLOT
+              CMP       #5
+              BNE       NCFDONE
+              LDA       NCFSEEN
+              CMP       #$1F                     ; all required keys seen
+              BNE       NCFDONE
+              LDA       NCFOK
+              BNE       NCFDONE                 ; nonzero = invalid setting
+              JSR       NCFAPPLY
+NCFDONE       RTS
+NCFPATH       STR       "/ZAPPLE2/ZAPPLE2.CNF"
+NCFOP         DB        3
+              DW        NCFPATH
+              DW        IOBUF
+NCFREF        DB        0
+NCFRD         DB        4
+NCFRN         DB        0
+              DW        $0C00
+              DW        $0200
+NCFCOUNT      DW        0
+NCFCL         DB        1
+NCFCLREF      DB        0
+NCFENA        DB        0
+NCFRST        DB        0
+NCFSLOT       DB        0
+NCFSEEN       DB        0
+NCFOK         DB        0
+NCFIDX        DW        0
+NCFLEN        DB        0
+NCFLINE       DS        80
+NCFNUM        DB        0
+NCFDEST       EQU       $FA
+NCFVALSAVE    DB        0
+NCFBITS       DB        0
+NCFGW         DS        4
+NCFNM         DS        4
+NCFMAC        DS        6
+NCFIP         DS        4
+
+* Read lines from [0C00,0C00+actual count) into 80-byte scratch.
+* Only keys inside [NETWORK] are accepted. Ignore other sections.
+NCFPARSE      LDA       #0
+              STA       NCFIDX
+              STA       NCFIDX+1
+              STA       NCFBITS              ; 0 means outside [NETWORK]
+:NCFLINE      LDA       #0
+              STA       NCFLEN
+:NCFCHAR      LDA       NCFIDX+1
+              CMP       NCFCOUNT+1
+              BCC       :NCFGET
+              BNE       :NCFEND
+              LDA       NCFIDX
+              CMP       NCFCOUNT
+              BCS       :NCFEND
+:NCFGET       LDY       NCFIDX
+              LDA       NCFIDX+1
+              BEQ       :NCFPAGE0
+              LDA       $0D00,Y
+              JMP       :NCFHAVE
+:NCFPAGE0     LDA       $0C00,Y
+:NCFHAVE      INC       NCFIDX
+              BNE       :NCFINC
+              INC       NCFIDX+1
+:NCFINC       CMP       #$1A
+              BEQ       :NCFEND
+              CMP       #13
+              BEQ       :NCFPROCESS
+              CMP       #10
+              BEQ       :NCFPROCESS
+              LDX       NCFLEN
+              CPX       #79
+              BCS       :NCFCHAR
+              STA       NCFLINE,X
+              INC       NCFLEN
+              JMP       :NCFCHAR
+:NCFPROCESS   LDX       NCFLEN
+              LDA       #0
+              STA       NCFLINE,X
+              JSR       NCFENTRY
+              JMP       :NCFLINE
+:NCFEND       LDX       NCFLEN
+              LDA       #0
+              STA       NCFLINE,X
+              JMP       NCFENTRY
+
+* Simple uppercase, no-whitespace INI parser. Empty lines and comments OK.
+NCFENTRY      LDA       NCFLINE
+              BEQ       :NCFRET
+              CMP       #';'
+              BEQ       :NCFRET
+              CMP       #'#'
+              BEQ       :NCFRET
+              CMP       #'['
+              BNE       :NCFKEY
+              LDA       #0
+              STA       NCFBITS
+              LDX       #0
+:NCFSECTION   LDA       NCFLINE,X
+              CMP       NCFSEC,X
+              BNE       :NCFRET
+              CMP       #0
+              BEQ       :NCFSELECT
+              INX
+              BNE       :NCFSECTION
+:NCFSELECT    LDA       #1
+              STA       NCFBITS
+:NCFRET       RTS
+:NCFKEY       LDA       NCFBITS
+              BEQ       :NCFRET
+              LDX       #0
+:NCFTRY       TXA
+              ASL
+              TAY
+              LDA       NCFKPTR,Y
+              STA       NCFKP
+              INY
+              LDA       NCFKPTR,Y
+              STA       NCFKP+1
+              LDY       #0
+:NCFCMP       LDA       (NCFKP),Y
+              BEQ       :NCFMATCH
+              CMP       NCFLINE,Y
+              BNE       :NCFNEXT
+              INY
+              BNE       :NCFCMP
+:NCFMATCH     LDA       NCFLINE,Y
+              CMP       #'='
+              BNE       :NCFNEXT
+              INY
+              STY       NCFVALOFF
+              TXA
+              CMP       #0
+              BEQ       :NCFENABLED
+              CMP       #1
+              BEQ       :NCFRESET
+              CMP       #2
+              BEQ       :NCFSLOTCFG
+              CMP       #3
+              BEQ       :NCFIPCFG
+              CMP       #4
+              BEQ       :NCFNMCFG
+              CMP       #5
+              BEQ       :NCFGWCFG
+              JMP       :NCFMACCFG
+:NCFNEXT      INX
+              CPX       #7
+              BNE       :NCFTRY
+              RTS
+:NCFENABLED   JSR       NCFBOOL
+              STA       NCFENA
+              RTS
+:NCFRESET     JSR       NCFBOOL
+              STA       NCFRST
+              RTS
+:NCFSLOTCFG   LDA       NCFLINE,Y
+              CMP       #'5'
+              BNE       :NCFBAD
+              INY
+              LDA       NCFLINE,Y
+              BNE       :NCFBAD
+              LDA       #5
+              STA       NCFSLOT
+              LDA       #1
+              JMP       NCFMARK
+:NCFIPCFG     LDA       #<NCFIP
+              STA       NCFDEST
+              LDA       #>NCFIP
+              STA       NCFDEST+1
+              LDA       #2
+              JMP       NCFIPV
+:NCFNMCFG     LDA       #<NCFNM
+              STA       NCFDEST
+              LDA       #>NCFNM
+              STA       NCFDEST+1
+              LDA       #4
+              JMP       NCFIPV
+:NCFGWCFG     LDA       #<NCFGW
+              STA       NCFDEST
+              LDA       #>NCFGW
+              STA       NCFDEST+1
+              LDA       #8
+              JMP       NCFIPV
+:NCFMACCFG    LDA       #<NCFMAC
+              STA       NCFDEST
+              LDA       #>NCFMAC
+              STA       NCFDEST+1
+              LDA       #16
+              JMP       NCFMACV
+:NCFBAD       LDA       #1
+              STA       NCFOK
+              RTS
+NCFSEC        ASC       "[NETWORK]"
+              DB        0
+NCFKPTR       DW        NCFKEN,NCFKRE,NCFKSL,NCFKIP,NCFKNM,NCFKGW,NCFKMC
+NCFKEN        ASC       "ENABLED"
+              DB        0
+NCFKRE        ASC       "RESET"
+              DB        0
+NCFKSL        ASC       "SLOT"
+              DB        0
+NCFKIP        ASC       "IP"
+              DB        0
+NCFKNM        ASC       "NM"
+              DB        0
+NCFKGW        ASC       "GW"
+              DB        0
+NCFKMC        ASC       "MAC"
+              DB        0
+NCFKP         EQU       $F8
+NCFVALOFF     DB        0
+
+* Parse strict single-character boolean and mark invalid input.
+NCFBOOL       LDA       NCFLINE,Y
+              CMP       #'0'
+              BEQ       :NCFZERO
+              CMP       #'1'
+              BNE       :NCFBADBOOL
+              INY
+              LDA       NCFLINE,Y
+              BNE       :NCFBADBOOL
+              LDA       #1
+              RTS
+:NCFZERO      INY
+              LDA       NCFLINE,Y
+              BNE       :NCFBADBOOL
+              LDA       #0
+              RTS
+:NCFBADBOOL   LDA       #1
+              STA       NCFOK
+              LDA       #0
+              RTS
+
+* NCFIPV accepts four strict dotted-decimal octets (0..255).
+* Store into temporary per-field arrays. No hardware write until validated.
+NCFIPV       STA       NCFMARKBIT
+              LDX       #0
+:NCFOCT      LDA       #0
+              STA       NCFNUM
+              STA       NCFDIG
+:NCFDIGIT    LDA       NCFLINE,Y
+              CMP       #'0'
+              BCC       :NCFDONEOCT
+              CMP       #'9'+1
+              BCS       :NCFDONEOCT
+              SEC
+              SBC       #'0'
+              STA       NCFDIGVAL
+              LDA       NCFNUM
+              CMP       #26
+              BCS       :NCFIPBAD
+              ASL
+              STA       NCFWORK
+              ASL
+              ASL
+              CLC
+              ADC       NCFWORK
+              CLC
+              ADC       NCFDIGVAL
+              BCS       :NCFIPBAD
+              STA       NCFNUM
+              INC       NCFDIG
+              LDA       NCFDIG
+              CMP       #4
+              BCS       :NCFIPBAD
+              INY
+              JMP       :NCFDIGIT
+:NCFDONEOCT   LDA       NCFDIG
+              BEQ       :NCFIPBAD
+              LDA       NCFNUM
+              STY       NCFVALSAVE
+              TXA
+              TAY
+              LDA       NCFNUM
+              STA       (NCFDEST),Y
+              LDY       NCFVALSAVE
+              INX
+              CPX       #4
+              BEQ       :NCFIPEND
+              LDA       NCFLINE,Y
+              CMP       #'.'
+              BNE       :NCFIPBAD
+              INY
+              JMP       :NCFOCT
+:NCFIPEND     LDA       NCFLINE,Y
+              BNE       :NCFIPBAD
+              LDA       NCFMARKBIT
+              JMP       NCFMARK
+:NCFIPBAD     LDA       #1
+              STA       NCFOK
+              RTS
+
+* Parse six colon-delimited hexadecimal MAC octets.
+NCFMACV       STA       NCFMARKBIT
+              LDX       #0
+:NCFMACBYTE   JSR       NCFHEX
+              BCS       :NCFMACBAD
+              ASL
+              ASL
+              ASL
+              ASL
+              STA       NCFWORK
+              JSR       NCFHEX
+              BCS       :NCFMACBAD
+              ORA       NCFWORK
+              STY       NCFVALSAVE
+              TXA
+              TAY
+              STA       (NCFDEST),Y
+              LDY       NCFVALSAVE
+              INX
+              CPX       #6
+              BEQ       :NCFMACEND
+              LDA       NCFLINE,Y
+              CMP       #':'
+              BNE       :NCFMACBAD
+              INY
+              JMP       :NCFMACBYTE
+:NCFMACEND    LDA       NCFLINE,Y
+              BNE       :NCFMACBAD
+              LDA       NCFMARKBIT
+              JMP       NCFMARK
+:NCFMACBAD    LDA       #1
+              STA       NCFOK
+              RTS
+NCFHEX        LDA       NCFLINE,Y
+              CMP       #'0'
+              BCC       :NCFHEXBAD
+              CMP       #'9'+1
+              BCS       :NCFHEXALPHA
+              SEC
+              SBC       #'0'
+              INY
+              CLC
+              RTS
+:NCFHEXALPHA  CMP       #'A'
+              BCC       :NCFHEXBAD
+              CMP       #'F'+1
+              BCS       :NCFHEXBAD
+              SEC
+              SBC       #'A'-10
+              INY
+              CLC
+              RTS
+:NCFHEXBAD    SEC
+              RTS
+NCFMARK       ORA       NCFSEEN
+              STA       NCFSEEN
+              RTS
+NCFMARKBIT    DB        0
+NCFDIG        DB        0
+NCFDIGVAL     DB        0
+NCFWORK       DB        0
+
+* Write one W5100 register: A = value, X = register low address.
+* Indirect mode register is set only after explicit hardware reset.
+NCFWRITE      STX       $C0D6
+              STA       $C0D7
+              RTS
+NCFAPPLY      LDA       #$80                   ; W5100 software RESET
+              STA       $C0D4
+              LDX       #$FF                   ; bounded reset settling delay
+:NCFWAIT      DEX
+              BNE       :NCFWAIT
+              LDA       #$03                   ; indirect + auto increment
+              STA       $C0D4
+              LDA       #0
+              STA       $C0D5                   ; common registers high byte
+              LDX       #1
+              LDY       #0
+:NCFGWLOOP    LDA       NCFGW,Y
+              JSR       NCFWRITE
+              INX
+              INY
+              CPY       #4
+              BNE       :NCFGWLOOP
+              LDY       #0
+:NCFNMLOOP    LDA       NCFNM,Y
+              JSR       NCFWRITE
+              INX
+              INY
+              CPY       #4
+              BNE       :NCFNMLOOP
+              LDY       #0
+:NCFMACLOOP   LDA       NCFMAC,Y
+              JSR       NCFWRITE
+              INX
+              INY
+              CPY       #6
+              BNE       :NCFMACLOOP
+              LDY       #0
+:NCFIPLOOP    LDA       NCFIP,Y
+              JSR       NCFWRITE
+              INX
+              INY
+              CPY       #4
+              BNE       :NCFIPLOOP
+              LDX       #$1A
+              LDA       #$55                   ; RX 2KB per socket
+              JSR       NCFWRITE
+              INX
+              LDA       #$55                   ; TX 2KB per socket
+              JMP       NCFWRITE
 
 RELOC_ST
               ORG       STADDR                         ; Assemble for this origin
