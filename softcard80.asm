@@ -299,7 +299,7 @@ RWMSG5        DEFB      13
               ORG       003B0H
 ; Kill only an inactive saved context. No CPU instruction is preempted.
 ; FCB cache has already been flushed by the cooperative park path.
-TB_KILL       CALL      NETCLN                         ; release network sockets for killed tab
+TB_KILL       CALL      NETKILL                         ; release network sockets for killed tab
               LD        A,B
               CALL      TB_HPTR
               LD        (HL),0
@@ -751,11 +751,11 @@ SOIDX         LD        A,(SCHFG)
               LD        A,(HL)
               OR        A
               JR        Z,SOADV
-              LD        HL,SCHWAIT
-              ADD       HL,DE
-              LD        A,(HL)
-              OR        A
+              CALL      NCSOCHK                        ; preserve C/DE/HL; wake UC1 only on packet
               JR        NZ,SOADV
+              NOP
+              NOP
+              NOP
               LD        HL,TBHOLD
               ADD       HL,DE
               LD        A,(HL)
@@ -818,11 +818,11 @@ SHIDX         LD        A,(SCHFG)
               LD        A,(HL)
               OR        A
               JR        Z,SHADV
-              LD        HL,SCHWAIT
-              ADD       HL,DE
-              LD        A,(HL)
-              OR        A
+              CALL      NCSHCHK                        ; UC1 wait counts as polling work
               JR        NZ,SHADV
+              NOP
+              NOP
+              NOP
               LD        HL,TBHOLD
               ADD       HL,DE
               LD        A,(HL)
@@ -1860,6 +1860,8 @@ IOREADER      JP        IORDRSEL
 ; CON: CRT=VRAWPUT, BAT=RDR input / LST output; TTY/UC1=serial2.
 IOCONOUT      LD        A,(IOBYTE)
               AND       3
+              CP        3
+              JP        Z,UCOUT                         ; UC1: socket-backed console
               CP        2
               JP        Z,IOLIST
               JP        IOSEROUT
@@ -1879,7 +1881,11 @@ IOCCOOK       CALL      IOCONIN
 IOZERO        XOR       A
               LD        L,A
               RET
-IOSTAT        JP        IOZERO
+IOSTAT        LD        A,(IOBYTE)
+              AND       3
+              CP        3
+              JP        Z,UCSTAT
+              JP        IOZERO
 ; Firmware output. E=CP/M character. Physical slot selected in A.
 IOPRN         LD        A,010H
               LD        HL,0C100H
@@ -2254,10 +2260,432 @@ IORDEOF       LD        A,01AH                         ; CP/M text EOF
 ; CON:=BAT: uses RDR: for input; other non-CRT console modes use serial.
 IOCONIN       LD        A,(IOBYTE)
               AND       3
+              CP        3
+              JP        Z,UCIN                          ; UC1: socket-backed console
               CP        2
               JP        Z,IOREADER
               JP        IOSERIN
 
+; New UC1 code lives in previously unused MAIN $4D00..$4FFF.
+; Keep NETEND at its original location so the resident stack does not shrink.
+              ORG       04D00H
+; ------------------------------------------------------------------
+; Phase 6B: UC1 (CON:=UC1:, low IOBYTE bits = 3) TCP console.
+; Private BDOS $FD: E=1 bind D=socket, E=0 unbind, E=2 query.
+; A=L returns 0 (success), FF (failure), or socket for query.
+; Binding requires the current tab to own the allocated socket.
+; Uses the same NXTX/NXRX ring code with MAIN-resident staging; no
+; reentrant AUX BDOS or temporary AUX address is involved.
+; This stage tests a single raw TCP console via nc(1).  Telnet IAC,
+; nonblocking scheduler integration, and shell lifetime handoff remain
+; Phase 6C work; DO NOT attach an idle remote CCP yet.
+; ------------------------------------------------------------------
+NCAPI         LD        A,E
+              OR        A
+              JP        Z,NCUNB
+              CP        1
+              JP        Z,NCBIND
+              CP        2
+              JP        Z,NCQUERY
+              CP        3
+              JP        Z,NCARM                       ; persist existing UC1 binding across CCP reload
+              JP        NETBAD
+NCBIND        LD        A,D
+              CP        4
+              JP        NC,NETBAD
+              PUSH      DE
+              CALL      NETPTR
+              LD        A,(TABMODE)
+              CP        (HL)
+              POP       DE
+              JP        NZ,NETBAD
+              PUSH      DE                             ; UCBPTR uses DE for indexing
+              CALL      UCBPTR
+              POP       DE
+              LD        (HL),D
+              CALL      UCRPTR
+              LD        (HL),0
+              XOR       A
+              JP        NETRET
+NCUNB         CALL      UCPPTR
+              LD        (HL),0                        ; unbind always revokes persistence
+              CALL      UCBPTR
+              LD        (HL),0FFH
+              CALL      UCRPTR
+              LD        (HL),0
+              XOR       A
+              JP        NETRET
+NCQUERY       CALL      UCBPTR
+              LD        A,(HL)
+              JP        NETRET
+NCARM         CALL      UCBPTR
+              LD        A,(HL)
+              CP        4
+              JP        NC,NETBAD                     ; require an allocated UC1 socket
+              CALL      NETPTR
+              LD        A,(TABMODE)
+              CP        (HL)
+              JP        NZ,NETBAD
+              CALL      UCPPTR
+              LD        (HL),1
+              XOR       A
+              JP        NETRET
+; Resolve per-tab bind and pending-byte arrays. DE/HL clobbered.
+UCBPTR        LD        A,(TABMODE)
+              LD        E,A
+              LD        D,0
+              LD        HL,UCBIND
+              ADD       HL,DE
+              RET
+UCRPTR        LD        A,(TABMODE)
+              LD        E,A
+              LD        D,0
+              LD        HL,UCREADY
+              ADD       HL,DE
+              RET
+UCDPTR        LD        A,(TABMODE)
+              LD        E,A
+              LD        D,0
+              LD        HL,UCCHAR
+              ADD       HL,DE
+              RET
+UCPPTR        LD        A,(TABMODE)
+              LD        E,A
+              LD        D,0
+              LD        HL,UCPERS
+              ADD       HL,DE
+              RET
+; Called after NETFREE with A=socket. Clear only matching binding.
+NCSFRE        PUSH      AF
+              CALL      UCBPTR
+              POP       AF
+              CP        (HL)
+              RET       NZ
+              JP        NCUNB
+; Called from NETCLN with B=tab (may not be currently selected).
+NCXCLN        PUSH      BC
+              LD        E,B
+              LD        D,0
+              LD        HL,UCBIND
+              ADD       HL,DE
+              LD        (HL),0FFH
+              LD        HL,UCREADY
+              ADD       HL,DE
+              LD        (HL),0
+              POP       BC
+              RET
+; UCSTAT returns FF if a byte is pending, otherwise 0.
+; Consumes from TCP only to fill per-tab cache, not on every peek.
+UCSTAT        PUSH      BC
+              PUSH      DE
+              PUSH      HL
+              CALL      UCRPTR
+              LD        A,(HL)
+              OR        A
+              JR        NZ,UCREADY1
+              CALL      UCBPTR
+              LD        A,(HL)
+              CP        4
+              JR        NC,UCEMPTY
+              LD        (NXSOCK),A
+              LD        A,1
+              LD        (NXREQ),A
+              LD        (UCFLAG),A
+              CALL      NXRX
+              PUSH      AF
+              XOR       A
+              LD        (UCFLAG),A
+              POP       AF
+              CP        1
+              JR        NZ,UCDISC
+              CALL      UCDPTR
+              LD        A,(NXBUF)
+              LD        (HL),A
+              CALL      UCRPTR
+              LD        (HL),1
+              JP        UCREADY1                      ; successful RX is ready NOW
+; If the peer has closed its end, synthesize Ctrl-] to let the
+; test launcher restore the local IOBYTE and release its socket.
+; Only do so after draining any final incoming bytes.
+UCDISC        LD        A,(NXSOCK)
+              LD        D,A
+              LD        A,3
+              CALL      NI_READ
+              CP        01CH                         ; SOCK_CLOSE_WAIT
+              JR        Z,UCDOWN
+              OR        A
+              JR        NZ,UCEMPTY                     ; established/listen, no RX
+UCDOWN        CALL      UCDPTR
+              LD        (HL),3                         ; synthesize Ctrl-C
+              CALL      UCRPTR
+              LD        (HL),1
+              CALL      UCPPTR
+              LD        (HL),2                         ; pending local fallback
+UCREADY1      LD        A,0FFH
+              JR        UCSDONE
+UCEMPTY       XOR       A
+UCSDONE       POP       HL
+              POP       DE
+              POP       BC
+              LD        L,A
+              RET
+; BDOS 06 input. If a network byte is available return it;
+; otherwise return A=L=0 without consuming keyboard input.
+UC6IN         CALL      UCSTAT
+              OR        A
+              JP        Z,IOZERO
+              JP        UCIN
+; For Phase 6B this is a polling read. A nonblocking/yielding
+; remote CCP is not safe until scheduler wakeup is implemented.
+UCIN          CALL      UCSTAT
+              OR        A
+              JR        Z,UCIN
+              CALL      UCDPTR
+              LD        A,(HL)
+              PUSH      AF
+              CALL      UCRPTR
+              LD        (HL),0
+              POP       AF
+              CP        0AH
+              JR        NZ,UCNOTLF
+              LD        A,0DH                          ; nc(1) sends LF for Enter
+UCNOTLF       PUSH      AF
+              CALL      UCPPTR
+              LD        A,(HL)
+              CP        2
+              JR        NZ,UCINNOD
+              CALL      NCDROP                         ; restore local console on disconnect
+UCINNOD       POP       AF
+              PUSH      AF
+              XOR       A
+              LD        (XREG),A                       ; remote key cannot trigger OA tab hotkeys
+              POP       AF
+              LD        L,A
+              RET
+; E=byte. Output via NXTX using existing W5100 driver. This is
+; deliberately single-byte, not a duplicate ring implementation.
+UCOUT         PUSH      BC
+              PUSH      DE
+              PUSH      HL
+              LD        A,E
+              LD        (NXBUF),A
+              CALL      UCBPTR
+              LD        A,(HL)
+              CP        4
+              JR        NC,UCOEND
+              LD        (NXSOCK),A
+UCOSEND       LD        A,1
+              LD        (NXREQ),A
+              LD        (UCFLAG),A
+              CALL      NXTX
+              PUSH      AF
+              XOR       A
+              LD        (UCFLAG),A
+              POP       AF
+              OR        A
+              JR        Z,UCOSEND                       ; full buffer: retry
+              LD        A,(NXBUF)                       ; UCBPTR/NXTX clobber E: inspect SENT byte
+              CP        0DH
+              JR        NZ,UCOEND
+              LD        E,0AH                          ; Unix terminal line advance
+              LD        A,E
+              LD        (NXBUF),A
+              JR        UCOSEND                        ; one extra byte, then finish
+UCOEND        POP       HL
+              POP       DE
+              POP       BC
+              RET
+; Explicitly initialized arrays: DEFS does not promise zero fill.
+UCFLAG        DEFB      0
+UCBIND        DEFB      0FFH,0FFH,0FFH,0FFH,0FFH,0FFH,0FFH,0FFH
+              DEFB      0FFH,0FFH,0FFH,0FFH,0FFH,0FFH,0FFH,0FFH
+UCREADY       DEFB      0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+UCCHAR        DEFB      0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+UCPERS        DEFB      0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+
+; Do not extend MAIN $7C00..$7EBF (AUX BDOS entry), which ends immediately
+; before the scheduler's fixed ORG $7EC0. Keep both hooks three bytes each.
+UC6FG         LD        A,(IOBYTE)
+              AND       3
+              CP        3
+              RET       Z                              ; UC1 can poll without owning CRT
+              JP        SCHISFG                        ; normal foreground gate unchanged
+UC6CUR        PUSH      AF
+              LD        A,(IOBYTE)
+              AND       3
+              CP        3
+              JR        NZ,UC6CRT
+              POP       AF
+              OR        A                              ; clear C: no deferred physical keyboard
+              RET
+UC6CRT        POP       AF
+              JP        AB6CUR                         ; preserve original CRT cursor logic
+
+; ---------------------------------------------------------------------
+; Phase 6C: scheduler hooks (MAIN $4Dxx, after Phase 6B console).
+; The local physical keyboard is NEVER read for a remote UC1 task.
+; Remote tab 1+ should be left in the background while tab 0 owns CRT.
+; ---------------------------------------------------------------------
+; Original SCHPRE prologue occupies 3 bytes at $7Exx, now a JP here.
+; Follow the original source from SCHPRE+3 for CRT/serial unchanged.
+NCPRE         LD        A,(IOBYTE)
+              AND       3
+              CP        3
+              JR        Z,NCPUC
+              LD        A,(IOBYTE)
+              JP        SCHPRE+3                       ; original AND/CP/JR from $7Exx
+NCPUC         LD        A,C
+              CP        1
+              JR        Z,NCPREAD
+              CP        10
+              JR        Z,NCPREAD
+              CP        0F2H
+              JR        NZ,NCPALLOW
+NCPREAD       CALL      UCSTAT                         ; FF if input cached
+              OR        A
+              RET       NZ                             ; never call physical BIOSCONST for UC1
+              LD        A,C
+              CP        1
+              JP        Z,SPCOOK
+              CP        10
+              JP        Z,SPLINE
+              JP        SPBIOS
+NCPALLOW      OR        A                              ; no deferral for unrelated calls
+              RET
+; At BDOS-10 input, yield even in the middle of a line instead of
+; blocking all tasks waiting for the next byte of a remote command.
+NCALINE       LD        A,(IOBYTE)
+              AND       3
+              CP        3
+              JR        NZ,NCALREAD
+              CALL      UCSTAT
+              OR        A
+              JR        NZ,NCALREAD
+              PUSH      DE
+              PUSH      HL
+              CALL      SCHBLCK
+              POP       HL
+              POP       DE
+              LD        A,3
+              LD        (AXQUIT),A
+              SCF
+              RET
+NCALREAD      PUSH      BC
+              PUSH      HL
+              CALL      BIOSCONIN
+              POP       HL
+              POP       BC
+              OR        A                              ; clear C, preserve character
+              RET
+; C = candidate background task. On UC1 wait, scheduler must continue
+; polling even while no packet has arrived, rather than enter local VGET.
+; Return Z if task should keep the foreground input loop polling.
+NCSHCHK       PUSH      BC
+              PUSH      DE
+              PUSH      HL
+              CALL      NCHSLOT
+              JR        Z,NCHOK                       ; already runnable
+              CALL      NCHBIND
+              CP        4
+              JR        C,NCHOK                       ; UC1 parked => poll while idle
+              LD        A,1
+              JR        NCHDONE
+NCHOK         XOR       A
+NCHDONE       POP       HL
+              POP       DE
+              POP       BC
+              OR        A
+              RET
+; For actually scheduling, only resume when network RX data, cached
+; char or socket CLOSED/CLOSE_WAIT. Never spin inside UCIN.
+NCSOCHK       PUSH      BC
+              PUSH      DE
+              PUSH      HL
+              CALL      NCHSLOT
+              JR        Z,NCSRUN
+              CALL      NCHBIND
+              CP        4
+              JR        NC,NCSBLCK
+              LD        D,A                            ; physical socket
+              LD        E,C
+              LD        D,0
+              LD        HL,UCREADY
+              ADD       HL,DE
+              LD        A,(HL)
+              OR        A
+              JR        NZ,NCSWAKE
+              CALL      NCHBIND
+              LD        D,A
+              LD        A,3
+              CALL      NI_READ                        ; Sn_SR
+              CP        01CH
+              JR        Z,NCSWAKE                      ; peer half-closed, wake to clean up
+              OR        A
+              JR        Z,NCSWAKE                      ; fully closed
+              LD        A,026H
+              CALL      NI_READ                        ; RX received size high
+              OR        A
+              JR        NZ,NCSWAKE
+              LD        A,027H
+              CALL      NI_READ                        ; RX received size low
+              OR        A
+              JR        Z,NCSBLCK
+NCSWAKE       LD        E,C
+              LD        D,0
+              LD        HL,SCHWAIT
+              ADD       HL,DE
+              LD        (HL),0
+NCSRUN        XOR       A
+              JR        NCSDONE
+NCSBLCK       LD        A,1
+NCSDONE       POP       HL
+              POP       DE
+              POP       BC
+              OR        A
+              RET
+NCHSLOT       LD        E,C
+              LD        D,0
+              LD        HL,SCHWAIT
+              ADD       HL,DE
+              LD        A,(HL)
+              OR        A
+              RET
+NCHBIND       LD        E,C
+              LD        D,0
+              LD        HL,UCBIND
+              ADD       HL,DE
+              LD        A,(HL)
+              RET
+; Called only after consuming the synthetic disconnect ^C from UCIN.
+; Never leave a dead socket as the tab's only console.
+NCDROP        CALL      UCBPTR
+              LD        A,(HL)
+              CP        4
+              JR        NC,NCDIO
+              LD        D,A
+              LD        E,1
+              CALL      NETFREE                        ; also unbinds and clears persistence
+NCDIO         LD        A,(IOBYTE)
+              AND       0FCH
+              OR        1                              ; back to local CRT in this tab
+              LD        E,A
+              JP        SET_IOB                        ; sync MAIN and AUX $0003
+; Shell EXIT/BDOS 0: restore physical console before cleanup.
+; Called in MAIN after the remote CCP itself has exited.
+NCSTOP        PUSH      BC
+              LD        E,B
+              LD        D,0
+              LD        HL,UCPERS
+              ADD       HL,DE
+              LD        A,(HL)
+              OR        A
+              JR        Z,NCSTEND
+              LD        A,(IOBYTE)
+              AND       0FCH
+              OR        1
+              LD        (IOBYTE),A
+NCSTEND       POP       BC
+              JP        NETKILL
               ORG       05000H
 ; Native XSUB: opt-in only by an XSUB directive *inside* .SUB.
 ; No resident AUX code; submit input stays in MAIN and is owned by one tab.
@@ -3160,6 +3588,9 @@ SHLOOP        CALL      SHPTR
               ; Shell RET, BDOS 0 or failed load => recovery supervisor.
 SHSTOP        XOR       A
               LD        (HL),A
+              LD        A,(TABMODE)
+              LD        B,A
+              CALL      NCSTOP                         ; remote shell EXIT restores local console
               RET
 SHLAUNCH      LD        (HL),2                     ; mark child before switching programs
               CALL      SHSUBRUN                   ; rearm SUBMIT on a fresh SUBMIT.COM launch
@@ -4719,6 +5150,8 @@ AXBDOS        CALL      XSPRE                          ; skip physical keyboard 
               RET       C
               LD        A,C
               LD        (AXBADFN),A                    ; diagnostic: remember original BDOS C
+              CP        0FDH                           ; NET UC1 per-session socket binding
+              JP        Z,NCAPI
               CP        0FCH                           ; NET TX/RX via AUX parameter block
               JP        Z,NXIO
               CP        0FBH                           ; NET socket I/O (E=0 status, else command)
@@ -5064,11 +5497,10 @@ AXLCOUNTOK    LD        C,A
               LD        E,C
               LD        D,0
               ADD       HL,DE                          ; resume at end of partial text
-AXLNEXT       PUSH      BC
-              PUSH      HL
-              CALL      BIOSCONIN
-              POP       HL
-              POP       BC
+AXLNEXT       CALL      NCALINE                        ; nonblocking on UC1, CRT unchanged
+              JR        C,AXLPARK
+              NOP
+              NOP
               AND       07FH
               ; Always process OA+tab, even when the line is nonempty.
               ; Previously TSKKEY was bypassed when C>0, making shortcuts
@@ -6105,7 +6537,7 @@ AUXBDOS2      PUSH      DE
 AUXBDOS6      LD        A,E
               CP        0FFH
               JR        NZ,AB6OUT                      ; control-character output is not input
-AB6IN         CALL      SCHISFG
+AB6IN         CALL      UC6FG                          ; UC1 bypasses physical-screen foreground check
               JR        Z,AB6KEY
               XOR       A
               LD        L,A
@@ -6113,7 +6545,7 @@ AB6IN         CALL      SCHISFG
 ; Stage 28.6: new CCP nonblocking editor uses the same kernel
 ; cursor as other console input.  Call replaces CALL TSKKEY byte-for-byte.
 AB6KEY        CALL      C_RAWIO
-              CALL      AB6CUR                         ; handles TSKKEY and cursor
+              CALL      UC6CUR                         ; UC1: no physical cursor; CRT: original AB6CUR
               RET       NC                             ; same BDOS 6 return contract
               LD        A,0F6H                         ; deferred BDOS 6 poll
               LD        L,A
@@ -6122,7 +6554,7 @@ AB6OUT        JP        C_RAWIO
 ABDSTAT       LD        A,(IOBYTE)
               AND       3
               CP        1
-              JP        NZ,IOZERO
+              JP        NZ,IOSTAT                       ; UC1 status, others remain zero
               JP        TSKSTAT                        ; CRT: Open Apple aware
 AUXBDOS9      PUSH      BC
               PUSH      DE
@@ -6247,7 +6679,7 @@ SCHWAKE       LD        A,(TABMODE)
 ; be consumed normally. With no other runnable task use VGET, which
 ; preserves the ordinary visible cursor behaviour.
 ; The existing AXRETRY markers re-enter the original read on resume.
-SCHPRE        LD        A,(IOBYTE)
+SCHPRE        JP        NCPRE                         ; same length as original LD A,(IOBYTE)
               AND       3
               CP        1
               JR        NZ,SPNO                        ; serial firmware input cannot keyboard-defer
@@ -6803,6 +7235,8 @@ C_RAWIO       LD        A,E
               ; Otherwise, return 00H in A
 RIS1          LD        A,(IOBYTE)
               AND       3
+              CP        3
+              JP        Z,UC6IN                         ; UC1 BDOS 06 input
               CP        1
               JP        NZ,IOZERO                      ; no portable slot-2 nonblocking read
               LD        A,3                            ; CMD=3 means peek at keyboard
@@ -9608,13 +10042,16 @@ NXCMD         LD        E,A
               CALL      NETIO
               RET
 ; Fill ring from 16-byte MAIN staging. FSR < length -> zero, no writes.
-NXTX          LD        HL,(NXPAR+3)
+NXTX          LD        A,(UCFLAG)
+              OR        A
+              JR        NZ,NXTXBUF                      ; NET UC1 staged byte already in MAIN
+              LD        HL,(NXPAR+3)
               LD        DE,NXBUF
               LD        A,(NXREQ)
               LD        C,A
               LD        B,0
               CALL      LCA2M
-              LD        HL,001BH                     ; TMSR
+NXTXBUF       LD        HL,001BH                     ; TMSR
               CALL      NXRD
               LD        C,040H
               CALL      NXRING
@@ -9713,13 +10150,16 @@ NXRXLP        CALL      NXADDR
               CALL      NXCMD
               CP        0FFH
               JP        Z,NETBAD
+              LD        A,(UCFLAG)
+              OR        A
+              JR        NZ,NXRXMAIN                      ; UC1 gets byte from MAIN staging
               LD        HL,NXBUF
               LD        DE,(NXPAR+3)
               LD        A,(NXREQ)
               LD        C,A
               LD        B,0
               CALL      AXM2A                        ; MAIN -> calling AUX bank
-              LD        A,(NXREQ)
+NXRXMAIN      LD        A,(NXREQ)
               JP        NETRET
 ; Sole staging area; never retain caller AUX pointers across a task switch.
 NXPAR         DEFS      5
@@ -10149,6 +10589,54 @@ CMRU          DEFB      0
 CSLOT         DEFB      0
 CNAME1        DEFS      20
 CNAME2        DEFS      20
+
+              ORG       0A340H
+; B=logical tab; called on KILL and remote CCP shell termination.
+NETKILL       PUSH      BC
+              LD        E,B
+              LD        D,0
+              LD        HL,UCPERS
+              ADD       HL,DE
+              LD        (HL),0
+              POP       BC
+              JP        NETCLN
+; Preserve binding only for the single registered remote socket.
+; NETCLN's usual cleanup still closes every other child-owned socket.
+NCKMATCH      CP        B
+              RET       NZ
+              PUSH      BC
+              PUSH      DE
+              PUSH      HL
+              LD        E,B
+              LD        D,0
+              LD        HL,UCPERS
+              ADD       HL,DE
+              LD        A,(HL)
+              OR        A
+              JR        Z,NCKCLS
+              LD        HL,UCBIND
+              ADD       HL,DE
+              LD        A,(HL)
+              CP        C
+              JR        NZ,NCKCLS
+              LD        A,1                            ; NZ: keep this persistent socket
+              JR        NCKRET
+NCKCLS        XOR       A                              ; Z: ordinary cleanup
+NCKRET        POP       HL
+              POP       DE
+              POP       BC
+              OR        A
+              RET
+NCKCLN        PUSH      BC
+              LD        E,B
+              LD        D,0
+              LD        HL,UCPERS
+              ADD       HL,DE
+              LD        A,(HL)
+              OR        A
+              POP       BC
+              RET       NZ                             ; keep UC1 binding when armed
+              JP        NCXCLN
 
               ORG       0A3D0H
 ; Executable base name (8 bytes) is in PATHBUF2+1 after PARSE.
@@ -10659,6 +11147,8 @@ NETFREE       LD        A,D
               POP       HL
               JR        C,NETBAD                       ; retain ownership on failure
               LD        (HL),0FFH
+              LD        A,C
+              CALL      NCSFRE                        ; remove stale UC1 binding for freed socket
               XOR       A
               JR        NETRET
 NETINFO       LD        HL,NETOWN
@@ -10730,11 +11220,12 @@ NCLDONE       POP       HL
 
 ; B=owner task. Close only sockets owned by that task.
 ; Keep ownership if hardware closure cannot be confirmed.
-NETCLN        LD        C,0
+NETCLN        CALL      NCKCLN                        ; keep armed UC1 across child exit
+              LD        C,0
 NETCLP        LD        A,C
               CALL      NETPTR
               LD        A,(HL)
-              CP        B
+              CALL      NCKMATCH                      ; Z: owned and not persistent
               JR        NZ,NETCLNEXT
               PUSH      BC
               PUSH      HL
@@ -10750,6 +11241,7 @@ NETCLNEXT     INC       C
               JR        NZ,NETCLP
               RET
 NETOWN        DEFB      0FFH,0FFH,0FFH,0FFH
+
 ; Phase 4A.3: $FB moved to $9400 (see above). Keep stack headroom
 ; and all W5100 socket ownership data here unchanged.
 NETEND
