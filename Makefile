@@ -17,6 +17,12 @@ CPM_TELNET  := cpm-apps/Utils/TELNET.COM
 WGET_SRC    ?= wget.asm
 WGET_RAW    := wget.bin
 CPM_WGET    := cpm-apps/Utils/WGET.COM
+FTP_SRC     ?= ftp.asm
+FTP_RAW     := ftp.bin
+CPM_FTP     := cpm-apps/Utils/FTP.COM
+NSLOOKUP_SRC ?= nslookup.asm
+NSLOOKUP_RAW := nslookup.bin
+CPM_NSLOOKUP := cpm-apps/Utils/NSLOOKUP.COM
 SRC65       ?= softcard65.asm
 SRC80       ?= softcard80.asm
 RAW65       := softcard65
@@ -39,7 +45,7 @@ MAME_DEBUG_FLAGS ?= -debug -w
 MAME_EXTRA       ?=
 
 .DEFAULT_GOAL := all
-.PHONY: all z80 6502 ccp telnet wget disk run debug mame clean help
+.PHONY: all z80 6502 ccp telnet wget ftp nslookup disk run debug mame clean help
 
 # `make` assembles both CPUs and CCP, then updates the disk; it does not start MAME.
 all: disk
@@ -49,6 +55,8 @@ z80: $(PRODOS80)
 ccp: $(CPM_CCP)
 telnet: $(CPM_TELNET)
 wget: $(CPM_WGET)
+ftp: $(CPM_FTP)
+nslookup: $(CPM_NSLOOKUP)
 
 # Merlin32 names its output after the source basename without an extension.
 # Move it to Cadius's <filename>#<type><load-address> convention.
@@ -104,12 +112,34 @@ $(CPM_WGET): $(WGET_SRC)
 	@tail -c +4 "$(WGET_RAW)" > "$@.tmp" && mv -f "$@.tmp" "$@"
 	@rm -f "$(WGET_RAW)"
 
+# FTP and NSLOOKUP live beside TELNET/WGET on CP/M drive B.
+# Strip Udo Munk Z80ASM's FF 00 01 origin header from each .COM.
+$(CPM_FTP): $(FTP_SRC)
+	@echo 'Assembling CP/M FTP: $<'
+	@mkdir -p "$(dir $@)"
+	@rm -f "$(FTP_RAW)"
+	$(Z80ASM) -o$(FTP_RAW) "$<"
+	@test -f "$(FTP_RAW)" || { echo 'Error: Z80asm did not create $(FTP_RAW)' >&2; exit 1; }
+	@test "$$(head -c 3 "$(FTP_RAW)" | od -An -tx1 | tr -d ' \n')" = ff0001 || { echo 'Error: unexpected FTP binary header (expected FF 00 01)' >&2; exit 1; }
+	@tail -c +4 "$(FTP_RAW)" > "$@.tmp" && mv -f "$@.tmp" "$@"
+	@rm -f "$(FTP_RAW)"
+
+$(CPM_NSLOOKUP): $(NSLOOKUP_SRC)
+	@echo 'Assembling CP/M NSLOOKUP: $<'
+	@mkdir -p "$(dir $@)"
+	@rm -f "$(NSLOOKUP_RAW)"
+	$(Z80ASM) -o$(NSLOOKUP_RAW) "$<"
+	@test -f "$(NSLOOKUP_RAW)" || { echo 'Error: Z80asm did not create $(NSLOOKUP_RAW)' >&2; exit 1; }
+	@test "$$(head -c 3 "$(NSLOOKUP_RAW)" | od -An -tx1 | tr -d ' \n')" = ff0001 || { echo 'Error: unexpected NSLOOKUP binary header (expected FF 00 01)' >&2; exit 1; }
+	@tail -c +4 "$(NSLOOKUP_RAW)" > "$@.tmp" && mv -f "$@.tmp" "$@"
+	@rm -f "$(NSLOOKUP_RAW)"
+
 # Update a temporary COPY of the ProDOS image, then publish it only after
 # both Cadius operations succeed. Retain the .po extension for Cadius.
 # Tracking the image itself as the target makes `make disk` incremental.
 disk: $(DISK_IMAGE)
 
-$(DISK_IMAGE): $(PRODOS65) $(PRODOS80) $(CPM_CCP) $(CPM_TELNET) $(CPM_WGET)
+$(DISK_IMAGE): $(PRODOS65) $(PRODOS80) $(CPM_CCP) $(CPM_TELNET) $(CPM_WGET) $(CPM_FTP) $(CPM_NSLOOKUP)
 	echo 'Creating $@ with Cadius...'
 	$(CADIUS) createvolume "$@" "$(DISK_VOLUME)" 4096KB
 	$(CADIUS) addfile "$@" "/$(DISK_VOLUME)" prodos.242/PRODOS*
@@ -158,18 +188,20 @@ mame: debug
 
 # Never delete the source files, ProDOS image, or hard-disk images.
 clean:
-	rm -f "$(PRODOS65)" "$(PRODOS80)" "$(RAW65)" "$(RAW80)" "$(CPM_CCP)" "$(CCP_RAW)" "$(CPM_TELNET)" "$(TELNET_RAW)" "$(CPM_WGET)" "$(WGET_RAW)" _FileInformation.txt
+	rm -f "$(PRODOS65)" "$(PRODOS80)" "$(RAW65)" "$(RAW80)" "$(CPM_CCP)" "$(CCP_RAW)" "$(CPM_TELNET)" "$(TELNET_RAW)" "$(CPM_WGET)" "$(WGET_RAW)" "$(CPM_FTP)" "$(FTP_RAW)" "$(CPM_NSLOOKUP)" "$(NSLOOKUP_RAW)" _FileInformation.txt
 
 help:
 	@printf '%s\n' \
-	  'make          Assemble both CPUs + CCP + TELNET + WGET; update zapple2.po if changed' \
+	  'make          Assemble both CPUs + CCP + TELNET + WGET + FTP + NSLOOKUP; update zapple2.po if changed' \
 	  'make z80      Assemble softcard80.asm only' \
 	  'make 6502     Assemble softcard65.asm only' \
 	  'make ccp      Assemble CCP.asm to cpm-apps/CPM-2.2/CCP.COM' \
 	  'make telnet   Assemble TELNET.asm to cpm-apps/Utils/TELNET.COM' \
 	  'make wget     Assemble wget.asm to cpm-apps/Utils/WGET.COM' \
+	  'make ftp      Assemble ftp.asm to cpm-apps/Utils/FTP.COM' \
+	  'make nslookup Assemble NSLOOKUP.asm to cpm-apps/Utils/NSLOOKUP.COM' \
 	  'make disk     Update the ProDOS image from changed binaries' \
 	  'make run      Update image, then launch MAME without debugger' \
 	  'make debug    Update image, then launch MAME with -debug -w' \
 	  'make mame     Alias for make debug (original script behavior)' \
-	  'make clean    Remove generated binaries (including CCP/TELNET/WGET.COM); preserve disk images'
+	  'make clean    Remove generated binaries (including CCP/TELNET/WGET/FTP/NSLOOKUP.COM); preserve disk images'

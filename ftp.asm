@@ -1,16 +1,14 @@
-; FTP.COM v0.2c - independent control/data receive buffers
-; Passive FTP client: GET, PUT, DIR. Binary (TYPE I), FTP plaintext only.
-; Usage: FTP host[:port] GET remote local [user [password]]
-;        FTP host[:port] PUT local remote [user [password]]
-;        FTP host[:port] DIR path [user [password]]
-; User only, or password of ? or *, prompts for case-sensitive password.
-; Username ? prompts for case-sensitive username.
-; Command-tail arguments are uppercased by CP/M CCP.
-; Defaults to anonymous login. Port defaults to 21.
+; FTP.COM v0.4 - interactive, recoverable FTP, real ASCII conversions
+; Passive FTP client: GET PUT DIR, TYPE I / TYPE A, FTP plaintext only.
+; Usage: FTP host[:port]
+; Username and password are ALWAYS collected interactively: CCP folds case.
+; Empty username selects anonymous; empty anonymous password uses a default.
+; Port defaults to 21. FTP commands are typed at ftp>.
+; TYPE A translates CP/M CRLF, LF and trailing ^Z on transfers.
 ; DNSLIB is copied verbatim from the hardware-proven NSLOOKUP resolver.
 ; Existing BDOS F9, FA, FB, FC - no kernel modifications.
 ; CP/M files are 128-byte records. GET pads the final record with 1Ah.
-; PUT transmits the entire last 128-byte record, including CP/M padding.
+; Binary PUT transfers full 128-byte CP/M records; ASCII stops at Ctrl-Z.
 ; Credentials and payload are NOT encrypted. No FTPS or SFTP.
 ; Udo Munk Z80ASM. Labels <= 8 significant characters.
 BDOS    EQU 0005H
@@ -33,10 +31,8 @@ VCLEAR  XOR A
         JP C,USGERR
         CALL PARHOST
         JP C,HOSTERR
-        CALL PARACT
+        CALL IPAR
         JP C,USGERR
-        CALL CKFILE
-        JP C,FILERR
         CALL DNSHOST
         JP C,DNSERR
         CALL ALCCTL
@@ -52,12 +48,7 @@ VCLEAR  XOR A
         JP C,NETERR
         CALL LOGIN
         JP C,FTPERR
-        CALL OPENDAT
-        JP C,FTPERR
-        CALL DOXFER
-        JP C,FTPERR
-        LD DE,FINMSG
-        CALL PRINT
+        CALL ILOOP
         JP CLEAN
 USGERR  LD DE,USAGE
         JP FAIL
@@ -144,7 +135,7 @@ ARGNEXT CALL SKIPSP
         CALL NEXTTK
         JP ARGNEXT
 ARGDONE LD A,(TCOUNT)
-        CP 2
+        CP 1
         JP C,ARGERR
         OR A
         RET
@@ -513,13 +504,15 @@ FIXPWOK OR A
         RET
 
 ; FCB always initialized, regardless of DEFS contents.
-CKFILE  LD A,(MODE)
+CKFILE  XOR A
+        LD (ERRCODE),A
+        LD A,(MODE)
         CP 3
         RET Z
         LD HL,(LOCAL)
         LD (OUTPTR),HL
         CALL FPAR
-        RET C
+        JP C,CFBAD
         LD A,(MODE)
         CP 1
         JP Z,CHECKEX
@@ -527,10 +520,16 @@ CKFILE  LD A,(MODE)
         LD C,15
         CALL BDOS
         CP 0FFH
-        JP Z,ARGBAD
+        JP Z,CFNONE
         LD A,1
         LD (FILEOP),A
         OR A
+        RET
+CFBAD   LD A,1                ; invalid CP/M 8.3 local name
+        JP CFERR
+CFNONE  LD A,3                ; PUT source does not exist
+CFERR   LD (ERRCODE),A
+        SCF
         RET
 FPAR    LD HL,FCB
         LD B,36
@@ -620,8 +619,8 @@ CHECKEX LD DE,FCB
         LD DE,FCB
         LD C,16
         CALL BDOS
-        SCF
-        RET
+        LD A,2                ; GET destination already exists
+        JP CFERR
 NEXIST  OR A
         RET
 CLOSEF  LD A,(FILEOP)
@@ -637,7 +636,7 @@ FCREATE LD DE,FCB
         LD C,22
         CALL BDOS
         CP 0FFH
-        JP Z,ARGBAD
+        JP Z,CRERR
         LD A,1
         LD (FILEOP),A
         LD DE,FILEBUF
@@ -645,6 +644,8 @@ FCREATE LD DE,FCB
         CALL BDOS
         OR A
         RET
+CRERR   LD A,4               ; local CREATE failed
+        JP CFERR
 WRREC   LD DE,FILEBUF
         LD C,26
         CALL BDOS
@@ -653,8 +654,8 @@ WRREC   LD DE,FILEBUF
         CALL BDOS
         OR A
         RET Z
-        SCF
-        RET
+        LD A,5               ; local WRITE failed
+        JP CFERR
 FINFILE LD A,(FIDX)
         OR A
         JP Z,FILCLOSE
@@ -1067,25 +1068,21 @@ SIMPLE  CALL CMDSIMP
         RET C
         JP READREP
 
-; Interactive case-sensitive credentials.  CCP has already uppercased
-; its command tail; BDOS 6 E=FF reads raw console bytes without echo.
-; For username ' ?', echo manually; password never echoes.
-ASKUSER LD HL,(UNAME)
-        LD A,(HL)
-        CP '?'
-        JP Z,ASKUYES
-        OR A
-        RET
-ASKUYES INC HL
-        LD A,(HL)
-        OR A
-        RET NZ
-        LD HL,USRBUF
+; Interactive case-sensitive credentials read from raw console via BDOS 6.
+ASKUSER LD HL,USRBUF
         LD (UNAME),HL
         LD A,1
         LD (INPECHO),A
         LD DE,USRMSG
-        JP INPSTR
+        CALL INPSTR
+        RET C
+        LD A,(USRBUF)
+        OR A
+        RET NZ
+        LD HL,ANON
+        LD (UNAME),HL
+        OR A
+        RET
 ASKPASS XOR A
         LD (INPECHO),A
         LD DE,PASMSG
@@ -1200,7 +1197,15 @@ LOGPASS LD A,(PWPROM)
         JP Z,LPASSOK
         CALL ASKPASS
         RET C
-LPASSOK LD HL,CPASS
+LPASSOK LD A,(PWBUF)
+        OR A
+        JP NZ,LPASSET
+        LD A,(USRBUF)        ; blank username selected anonymous
+        OR A
+        JP NZ,LPASSET
+        LD HL,ANONPWD
+        LD (PASSWD),HL
+LPASSET LD HL,CPASS
         LD DE,(PASSWD)
         LD (CMDARG),DE
         CALL SENDCMD
@@ -1312,6 +1317,8 @@ XARG    LD DE,(REMOTE)
         RET C
         CALL EXPECT1
         RET C
+        LD A,1                ; accepted 1xx, awaiting terminal reply
+        LD (XPEND),A
         LD A,(MODE)
         CP 1
         JP Z,RECVGET
@@ -1328,8 +1335,11 @@ RECVGET CALL FCREATE
         CALL PRINT
         CALL DATAREC
         RET C
+        CALL AGFIN              ; flush any final CR in TYPE A
+        RET C
         CALL FINFILE
         RET C
+        CALL IHEND
         LD DE,DONEBYT
         CALL PRINT
         JP TRANSOK
@@ -1338,14 +1348,23 @@ RECVDIR LD A,1
         CALL DATAREC
         RET C
         JP TRANSOK
-TRANSOK LD A,(DSOCK)
+TRANSOK LD A,(MODE)
+        CP 2
+        CALL Z,IHEND
+        LD A,(DSOCK)
         CALL FREEONE
         XOR A
         LD (DHELD),A
         LD A,(CSOCK)
         LD (CURSOCK),A
-        CALL EXPECT2
+        CALL READREP
+        PUSH AF
+        XOR A
+        LD (XPEND),A
+        POP AF
         RET C
+        CP 2
+        JP NZ,ARGBAD
         OR A
         RET
 ; Consume bytes from data socket, until CLOSE_WAIT/CLOSED and drained.
@@ -1368,8 +1387,15 @@ REACH   LD A,(RXROUTE)       ; stable receive sink chosen at entry
         LD A,(HL)
         PUSH HL
         PUSH BC
+        LD (ACHAR),A
+        LD A,(XFTYPE)
+        OR A
+        LD A,(ACHAR)
+        JP NZ,RASCHR
         CALL SAVECHR
-        POP BC
+        JP RDONEC
+RASCHR  CALL AGETCH
+RDONEC  POP BC
         POP HL
         RET C
         JP RCONT
@@ -1381,7 +1407,7 @@ DIRBYTE LD A,(HL)
         POP HL
 RCONT   INC HL
         DJNZ REACH
-        JP RECVLP
+        JP HPDATA
 RIDLE   CALL FBGET
         CP 01CH
         JP Z,REND
@@ -1398,7 +1424,9 @@ RIDLE   CALL FBGET
         LD C,11
         CALL BDOS
         JP RECVLP
-REND    OR A
+REND    LD A,2                ; data drained, final FTP reply pending
+        LD (XPEND),A
+        OR A
         RET
 ; PUT uploads all CP/M 128-byte records (including final padding).
 SENDPUT LD A,(DSOCK)
@@ -1413,11 +1441,18 @@ PUTLP   LD DE,FILEBUF
         JP Z,PUTREC
         CP 1
         JP NZ,ARGBAD
-        LD E,8                    ; DISCON after last queued SEND
+PUTEND  LD A,(XFTYPE)
+        OR A
+        JP Z,PUTDISC
+        CALL APFIN
+        RET C
+PUTDISC LD E,8                    ; DISCON after last queued SEND
         CALL FBCMD
         CP 0FFH
         JP Z,ARGBAD
         CALL CLOSEF
+        LD A,2                 ; PUT data finished, final reply pending
+        LD (XPEND),A
         LD HL,30000
 PWAIT   PUSH HL
         CALL FBGET
@@ -1438,7 +1473,10 @@ PWAIT   PUSH HL
         CALL BDOS
         POP HL
         JP PWAIT
-PUTREC  LD HL,FILEBUF
+PUTREC  LD A,(XFTYPE)
+        OR A
+        JP NZ,APREC
+        LD HL,FILEBUF
         LD A,8
         LD (CHUNKS),A
 PCHUNK  LD A,16
@@ -1449,17 +1487,153 @@ PCHUNK  LD A,16
         DEC A
         LD (CHUNKS),A
         JP NZ,PCHUNK
-        JP PUTLP
+        JP HPPUT
 
-BANNER  DEFM 'Zapple-II FTP v0.2b (PASV)'
+; ----- TYPE A / network ASCII stream conversions -------------------
+; GET: NVT CR LF => CP/M CR LF; CR NUL => bare CR.
+; A bare LF is normalized to CP/M CR LF. Pending CR spans RX batches.
+AGETCH  LD (ACHAR),A
+        LD A,(AGCR)
+        OR A
+        JP Z,AGNEW
+        XOR A
+        LD (AGCR),A
+        LD A,13
+        CALL SAVECHR
+        RET C
+        LD A,(ACHAR)
+        CP 0
+        RET Z                  ; CR NUL -> CR only
+        CP 10
+        JP Z,AGLF0            ; CR LF -> CR LF (CR already saved)
+AGNEW   LD A,(ACHAR)
+        CP 13
+        JP Z,AGWAIT
+        CP 10
+        JP Z,AGLF
+        JP SAVECHR
+AGWAIT  LD A,1
+        LD (AGCR),A
+        OR A
+        RET
+AGLF    LD A,13
+        CALL SAVECHR
+        RET C
+AGLF0   LD A,10
+        JP SAVECHR
+AGFIN   LD A,(XFTYPE)
+        OR A
+        RET Z
+        LD A,(AGCR)
+        OR A
+        RET Z
+        XOR A
+        LD (AGCR),A
+        LD A,13
+        JP SAVECHR
+
+; PUT: remove CP/M EOF ^Z; normalize LF and CR LF to network CR LF;
+; encode unpaired CR as CR NUL.  Outgoing TCP is buffered in 16 bytes.
+APREC   LD HL,FILEBUF
+        LD B,128
+APLOOP  LD A,(HL)
+        PUSH HL
+        PUSH BC
+        CALL APUTCH
+        POP BC
+        POP HL
+        RET C
+        LD A,(AEOT)
+        OR A
+        JP NZ,PUTEND
+        INC HL
+        DJNZ APLOOP
+        JP HPPUT
+APUTCH LD (ACHAR),A
+        CP 01AH
+        JP Z,APEOF
+        LD A,(APCR)
+        OR A
+        JP Z,APNEXT
+        XOR A
+        LD (APCR),A
+        LD A,13
+        CALL AEMIT
+        RET C
+        LD A,(ACHAR)
+        CP 10
+        JP Z,APLF0            ; pending CR plus LF
+        XOR A
+        CALL AEMIT            ; pending bare CR -> CR NUL
+        RET C
+APNEXT  LD A,(ACHAR)
+        CP 13
+        JP Z,APWAIT
+        CP 10
+        JP Z,APLF
+        JP AEMIT
+APWAIT  LD A,1
+        LD (APCR),A
+        OR A
+        RET
+APLF    LD A,13
+        CALL AEMIT
+        RET C
+APLF0   LD A,10
+        JP AEMIT
+APEOF   LD A,1
+        LD (AEOT),A
+        OR A
+        RET
+; Flush CR and final 1..15 network bytes before disconnecting.
+APFIN   LD A,(APCR)
+        OR A
+        JP Z,APLAST
+        XOR A
+        LD (APCR),A
+        LD A,13
+        CALL AEMIT
+        RET C
+        XOR A
+        CALL AEMIT
+        RET C
+APLAST  LD A,(ATXLEN)
+        OR A
+        RET Z
+        LD HL,TXBUF
+        CALL SENDRAW
+        RET C
+        XOR A
+        LD (ATXLEN),A
+        RET
+AEMIT   LD (AOUT),A
+        LD A,(ATXLEN)
+        LD E,A
+        LD D,0
+        LD HL,TXBUF
+        ADD HL,DE
+        LD A,(AOUT)
+        LD (HL),A
+        LD A,(ATXLEN)
+        INC A
+        LD (ATXLEN),A
+        CP 16
+        JP NZ,AEOK
+        LD HL,TXBUF
+        CALL SENDRAW
+        RET C
+        XOR A
+        LD (ATXLEN),A
+AEOK    OR A
+        RET
+
+BANNER  DEFM 'Zapple-II FTP v0.4 (PASV)'
         DEFB 13,10,'$'
-USAGE   DEFM 'FTP host[:port] GET remote local [user [pass]]'
+USAGE   DEFM 'FTP host[:port]'
         DEFB 13,10
-        DEFM 'FTP host[:port] PUT local remote [user [pass]]'
+        DEFM 'Prompts for case-sensitive username and password'
         DEFB 13,10
-        DEFM 'FTP host[:port] DIR [path] [user [pass]]'
-        DEFB 13,10
-        DEFM 'Omit pass (or use ?) to prompt. User ? prompts too'
+        DEFM 'Commands: GET PUT DIR BIN ASCII CD HASH EXIT'
         DEFB 13,10,'$'
 BADHOST DEFM 'Invalid host or TCP port'
         DEFB 13,10,'$'
@@ -2361,4 +2535,442 @@ CTLREAD LD A,(CURSOCK)
         LD C,0FCH
         JP BDOS
 CRXBUF  DEFS 16
+
+; =====================================================================
+; FTP v0.4 interactive shell.  Entrypoints are called by the 3-byte
+; CALL sites patched above.  Only this section is new after v0.2c.
+; Labels <=8 significant characters (Udo Munk Z80ASM).
+;
+; FTP host[:port] -> always prompts for case-sensitive credentials.
+; IPAR rejects additional command-tail tokens.  Startup already
+; cleared VARS0..VARS1, but explicitly clear new state after CRXBUF.
+IPAR    LD A,(TCOUNT)
+        CP 1
+        JP NZ,ARGBAD
+        XOR A
+        LD (HSHON),A
+        LD (HSHCNT),A
+        LD (XFTYPE),A           ; binary is initial FTP TYPE I
+        LD (XPEND),A
+        LD (ERRCODE),A
+        LD (AGCR),A
+        LD (APCR),A
+        LD (ATXLEN),A
+        LD (AEOT),A
+        LD HL,USRBUF
+        LD (UNAME),HL
+        LD HL,PWBUF
+        LD (PASSWD),HL
+        LD A,1
+        LD (INTRON),A
+        LD (PWPROM),A
+        OR A
+        RET
+
+ILOOP   LD A,(CSOCK)
+        LD (CURSOCK),A
+        LD DE,IPROM
+        LD HL,ICMDTX
+        LD A,1
+        LD (INPECHO),A
+        CALL INPSTR
+        RET C
+        CALL ITOKEN
+        JP C,ISYNT
+        LD A,(TCOUNT)
+        OR A
+        JP Z,ILOOP
+        CALL IEXEC
+        JP C,IEXIT
+        JP ILOOP
+ISYNT   LD DE,IHELP
+        CALL PRINT
+        JP ILOOP
+IEXIT   LD A,(CSOCK)
+        LD (CURSOCK),A
+        LD HL,CQUIT
+        CALL CMDSIMP
+        ; Do not wait for 221: some servers close immediately on QUIT.
+        OR A
+        RET
+
+; Tokenize at most three words in the fresh, case-preserving input
+; string.  Reuse TOKENS/TCOUNT but never damage HOSTNAM/connection.
+ITOKEN  XOR A
+        LD (TCOUNT),A
+        LD HL,ICMDTX
+        LD DE,TOKENS
+ITNEXT  CALL SKIPSP
+        LD A,(HL)
+        OR A
+        RET Z
+        LD A,(TCOUNT)
+        CP 3
+        JP NC,ARGBAD
+        LD A,L
+        LD (DE),A
+        INC DE
+        LD A,H
+        LD (DE),A
+        INC DE
+        LD A,(TCOUNT)
+        INC A
+        LD (TCOUNT),A
+        CALL NEXTTK
+        JP ITNEXT
+
+IEXEC   LD HL,(TOKENS)
+        LD DE,CMDGET
+        CALL STREQ
+        JP Z,IGET
+        LD HL,(TOKENS)
+        LD DE,CMDPUT
+        CALL STREQ
+        JP Z,IPUT
+        LD HL,(TOKENS)
+        LD DE,CMDDIR
+        CALL STREQ
+        JP Z,IDIR
+        LD HL,(TOKENS)
+        LD DE,CBIN
+        CALL STREQ
+        JP Z,IBIN
+        LD HL,(TOKENS)
+        LD DE,CASCII
+        CALL STREQ
+        JP Z,IASCII
+        LD HL,(TOKENS)
+        LD DE,CCD
+        CALL STREQ
+        JP Z,ICD
+        LD HL,(TOKENS)
+        LD DE,CHASH
+        CALL STREQ
+        JP Z,IHASH
+        LD HL,(TOKENS)
+        LD DE,CHELP
+        CALL STREQ
+        JP Z,IBHELP
+        LD HL,(TOKENS)
+        LD DE,CQMARK
+        CALL STREQ
+        JP Z,IBHELP
+        LD HL,(TOKENS)
+        LD DE,CEXIT
+        CALL STREQ
+        JP Z,IBEXIT
+        LD HL,(TOKENS)
+        LD DE,CQUIT0
+        CALL STREQ
+        JP Z,IBEXIT
+        JP IBHELP
+IBHELP  LD DE,IHELP
+        CALL PRINT
+        OR A
+        RET
+IBEXIT  SCF
+        RET
+
+; GET remote [local] - when local omitted, same basename is used.
+; Remote Unix paths require an explicit legal CP/M local filename.
+IGET    LD A,(TCOUNT)
+        CP 2
+        JP C,IBHELP
+        CP 4
+        JP NC,IBHELP
+        LD A,1
+        LD (MODE),A
+        LD HL,(TOKENS+2)
+        LD (REMOTE),HL
+        LD (LOCAL),HL
+        LD A,(TCOUNT)
+        CP 3
+        JP NZ,IXFER
+        LD HL,(TOKENS+4)
+        LD (LOCAL),HL
+        JP IXFER
+
+IPUT    LD A,(TCOUNT)
+        CP 2
+        JP C,IBHELP
+        CP 4
+        JP NC,IBHELP
+        LD A,2
+        LD (MODE),A
+        LD HL,(TOKENS+2)
+        LD (LOCAL),HL
+        LD (REMOTE),HL
+        LD A,(TCOUNT)
+        CP 3
+        JP NZ,IXFER
+        LD HL,(TOKENS+4)
+        LD (REMOTE),HL
+        JP IXFER
+
+IDIR    LD A,(TCOUNT)
+        CP 3
+        JP NC,IBHELP
+        LD A,3
+        LD (MODE),A
+        LD HL,DOTSTR
+        LD (REMOTE),HL
+        LD A,(TCOUNT)
+        CP 2
+        JP NZ,IXFER
+        LD HL,(TOKENS+2)
+        LD (REMOTE),HL
+        JP IXFER
+
+IXFER   XOR A
+        LD (FIDX),A
+        LD (HSHCNT),A
+        LD (AGCR),A
+        LD (APCR),A
+        LD (ATXLEN),A
+        LD (AEOT),A
+        LD (XPEND),A
+        CALL CKFILE
+        JP C,IXFILE
+        CALL OPENDAT
+        JP C,IXFAIL
+        CALL DOXFER
+        JP C,IXFAIL
+        LD DE,FINMSG
+        CALL PRINT
+        OR A
+        RET
+; Local errors need not affect the remote FTP session.
+IXFILE  LD A,(ERRCODE)
+        CP 1
+        JP Z,IFEINV
+        CP 2
+        JP Z,IFEEX
+        CP 3
+        JP Z,IFENF
+        CP 4
+        JP Z,IFECR
+        CP 5
+        JP Z,IFEWR
+        LD DE,BADFILE
+        JP IFEMSG
+IFEINV  LD DE,EMINV
+        JP IFEMSG
+IFEEX   LD DE,EMEXIST
+        JP IFEMSG
+IFENF   LD DE,EMNONE
+        JP IFEMSG
+IFECR   LD DE,EMCREATE
+        JP IFEMSG
+IFEWR   LD DE,EMWRITE
+IFEMSG  CALL PRINT
+        OR A
+        RET
+; Keep the interpreter alive after errors.  Close the partial local file
+; and release any passive data socket. If a 1xx was accepted, ABOR and
+; drain the next server reply, keeping control input separate from RXBUF.
+IXFAIL  CALL CLOSEF
+        LD A,(DHELD)
+        OR A
+        JP Z,IXFCTL
+        LD A,(DSOCK)
+        CALL FREEONE
+        XOR A
+        LD (DHELD),A
+IXFCTL  LD A,(XPEND)
+        OR A
+        JP Z,IXFMSG
+        CP 2
+        JP Z,IXFDONE
+        XOR A
+        LD (XPEND),A
+        LD A,(CSOCK)
+        LD (CURSOCK),A
+        LD HL,CABOR
+        CALL CMDSIMP
+        JP C,IXFSYNC
+        CALL READREP
+        JP C,IXFSYNC
+        CP 4                   ; 426 data aborted may be followed by 226
+        JP NZ,IXFMSG
+        CALL READREP
+        JP C,IXFSYNC
+        JP IXFMSG
+IXFDONE XOR A
+        LD (XPEND),A
+        LD A,(CSOCK)
+        LD (CURSOCK),A
+        CALL READREP            ; data finished; no ABOR necessary
+        JP C,IXFSYNC
+IXFMSG  LD A,(ERRCODE)
+        OR A
+        JP NZ,IXFILE
+        LD DE,BADFTP
+        CALL PRINT
+        OR A
+        RET
+IXFSYNC LD DE,EMSYNC
+        CALL PRINT
+        OR A
+        RET
+
+IBIN    LD A,(TCOUNT)
+        CP 1
+        JP NZ,IBHELP
+        LD HL,CTYPE
+        CALL SIMPLE
+        JP C,IXFAIL
+        CP 2
+        JP NZ,ITBAD
+        XOR A
+        LD (XFTYPE),A
+        LD DE,IMBIN
+        CALL PRINT
+        OR A
+        RET
+IASCII  LD A,(TCOUNT)
+        CP 1
+        JP NZ,IBHELP
+        LD HL,CASCI
+        CALL SIMPLE
+        JP C,IXFAIL
+        CP 2
+        JP NZ,ITBAD
+        LD A,1
+        LD (XFTYPE),A
+        LD DE,IMASC
+        CALL PRINT
+        OR A
+        RET
+ITBAD   LD DE,BADFTP
+        CALL PRINT
+        OR A
+        RET
+
+ICD     LD A,(TCOUNT)
+        CP 2
+        JP NZ,IBHELP
+        LD HL,CCWD
+        LD DE,(TOKENS+2)
+        LD (CMDARG),DE
+        CALL SENDCMD
+        JP C,IXFAIL
+        CP 2
+        JP NZ,ITBAD
+        OR A
+        RET
+
+IHASH   LD A,(TCOUNT)
+        CP 1
+        JP NZ,IBHELP
+        LD A,(HSHON)
+        XOR 1
+        LD (HSHON),A
+        OR A
+        JP Z,IHASH0
+        LD DE,IHON
+        CALL PRINT
+        OR A
+        RET
+IHASH0  LD DE,IHOFF
+        CALL PRINT
+        OR A
+        RET
+
+; One # per about 1 KiB of TCP payload.  For GET, each RX frame is
+; counted as 16 bytes (last, partial RX frame may be shorter).
+; For PUT each successful 128-byte CP/M record counts as 8 frames.
+; Printing happens between receive/send batches, NOT inside WRREC.
+HPDATA  LD A,(MODE)
+        CP 3
+        JP Z,RECVLP
+        LD A,1
+        CALL HPSTEP
+        JP RECVLP
+HPPUT   LD A,8
+        CALL HPSTEP
+        JP PUTLP
+HPSTEP  LD B,A
+        LD A,(HSHCNT)
+        ADD A,B
+        CP 64
+        JP C,HPSTOR
+        SUB 64
+        PUSH AF
+        LD A,(HSHON)
+        OR A
+        JP Z,HPSKIP
+        LD A,'#'
+        CALL PUTC
+HPSKIP  POP AF
+HPSTOR  LD (HSHCNT),A
+        RET
+IHEND   LD A,(HSHON)
+        OR A
+        RET Z
+        LD DE,NL
+        JP PRINT
+
+EMINV   DEFM 'Invalid local CP/M 8.3 filename'
+        DEFB 13,10,'$'
+EMEXIST DEFM 'Local destination already exists (not overwritten)'
+        DEFB 13,10,'$'
+EMNONE  DEFM 'Local source file not found'
+        DEFB 13,10,'$'
+EMCREATE DEFM 'Cannot create local destination file'
+        DEFB 13,10,'$'
+EMWRITE DEFM 'Error writing local destination file'
+        DEFB 13,10,'$'
+EMSYNC  DEFM 'FTP control resync failed - reconnect may be needed'
+        DEFB 13,10,'$'
+IPROM   DEFM 'ftp> '
+        DEFB '$'
+IHELP   DEFM 'GET remote [local]  PUT local [remote]  DIR [path]'
+        DEFB 13,10
+        DEFM 'BIN  ASCII  CD path  HASH  EXIT'
+        DEFB 13,10,'$'
+IMBIN   DEFM 'Binary mode'
+        DEFB 13,10,'$'
+IMASC   DEFM 'ASCII mode (TYPE A - newline conversion)'
+        DEFB 13,10,'$'
+IHON    DEFM 'Hash printing on (# per approx 1 KiB)'
+        DEFB 13,10,'$'
+IHOFF   DEFM 'Hash printing off'
+        DEFB 13,10,'$'
+CBIN    DEFM 'BIN'
+        DEFB 0
+CASCII  DEFM 'ASCII'
+        DEFB 0
+CCD     DEFM 'CD'
+        DEFB 0
+CHASH   DEFM 'HASH'
+        DEFB 0
+CHELP   DEFM 'HELP'
+        DEFB 0
+CQMARK  DEFM '?'
+        DEFB 0
+CEXIT   DEFM 'EXIT'
+        DEFB 0
+CQUIT0  DEFM 'QUIT'
+        DEFB 0
+CCWD    DEFM 'CWD '
+        DEFB 0
+CASCI   DEFM 'TYPE A'
+        DEFB 0
+CQUIT   DEFM 'QUIT'
+        DEFB 0
+CABOR   DEFM 'ABOR'
+        DEFB 0
+INTRON  DEFB 0
+HSHON   DEFB 0
+HSHCNT  DEFB 0
+XFTYPE  DEFB 0          ; 0=TYPE I, 1=TYPE A
+XPEND   DEFB 0          ; 1=transfer active, 2=data ended, reply pending
+ERRCODE DEFB 0          ; local-file error classification
+AGCR    DEFB 0          ; pending GET CR
+APCR    DEFB 0          ; pending PUT CR
+ATXLEN  DEFB 0          ; ASCII PUT TX buffer fill
+AEOT    DEFB 0          ; ASCII PUT found Ctrl-Z
+ACHAR   DEFB 0          ; current ASCII conversion character
+AOUT    DEFB 0          ; outgoing ASCII byte
+ICMDTX  DEFS 65
         END
