@@ -1,5 +1,4 @@
-; WGET.COM v0.2e FCB initialization fix for Zapple-II Phase 4C (Apple //e, Z80 SoftCard)
-; Progress: one initial dot, then one per 1024 payload bytes flushed.
+; WGET.COM for Zapple-II Phase 4C (Apple //e, Z80 SoftCard)
 ; HTTP/1.0 downloader using resident BDOS F9/FA/FB/FC networking.
 ; Usage: WGET http://a.b.c.d[:port]/path FILE.EXT
 ; IPv4 only, plain HTTP, status 200 only. No DNS, TLS, redirects or chunking.
@@ -10,14 +9,6 @@
 BDOS    EQU 0005H
         ORG 0100H
 START   LD SP,STKTOP
-; Explicitly clear counters: DEFS storage may be filled with FFh
-; by Udo Munk's assembler (or by the COM loader).
-        LD HL,NBYTES
-        LD B,4
-        XOR A
-NBZERO  LD (HL),A
-        INC HL
-        DJNZ NBZERO
         LD DE,BANNER
         CALL PRINT
         CALL ARGS
@@ -40,8 +31,6 @@ NBZERO  LD (HL),A
         JP C,FAIL
         CALL FINISH
         JP C,FAIL
-        LD DE,CRLF
-        CALL PRINT
         LD DE,DONE
         CALL PRINT
         JP EXIT
@@ -296,14 +285,7 @@ UPPER   CP 'a'
         RET
 
 ; CP/M FCB name creation; no drive prefix, 8.3 uppercase.
-FPAR    LD HL,FCB
-        LD B,36
-        XOR A
-FZERO   LD (HL),A
-        INC HL
-        DJNZ FZERO
-; Now populate blank-padded filename and extension.
-        LD HL,FCB+1
+FPAR    LD HL,FCB+1
         LD B,11
 FILLSP  LD (HL),' '
         INC HL
@@ -724,18 +706,11 @@ FCREATE LD DE,FCB
         LD C,22
         CALL BDOS
         CP 0FFH
-        JP Z,DOSERR
+        JR Z,DOSERR
         LD A,1
         LD (FOPEN),A
         LD DE,FILEBUF
         LD C,26
-        CALL BDOS
-        LD DE,PROGMSG
-        CALL PRINT
-        LD A,1
-        LD (PRGCOL),A
-        LD E,'.'               ; show progress even for tiny files
-        LD C,2
         CALL BDOS
         OR A
         RET
@@ -768,29 +743,7 @@ BYTEDN  LD A,(FIDX)
         RET C
         XOR A
         LD (FIDX),A
-        LD A,(NBYTES)        ; 1 KiB requires low 10 bits to be zero
-        OR A
-        JR NZ,SVOK
-        LD A,(NBYTES+1)
-        AND 03H
-        JR NZ,SVOK
-        CALL PRGDOT
 SVOK    OR A
-        RET
-; Only call this after every 1 KiB successfully written to disk.
-; Keep output sparse on the Apple //e console (max 64 dots/line).
-PRGDOT  LD E,'.'
-        LD C,2
-        CALL BDOS
-        LD A,(PRGCOL)
-        INC A
-        LD (PRGCOL),A
-        CP 64
-        RET NZ
-        XOR A
-        LD (PRGCOL),A
-        LD DE,CRLF
-        CALL PRINT
         RET
 WRRECORD LD DE,FILEBUF
         LD C,26
@@ -823,7 +776,7 @@ FINALCL LD DE,FCB
         LD C,16
         CALL BDOS
         CP 0FFH
-        JP Z,DOSERR
+        JR Z,DOSERR
         XOR A
         LD (FOPEN),A
         RET
@@ -837,7 +790,7 @@ FCLOSE  LD A,(FOPEN)
         LD (FOPEN),A
         RET
 
-BANNER  DEFM 'Zapple-II WGET v0.2e'
+BANNER  DEFM 'Zapple-II WGET v0.1'
         DEFB 13,10,'$'
 USAGE   DEFM 'Usage: WGET http://IP[:port]/path FILE.EXT'
         DEFB 13,10,'$'
@@ -853,7 +806,6 @@ ERRHTTP DEFM 'HTTP status not 200, no file created'
         DEFB 13,10,'$'
 ERRFAIL DEFM 'Transfer error or timeout (partial file may remain)'
         DEFB 13,10,'$'
-PROGMSG DEFM 'Receiving: $'
 SOCKMSG DEFM 'Socket $'
 CRLF    DEFB 13,10,'$'
 DONE    DEFM 'Transfer complete'
@@ -887,7 +839,6 @@ FIDX    DEFB 0
 FOPEN   DEFB 0
 SAVEB   DEFB 0
 NBYTES  DEFS 4
-PRGCOL  DEFB 0
 SOCKNO  DEFB 0
 SOCKHI  DEFB 0
 HELD    DEFB 0
