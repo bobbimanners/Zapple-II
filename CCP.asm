@@ -389,7 +389,7 @@ TYBYTE      LD      A,(HL)
             JR      Z,TYCLOSE
             OR      A
             JR      Z,TYSKIP
-            CALL    OUT
+            CALL    OUTRAW                  ; TYPE passes existing CRLF through unchanged
 TYSKIP      INC     HL
             PUSH    BC
             CALL    POLLKEY
@@ -1120,9 +1120,42 @@ EXGO        LD      DE,EXPAR
             CALL    PRINT
             JP      MAINLOOP
 
-PRINT       LD      C,9
+; Native CRT treats CR as newline, so the historical CCP uses CR-only
+; messages. UC1 over TCP must send CR+LF, but TYPE's *file bytes* must
+; pass through unchanged (a CRLF text file must not double-space).
+PRINT       LD      A,(0003H)                ; per-session IOBYTE (AUX)
+            AND     3
+            CP      3
+            JR      NZ,PRNORM                ; local CRT: original fast BDOS 9
+            LD      H,D
+            LD      L,E
+PRLOOP      LD      A,(HL)
+            CP      '$'
+            RET     Z
+            CALL    OUT
+            INC     HL
+            JR      PRLOOP
+PRNORM      LD      C,9
             JP      0005H
+
+; CCP-generated CR becomes CR+LF on UC1 only. Preserve A and flags.
 OUT         PUSH    AF
+            CALL    OUTRAW
+            POP     AF
+            PUSH    AF
+            CP      13
+            JR      NZ,OUTDONE
+            LD      A,(0003H)
+            AND     3
+            CP      3
+            JR      NZ,OUTDONE
+            LD      A,10
+            CALL    OUTRAW
+OUTDONE     POP     AF
+            RET
+
+; Raw byte printer for TYPE; preserves actual file's CR and LF exactly.
+OUTRAW      PUSH    AF
             PUSH    BC
             PUSH    DE
             PUSH    HL

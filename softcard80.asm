@@ -2404,9 +2404,9 @@ UCSTAT        PUSH      BC
               CALL      UCRPTR
               LD        (HL),1
               JP        UCREADY1                      ; successful RX is ready NOW
-; If the peer has closed its end, synthesize Ctrl-] to let the
-; test launcher restore the local IOBYTE and release its socket.
-; Only do so after draining any final incoming bytes.
+; Socket CLOSE_WAIT/CLOSED: let the blocked read finish and ask the
+; supervisor to terminate the *entire tab*, not reassign the still-running
+; application to the physical console. Drain any pending RX data first.
 UCDISC        LD        A,(NXSOCK)
               LD        D,A
               LD        A,3
@@ -2416,7 +2416,7 @@ UCDISC        LD        A,(NXSOCK)
               OR        A
               JR        NZ,UCEMPTY                     ; established/listen, no RX
 UCDOWN        CALL      UCDPTR
-              LD        (HL),3                         ; synthesize Ctrl-C
+              LD        (HL),13                        ; wake reader; do not invoke CCP ^C handler
               CALL      UCRPTR
               LD        (HL),1
               CALL      UCPPTR
@@ -2467,6 +2467,9 @@ UCINNOD       POP       AF
 UCOUT         PUSH      BC
               PUSH      DE
               PUSH      HL
+              LD        A,(AXQUIT)
+              CP        5
+              JR        Z,UCOEND                       ; on disconnect, discard echo/output
               LD        A,E
               LD        (NXBUF),A
               CALL      UCBPTR
@@ -2484,13 +2487,9 @@ UCOSEND       LD        A,1
               POP       AF
               OR        A
               JR        Z,UCOSEND                       ; full buffer: retry
-              LD        A,(NXBUF)                       ; UCBPTR/NXTX clobber E: inspect SENT byte
-              CP        0DH
-              JR        NZ,UCOEND
-              LD        E,0AH                          ; Unix terminal line advance
-              LD        A,E
-              LD        (NXBUF),A
-              JR        UCOSEND                        ; one extra byte, then finish
+              ; Send exactly the application's byte. No automatic CR->CRLF:
+              ; ordinary CP/M programs already supply CR+LF. CCP handles
+              ; its own intentional bare-CR newlines in CCP.asm.
 UCOEND        POP       HL
               POP       DE
               POP       BC
@@ -2656,20 +2655,11 @@ NCHBIND       LD        E,C
               ADD       HL,DE
               LD        A,(HL)
               RET
-; Called only after consuming the synthetic disconnect ^C from UCIN.
-; Never leave a dead socket as the tab's only console.
-NCDROP        CALL      UCBPTR
-              LD        A,(HL)
-              CP        4
-              JR        NC,NCDIO
-              LD        D,A
-              LD        E,1
-              CALL      NETFREE                        ; also unbinds and clears persistence
-NCDIO         LD        A,(IOBYTE)
-              AND       0FCH
-              OR        1                              ; back to local CRT in this tab
-              LD        E,A
-              JP        SET_IOB                        ; sync MAIN and AUX $0003
+; Called after consuming the synthetic disconnect CR from UCIN.
+; Abort via AUX gateway; never reassign the still-running program to CRT.
+NCDROP        LD        A,5                           ; new remote-session abort code
+              LD        (AXQUIT),A                    ; AXGATE will not resume AUX app
+              RET                                     ; cleanup only after leaving AUX
 ; Shell EXIT/BDOS 0: restore physical console before cleanup.
 ; Called in MAIN after the remote CCP itself has exited.
 NCSTOP        PUSH      BC
@@ -3573,6 +3563,8 @@ SHFCB         DEFB      1                             ; always reload from drive
 ; Called with MAIN stack, either after original AUXRUN or TABRESUM.
 ; On suspended status (AXQUIT=3) leave parked task untouched.
 SHSTEP        LD        A,(AXQUIT)
+              CP        5
+              JP        Z,NCABORT                     ; network hangup: kill remote session
               CP        3
               RET       Z
 SHLOOP        CALL      SHPTR
@@ -6462,8 +6454,9 @@ AUXEXOK       PUSH      IX
               CALL      TMSET                         ; reset Z80 parser + 6502 VATTR/VSTATE
               POP       IX
               CALL      VSSTSAVE                      ; commit neutral terminal state for this tab
-              LD        E,13
-              CALL      C_WRITE
+              CALL      NCEXCR                          ; don't print to a dead remote socket
+              NOP
+              NOP                                      ; same 5 bytes as old LD E / CALL
               LD        A,(AUXEXCD)
               CP        1                              ; AUX BDOS 0 -> normal warm boot
               RET       NZ
@@ -10637,6 +10630,37 @@ NCKCLN        PUSH      BC
               POP       BC
               RET       NZ                             ; keep UC1 binding when armed
               JP        NCXCLN
+
+; The AUX exit path originally printed a CR even on a forced disconnect.
+; That could spin forever in UCOUT while the socket was closed.
+NCEXCR        LD        A,(AUXEXCD)
+              CP        5
+              RET       Z
+              LD        E,13
+              CALL      C_WRITE
+              LD        A,(IOBYTE)
+              AND       3
+              CP        3
+              RET       NZ                             ; CRT retains its existing CR behaviour
+              LD        E,10
+              JP        C_WRITE                        ; kernel's own final CR needs LF on UC1
+
+; AXQUIT=5 has unwound the AUX transient. NOW it is safe to end the
+; session. Reuse the tested TAB KILL cleanup, including NETKILL.
+NCABORT       LD        A,(TABMODE)
+              LD        B,A
+              CALL      TB_KILL                        ; closes socket and invalidates tab
+              LD        A,(IOBYTE)
+              AND       0FCH
+              OR        1                              ; prepare physical console for next visit
+              LD        (IOBYTE),A
+              PUSH      AF
+              CALL      TABPICK
+              POP       AF
+              LD        (IX+1),A                        ; reset persisted per-tab IOBYTE
+              LD        A,(SCHFG)
+              LD        (TABREQ),A                      ; return to physical foreground tab
+              RET
 
               ORG       0A3D0H
 ; Executable base name (8 bytes) is in PATHBUF2+1 after PARSE.
