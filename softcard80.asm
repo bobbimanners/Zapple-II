@@ -2276,7 +2276,7 @@ IOCONIN       LD        A,(IOBYTE)
 ; Binding requires the current tab to own the allocated socket.
 ; Uses the same NXTX/NXRX ring code with MAIN-resident staging; no
 ; reentrant AUX BDOS or temporary AUX address is involved.
-; E=4 enables the Phase 6H resident listener. Earlier bind operations
+; E=4 enables a Phase 6J listener on TCP port DB. Earlier bind operations
 ; remain available for non-service networking applications.
 ; ------------------------------------------------------------------
 NCAPI         LD        A,E
@@ -2289,7 +2289,7 @@ NCAPI         LD        A,E
               CP        3
               JP        Z,NCARM                       ; persist existing UC1 binding across CCP reload
               CP        4
-              JP        Z,NCSSTART                    ; 6H: start kernel-owned listener
+              JP        Z,NCSSTART                    ; 6J: register kernel-owned listener
               CP        5
               JP        Z,NSTREAD                     ; 6H.2: read-only NETSTAT inspection
               JP        NETBAD
@@ -2368,7 +2368,7 @@ NCSFRE        PUSH      AF
               POP       AF
               CP        (HL)
               RET       NZ
-              JP        NCUNB
+              JP        NCSUNB
 ; Called from NETCLN with B=tab (may not be currently selected).
 NCXCLN        PUSH      BC
               LD        E,B
@@ -2488,13 +2488,15 @@ UCOUT         PUSH      BC
               LD        A,(AXQUIT)
               CP        5
               JR        Z,UCOEND                       ; on disconnect, discard echo/output
+              PUSH      DE
               LD        A,(TABMODE)
-              LD        HL,NCSOWNER
-              CP        (HL)
-              JR        NZ,UCOUTOK
-              LD        A,(NCSTATE)
+              CALL      NCSLOOK                       ; resolve current tab's service
+              POP       DE                             ; preserve character to transmit
+              CP        4
+              JR        NC,UCOUTOK
+              LD        A,(HL)
               CP        1
-              JR        Z,UCOEND                       ; listener: no client to print to
+              JR        Z,UCOEND                       ; listening: suppress output
 UCOUTOK       LD        A,E
               LD        (NXBUF),A
               CALL      UCBPTR
@@ -4956,7 +4958,7 @@ VTSTATES      DEFS      128
 ; This also protects a CCP DIR while background applications enumerate.
 ; =====================================================================
 ; ------------------------------------------------------------------
-; Phase 6H: kernel-owned Telnet service.
+; Phase 6J: per-socket kernel-owned Telnet service.
 ; Disconnect means the old AUX app has already unwound. Close the
 ; socket, OPEN/LISTEN it again, and load ordinary A:CCP.COM. There is
 ; NO attempt to execute NETCCP.COM again (or FCB pointing at B:).
@@ -4965,17 +4967,19 @@ VTSTATES      DEFS      128
 ; ------------------------------------------------------------------
               ORG       06900H
 NC_REARM      LD        A,(TABMODE)
-              LD        HL,NCSOWNER
-              CP        (HL)
-              JR        NZ,NCR_BAD
-              LD        A,(NCSSOCK)
-              CALL      NETCLOSE                      ; reclaim same W5100 socket
+              CALL      NCSLOOK                       ; A = this tab's service socket
+              CP        4
+              JR        NC,NCR_BAD
+              LD        (NCSWORK),A
+              CALL      NETCLOSE                      ; reclaim only this tab's socket
               JR        C,NCR_BAD
-              CALL      NCSVOPEN                      ; OPEN then LISTEN without AUX FCB
+              LD        A,(NCSWORK)
+              CALL      NCSVOPEN                      ; restore this socket's port
               OR        A
               JR        NZ,NCR_BAD
-              LD        A,1
-              LD        (NCSTATE),A
+              LD        A,(NCSWORK)
+              CALL      NCSSTP
+              LD        (HL),1                         ; this socket back in LISTEN
               CALL      UCPPTR
               LD        (HL),1                         ; retain binding through CCP load
               CALL      UCRPTR
@@ -5289,39 +5293,113 @@ S8EXT         DEFW      0
 S8TABLE       DEFS      336
 
 ; ------------------------------------------------------------------
-; 6H resident service. Supports ONE active NETCCP listener (2323).
-; State: 0=off, 1=LISTEN, 2=ESTABLISHED.
+; 6J resident service. Up to four independent TCP listeners.
+; Per-socket state: 0=off, 1=LISTEN, 2=ESTABLISHED.
 ; The launcher calls private BDOS FD E=4 exactly once. Ordinary CCP
 ; remains loaded in AUX; the service and socket live entirely in MAIN.
 ; This region replaces temporary 6G6/6G7/6G8 diagnostic probes.
 ; ------------------------------------------------------------------
+; ---------------------------------------------------------------
+; Phase 6J: one resident NETCCP service per managed W5100 socket.
+; NETOWN and UCBIND remain the authoritative owner/tab bindings.
+; These tables record only listener-specific state and its TCP port.
+; No timer, interrupts, new scheduling context, or new task model.
+; ---------------------------------------------------------------
+              ORG       06DC0H
+NCSSTP        LD        E,A                           ; A=socket -> HL->state
+              LD        D,0
+              LD        HL,NCSSTATE
+              ADD       HL,DE
+              RET
+NCSPHP        LD        E,A                           ; A=socket -> port high
+              LD        D,0
+              LD        HL,NCSPORTH
+              ADD       HL,DE
+              RET
+NCSPLP        LD        E,A                           ; A=socket -> port low
+              LD        D,0
+              LD        HL,NCSPORTL
+              ADD       HL,DE
+              RET
+; A=logical tab -> A=socket (0..3) with HL->nonzero service state;
+; otherwise A=FF.  Preserves BC; clobbers DE.  Validates NETOWN.
+NCSLOOK       PUSH      BC
+              LD        B,A
+              LD        E,A
+              LD        D,0
+              LD        HL,UCBIND
+              ADD       HL,DE
+              LD        A,(HL)
+              CP        4
+              JR        NC,NCSNONE
+              LD        C,A
+              CALL      NETPTR
+              LD        A,(HL)
+              CP        B
+              JR        NZ,NCSNONE
+              LD        A,C
+              CALL      NCSSTP
+              LD        A,(HL)
+              OR        A
+              JR        Z,NCSNONE
+              LD        A,C
+              POP       BC
+              RET
+NCSNONE       LD        A,0FFH
+              POP       BC
+              RET
               ORG       06E00H
-NCSSTART      LD        A,(NCSOWNER)
-              CP        0FFH
-              JP        NZ,NETBAD                     ; one listener only
-              CALL      NETALLOC                      ; current tab owns the W5100 socket
+; Private BDOS FD E=4, D=TCP port high, B=port low (default 2323
+; supplied by NETCCP.COM). Fails for duplicate ports, existing service
+; or a tab already bound to UC1, or if all managed sockets are occupied.
+NCSSTART      LD        A,D                           ; save port before pointer helpers
+              LD        (NCSREQH),A
+              LD        A,B
+              LD        (NCSREQL),A
+              LD        A,(TABMODE)
+              CALL      NCSLOOK
+              CP        4
+              JP        C,NETBAD                      ; service already started here
+              CALL      UCBPTR
+              LD        A,(HL)
+              CP        4
+              JP        C,NETBAD                      ; already bound to a socket
+              LD        A,(NCSREQH)
+              LD        B,A
+              LD        A,(NCSREQL)
+              OR        B
+              JP        Z,NETBAD                      ; TCP port 0 is invalid
+              CALL      NCSDUP
+              OR        A
+              JP        NZ,NETBAD                     ; duplicate listening port
+              CALL      NETALLOC
               CP        4
               JP        NC,NETBAD
-              LD        (NCSSOCK),A
+              LD        (NCSWORK),A
+              CALL      NCSPHP
+              LD        A,(NCSREQH)
+              LD        (HL),A
+              LD        A,(NCSWORK)
+              CALL      NCSPLP
+              LD        A,(NCSREQL)
+              LD        (HL),A
+              LD        A,(NCSWORK)
               CALL      NCSVOPEN
               OR        A
               JR        Z,NCSARM
-              LD        A,(NCSSOCK)
+              LD        A,(NCSWORK)
               LD        D,A
               LD        E,1
               CALL      NETFREE
-              LD        A,0FFH
-              LD        (NCSSOCK),A
               JP        NETBAD
-NCSARM        LD        A,(TABMODE)
-              LD        (NCSOWNER),A
-              LD        A,1
-              LD        (NCSTATE),A
+NCSARM        LD        A,(NCSWORK)
+              CALL      NCSSTP
+              LD        (HL),1
               CALL      UCBPTR
-              LD        A,(NCSSOCK)
+              LD        A,(NCSWORK)
               LD        (HL),A
               CALL      UCPPTR
-              LD        (HL),1                         ; preserve socket on child -> CCP
+              LD        (HL),1                         ; persist across CCP reload
               CALL      UCRPTR
               LD        (HL),0
               CALL      TNTPTR
@@ -5329,18 +5407,25 @@ NCSARM        LD        A,(TABMODE)
               XOR       A
               JP        NETRET
 
-; Uses the service's already owned, CLOSED socket; configure Sn_MR,
-; Sn_PORT (2323), OPEN then LISTEN. Return A=0 or FF.
-NCSVOPEN      LD        A,(NCSSOCK)
-              LD        D,A
+; A=managed socket. Sn_MR=TCP; Sn_PORT is from the service record.
+; Returns A=0 if OPEN then LISTEN, FF on hardware failure.
+NCSVOPEN      LD        D,A
               LD        A,0
-              LD        C,1                           ; Sn_MR TCP
+              LD        C,1
               CALL      NCSVWR
+              PUSH      DE
+              LD        A,D
+              CALL      NCSPHP
+              LD        C,(HL)
+              POP       DE
               LD        A,4
-              LD        C,09H                         ; port high
               CALL      NCSVWR
+              PUSH      DE
+              LD        A,D
+              CALL      NCSPLP
+              LD        C,(HL)
+              POP       DE
               LD        A,5
-              LD        C,013H                        ; port low
               CALL      NCSVWR
               LD        E,1                           ; OPEN
               CALL      NETIO
@@ -5363,7 +5448,7 @@ NCSVOPEN      LD        A,(NCSSOCK)
 NCSOFAIL      LD        A,0FFH
               RET
 
-; W5100 register write: D socket, A Sn register, C value.
+; W5100 register write: D=socket, A=Sn register, C=value.
 NCSVWR        PUSH      AF
               LD        A,D
               ADD       A,4
@@ -5379,26 +5464,28 @@ NCSVWR        PUSH      AF
               LD        (SOFTCARD),A
               RET
 
-; Called from UCSTAT with a bound socket selected.
-; 0 still waiting, 1 new accept with CR queued, 2 ordinary RX allowed.
+; UCSTAT acceptance for the currently running tab.
+; 0=still listening, 1=synthetic CR ready, 2=normal TCP receive.
 NCSVCHK       LD        A,(TABMODE)
-              LD        HL,NCSOWNER
-              CP        (HL)
-              JR        NZ,NCSVREAD
-              LD        A,(NCSTATE)
+              CALL      NCSLOOK
+              CP        4
+              JR        NC,NCSVREAD
+              LD        D,A
+              LD        A,(HL)
               CP        1
               JR        NZ,NCSVREAD
-              LD        A,(NCSSOCK)
-              LD        D,A
               LD        A,3
-              CALL      NI_READ                       ; Sn_SR
-              CP        017H                          ; ESTABLISHED
+              CALL      NI_READ
+              CP        017H                          ; SOCK_ESTABLISHED
               JR        NZ,NCSVWAIT
-              LD        A,2
-              LD        (NCSTATE),A
-              CALL      NCSVNEG                       ; best effort option negotiation
+              LD        A,D
+              PUSH      AF
+              CALL      NCSSTP
+              LD        (HL),2
+              POP       AF
+              CALL      NCSVNEG                       ; negotiate on accepted socket
               CALL      UCDPTR
-              LD        (HL),13                       ; empty command refreshes CCP prompt
+              LD        (HL),13                       ; refresh CCP's prompt
               CALL      UCRPTR
               LD        (HL),1
               LD        A,1
@@ -5408,27 +5495,29 @@ NCSVWAIT      XOR       A
 NCSVREAD      LD        A,2
               RET
 
-; Background scheduling: a parked listener wakes when ESTABLISHED
-; even before its client sends the first byte (needed for negotiation).
-; C=candidate tab, D=socket, returns nonzero for accepted or RX>0.
-NCSVSOCK      LD        A,(NCSOWNER)
-              CP        C
-              JR        NZ,NCSVRX
-              LD        A,(NCSTATE)
+; C=candidate tab and D=bound socket.  Wake listeners on accept;
+; established sessions continue to use existing RX polling.
+NCSVSOCK      PUSH      DE
+              LD        A,C
+              CALL      NCSLOOK
+              CP        4
+              JR        NC,NCSVRX1
+              LD        A,(HL)
               CP        1
-              JR        NZ,NCSVRX
+              JR        NZ,NCSVRX1
+              POP       DE
               LD        A,3
               CALL      NI_READ
               CP        017H
               JR        NZ,NCSVRX
               LD        A,1
               RET
-NCSVRX        LD        A,026H
+NCSVRX1       POP       DE
+NCSVRX       LD        A,026H
               JP        NI_READ                       ; Sn_RX_RSR high byte
 
-; Kernel sends the same negotiation as the working 6G.5 launcher.
-NCSVNEG       LD        A,(NCSSOCK)
-              LD        (NXSOCK),A
+; Same working 6H Telnet negotiation, but uses accepted socket A.
+NCSVNEG       LD        (NXSOCK),A
               LD        HL,NCSVSEQ
               LD        DE,NXBUF
               LD        BC,12
@@ -5452,19 +5541,14 @@ NCSVSEQ       DEFB      0FFH,0FBH,1                   ; WILL ECHO
               DEFB      0FFH,0FDH,3                   ; DO SGA
               DEFB      0FFH,0FEH,22H                 ; DONT LINEMODE
 
-; Explicit TAB KILL tears down the service, ordinary child exit does not.
-NCSVKILL      LD        A,(NCSOWNER)
-              CP        B
-              RET       NZ
-              LD        A,0FFH
-              LD        (NCSOWNER),A
-              LD        (NCSSOCK),A
-              XOR       A
-              LD        (NCSTATE),A
+; TAB KILL for B=tab: remove only that tab's resident service.
+NCSVKILL      LD        A,B
+              CALL      NCSLOOK
+              CP        4
+              RET       NC
+              CALL      NCSSTP
+              LD        (HL),0
               RET
-NCSOWNER      DEFB      0FFH
-NCSSOCK       DEFB      0FFH
-NCSTATE     DEFB      0
 
 ; Phase 6H.2: read-only W5100 socket inspection for NETSTAT.COM.
 ; Private BDOS FD E=5, D=socket (0..3), B=selector:
@@ -5490,13 +5574,47 @@ NSTOWNER      LD        A,D
               CALL      NETPTR                        ; MAIN-resident owner table
               LD        A,(HL)
               JP        NETRET
-NSTSERV       LD        A,(NCSSOCK)
-              CP        D
-              JR        NZ,NSTNONE
-              LD        A,(NCSTATE)
+NSTSERV       LD        A,D
+              CALL      NCSSTP                       ; state belongs to socket D
+              LD        A,(HL)
               JP        NETRET
-NSTNONE       XOR       A
-              JP        NETRET
+
+              ORG       06FB8H
+; Requested port held in NCSREQH/L; FF if another listener uses it.
+NCSDUP        LD        B,0
+NCDLOOP       LD        A,B
+              CALL      NCSSTP
+              LD        A,(HL)
+              OR        A
+              JR        Z,NCDNEXT
+              LD        A,B
+              CALL      NCSPHP
+              LD        A,(NCSREQH)
+              CP        (HL)
+              JR        NZ,NCDNEXT
+              LD        A,B
+              CALL      NCSPLP
+              LD        A,(NCSREQL)
+              CP        (HL)
+              JR        Z,NCDYES
+NCDNEXT       INC       B
+              LD        A,B
+              CP        4
+              JR        NZ,NCDLOOP
+              XOR       A
+              RET
+NCDYES        LD        A,0FFH
+              RET
+; After explicit socket FREE, prevent a stale listener record.
+NCSUNB        CALL      NCSSTP
+              LD        (HL),0
+              JP        NCUNB
+NCSSTATE      DEFB      0,0,0,0
+NCSPORTH      DEFB      0,0,0,0
+NCSPORTL      DEFB      0,0,0,0
+NCSREQH       DEFB      0
+NCSREQL       DEFB      0
+NCSWORK       DEFB      0
 
               ORG       07000H
 
@@ -11104,7 +11222,7 @@ CNAME2        DEFS      20
               ORG       0A340H
 ; B=logical tab; called on KILL and remote CCP shell termination.
 NETKILL       PUSH      BC
-              CALL      NCSVKILL                      ; 6H: revoke resident service if owned
+              CALL      NCSVKILL                      ; 6J: revoke only this tab's service
               LD        E,B
               LD        D,0
               LD        HL,UCPERS
@@ -11112,7 +11230,7 @@ NETKILL       PUSH      BC
               LD        (HL),0
               POP       BC
               JP        NETCLN
-; Preserve binding only for the single registered remote socket.
+; Preserve each tab's persistent UC1 binding independently.
 ; NETCLN's usual cleanup still closes every other child-owned socket.
 NCKMATCH      CP        B
               RET       NZ
@@ -11166,7 +11284,7 @@ NCEXCR        LD        A,(AUXEXCD)
 
 ; AXQUIT=5 means the AUX application has FULLY unwound. Never
 ; redirect the live application to CRT on a socket hangup.
-; Phase 6H: rearm resident listener and reload ordinary CCP in this tab.
+; Phase 6J: rearm only this tab's resident listener and reload CCP.
 NCABORT       JP        NC_REARM
 
               ORG       0A3D0H
