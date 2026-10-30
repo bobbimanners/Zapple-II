@@ -285,14 +285,14 @@ TSSTEMPTY     XOR       A
 
 ; Advertise the modifier and arrows as one-keystroke shortcuts.
 RWMSG3        DEFM      ' sessions (0-9,A-F)'
-              DEFB      13
+              DEFB      13,10                         ; BANKS report CR+LF for Telnet
               DEFM      'Switch '
               DEFB      '$'
 RWMSG4        DEFM      ' + 0123456789ABCDEF'
               DEFB      '$'
-RWMSG5        DEFB      13
+RWMSG5        DEFB      13,10                         ; BANKS report CR+LF for Telnet
               DEFM      'HELP for commands'
-              DEFB      13,'$'
+              DEFB      13,10,'$'                     ; final BANKS newline
 
 ; Session prompt is rendered by AUX CCP.COM.
 ; Stage 27: removed unused code/data (Legacy MAIN prompt formatter).
@@ -657,7 +657,7 @@ SCHIDLEQ      EQU       32
 SCHMAIN       LD        A,(SCHEN)
               OR        A
               RET       Z
-SMLOOP        LD        A,(TABREQ)
+SMLOOP        CALL      NC_HOT                        ; poll physical OA, even with UC1 foreground
               CP        0FFH
               RET       NZ                             ; manual tab switch has priority
               LD        A,(SCHFG)
@@ -2670,8 +2670,8 @@ NCHBIND       LD        E,C
 NCDROP        LD        A,5                           ; new remote-session abort code
               LD        (AXQUIT),A                    ; AXGATE will not resume AUX app
               RET                                     ; cleanup only after leaving AUX
-; Shell EXIT/BDOS 0: restore physical console before cleanup.
-; Called in MAIN after the remote CCP itself has exited.
+; Shell EXIT/BDOS 0: restart a persistent network listener, or perform
+; ordinary cleanup for local shells.  Called after AUX has fully exited.
 NCSTOP        PUSH      BC
               LD        E,B
               LD        D,0
@@ -2680,10 +2680,8 @@ NCSTOP        PUSH      BC
               LD        A,(HL)
               OR        A
               JR        Z,NCSTEND
-              LD        A,(IOBYTE)
-              AND       0FCH
-              OR        1
-              LD        (IOBYTE),A
+              POP       BC
+              JP        NC_REARM                        ; remote EXIT also re-listens
 NCSTEND       POP       BC
               JP        NETKILL
               ORG       05000H
@@ -2984,7 +2982,9 @@ TL_WAIT       LD        E,B
               JR        Z,TL_EOL
               LD        DE,TL_BLOCK
 TL_LABEL      CALL      C_WRITESTR
-TL_EOL        LD        E,13
+TL_EOL        LD        E,13                           ; tab-list rows need CR+LF on UC1
+              CALL      C_WRITE
+              LD        E,10                           ; local Soroc swallows LF as before
               CALL      C_WRITE
               POP       BC
 TL_SKIP       INC       B
@@ -3860,15 +3860,19 @@ SHNZERO       LD        (HL),A
               JP        SHSTEP                        ; handle child chain or shell termination
 
 ; Relocated resident routines: ample MAIN memory, separate from AUX TPA.
-; Stage 20: cheap OA hotkey probe at safe syscall-return boundaries.
-; The keyboard latch $C000 and OA switch $C061 are memory-mapped;
-; unlike CMD=3, the no-key path never enters 6502 firmware.
-; Only the foreground CRT may inspect the keyboard. Never consume
-; an ordinary key, Ctrl-C, or an invalid Open-Apple combination.
+; Stage 20/6G: cheap physical OA hotkey probe at syscall-return and
+; main scheduler idle-loop boundaries.  The keyboard latch $C000 and
+; OA switch $C061 are memory-mapped; the no-key path never enters
+; 6502 firmware.  The physical keyboard remains available for tab
+; switching even when the foreground session uses UC1 (Telnet).
+; Never consume ordinary keys, Ctrl-C, or invalid OA combinations.
 ; TSKKEY's existing decoder handles 0..9, A..F, and both arrows.
 ; Preserve BC/HL, and restore the 6502 XREG scratch byte even when
 ; the decoded key queues a switch or beeps for the current tab.
               ORG       05FA0H
+NC_HOT        CALL      SCHHOT                         ; SCHHOT preserves keyboard ordinary input
+              LD        A,(TABREQ)                     ; original SMLOOP contract
+              RET
 SCHHOT        LD        A,(0E000H)                     ; $C000: common fast path
               BIT       7,A
               RET       Z                              ; one memory lookup; no key
@@ -3879,10 +3883,8 @@ SCHHOT        LD        A,(0E000H)                     ; $C000: common fast path
               JR        Z,SHNOTOA                      ; ordinary key is untouched
               CALL      SCHISFG
               JR        NZ,SHNOTOA                     ; background must not take input
-              LD        A,(IOBYTE)
-              AND       3
-              CP        1                              ; CRT keyboard only
-              JR        NZ,SHNOTOA
+              ; The physical OA hotkey is independent of IOBYTE:
+              ; a remote UC1 tab must not disable console tab changes.
               LD        A,(TABREQ)
               CP        0FFH
               JR        NZ,SHNOTOA                     ; switch already queued
@@ -4957,6 +4959,57 @@ VTSTATES      DEFS      128
 ; previous 512-byte block into the shared DIRBUF before continuing.
 ; This also protects a CCP DIR while background applications enumerate.
 ; =====================================================================
+; ------------------------------------------------------------------
+; Phase 6G: resident re-listen trampoline. NETCCP.COM exits once
+; it binds UC1; on hangup the supervisor owns the lifetime and can
+; launch it again as a child without nesting a new AUX process.
+; This is reached ONLY after the AUX executable has been unwound.
+; The listener executable is explicitly B:NETCCP.COM (Utils drive).
+; Removing the tab with TAB <n> KILL stops the listener permanently.
+; ------------------------------------------------------------------
+              ORG       06900H
+NC_REARM      LD        A,(TABMODE)
+              LD        B,A
+              CALL      NETKILL                         ; also revokes UCPERS/UC1
+              LD        A,(TABMODE)
+              LD        E,A
+              LD        D,0
+              LD        HL,SCHWAIT
+              ADD       HL,DE
+              LD        (HL),0                          ; no stale blocked read
+              LD        A,(IOBYTE)
+              AND       0FCH
+              OR        1                              ; listener uses CRT until accept
+              LD        (IOBYTE),A
+              PUSH      AF
+              CALL      TABPICK
+              POP       AF
+              LD        (IX+1),A                        ; keep descriptor consistent
+              ; If the remote tab owns the physical screen, give it back
+              ; to tab 0 while the listener restarts in the background.
+              LD        A,(TABMODE)
+              LD        B,A
+              LD        A,(SCHFG)
+              CP        B
+              JR        NZ,NCR_GO
+              LD        A,B
+              OR        A
+              JR        Z,NCR_GO                        ; tab 0 has no local fallback
+              XOR       A
+              LD        (TABREQ),A
+NCR_GO        CALL      SHNOARG                         ; clean FCBs, command tail, DMA
+              LD        HL,NCR_FCB
+              LD        DE,PATHBUF2
+              LD        BC,36
+              LDIR
+              CALL      SHPTR
+              LD        (HL),2                          ; treat listener as transient child
+              CALL      AUXRUN                          ; listener yields cooperatively
+              JP        SHSTEP                          ; BDOS0 -> CCP; suspend -> return
+NCR_FCB       DEFB      2                               ; B: regardless of CURDRV
+              DEFM      'NETCCP  COM'                   ; eleven-byte CP/M 8.3
+              DEFS      24
+
               ORG       06B00H
 S8PTR         LD        HL,S8TABLE
               LD        A,(TABMODE)
@@ -6192,6 +6245,8 @@ CCSHOW        LD        DE,CCOPENMSG
               LD        HL,CEVICTS
               CALL      CCHEX16
               LD        E,13
+              CALL      C_WRITE
+              LD        E,10                           ; CACHE final newline for UC1
               JP        C_WRITE
 ; Print four uppercase hex digits (high byte then low byte).
 CCHEX16       LD        A,(HL)
@@ -10809,22 +10864,10 @@ NCEXCR        LD        A,(AUXEXCD)
               LD        E,10
               JP        C_WRITE                        ; kernel's own final CR needs LF on UC1
 
-; AXQUIT=5 has unwound the AUX transient. NOW it is safe to end the
-; session. Reuse the tested TAB KILL cleanup, including NETKILL.
-NCABORT       LD        A,(TABMODE)
-              LD        B,A
-              CALL      TB_KILL                        ; closes socket and invalidates tab
-              LD        A,(IOBYTE)
-              AND       0FCH
-              OR        1                              ; prepare physical console for next visit
-              LD        (IOBYTE),A
-              PUSH      AF
-              CALL      TABPICK
-              POP       AF
-              LD        (IX+1),A                        ; reset persisted per-tab IOBYTE
-              LD        A,(SCHFG)
-              LD        (TABREQ),A                      ; return to physical foreground tab
-              RET
+; AXQUIT=5 means the AUX application has FULLY unwound. Never
+; redirect the live application to CRT on a socket hangup.
+; Phase 6G: close the old socket and relaunch the listener in this tab.
+NCABORT       JP        NC_REARM
 
               ORG       0A3D0H
 ; Executable base name (8 bytes) is in PATHBUF2+1 after PARSE.
