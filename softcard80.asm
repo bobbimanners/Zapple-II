@@ -2487,19 +2487,8 @@ UCOUT         PUSH      BC
               CP        4
               JR        NC,UCOEND
               LD        (NXSOCK),A
-UCOSEND       LD        A,1
-              LD        (NXREQ),A
-              LD        (UCFLAG),A
-              CALL      NXTX
-              PUSH      AF
-              XOR       A
-              LD        (UCFLAG),A
-              POP       AF
-              OR        A
-              JR        Z,UCOSEND                       ; full buffer: retry
-              ; Send exactly the application's byte. No automatic CR->CRLF:
-              ; ordinary CP/M programs already supply CR+LF. CCP handles
-              ; its own intentional bare-CR newlines in CCP.asm.
+; No implicit CRLF translation: the application owns line endings.
+UCOSEND       JP        UC_TXTRY                       ; remote TX, including disconnect check
 UCOEND        POP       HL
               POP       DE
               POP       BC
@@ -3379,7 +3368,7 @@ AXBSESSION    LD        A,(TABMODE)
               RET
 AXBCLS        CALL      AXBNONE
               RET       NZ
-              JP        CCPCLS
+              JP        NCLS_RUN                       ; user CLS goes to selected terminal
 AXBBANKS      CALL      AXBNONE
               RET       NZ
               JP        CCPBANKS
@@ -3572,11 +3561,7 @@ SHFCB         DEFB      1                             ; always reload from drive
 
 ; Called with MAIN stack, either after original AUXRUN or TABRESUM.
 ; On suspended status (AXQUIT=3) leave parked task untouched.
-SHSTEP        LD        A,(AXQUIT)
-              CP        5
-              JP        Z,NCABORT                     ; network hangup: kill remote session
-              CP        3
-              RET       Z
+SHSTEP        JP        NCSHSTEP                       ; 6G.3: inspect hangup before reload
 SHLOOP        CALL      SHPTR
               LD        A,(HL)
               OR        A
@@ -5005,10 +4990,116 @@ NCR_GO        CALL      SHNOARG                         ; clean FCBs, command ta
               CALL      SHPTR
               LD        (HL),2                          ; treat listener as transient child
               CALL      AUXRUN                          ; listener yields cooperatively
-              JP        SHSTEP                          ; BDOS0 -> CCP; suspend -> return
+              LD        A,(AXQUIT)
+              CP        3
+              JP        Z,SHSTEP                        ; background listener suspended
+              LD        A,(AUXEXCD)
+              CP        6
+              JP        NZ,SHSTEP                       ; normal listener accept/exit
+              LD        DE,NCR_FAIL
+              CALL      C_WRITESTR                     ; loading B:NETCCP.COM failed
+              JP        SHSTEP
+NCR_FAIL      DEFB      13,10
+              DEFM      'NETCCP re-listen: could not load B:NETCCP.COM'
+              DEFB      13,10,'$' 
 NCR_FCB       DEFB      2                               ; B: regardless of CURDRV
               DEFM      'NETCCP  COM'                   ; eleven-byte CP/M 8.3
               DEFS      24
+
+; A remote session can terminate by BDOS 0 / WBOOT after the W5100
+; has entered CLOSE_WAIT, before UCIN gets to consume its synthetic CR.
+; Catch the per-tab UCPERS=2 latch as well as AXQUIT=5 here; never
+; accidentally reload a dead CCP.COM into a closed UC1 connection.
+; Tail-jump from SHSTEP keeps its caller stack intact on re-listen.
+              ORG       06A00H
+NCSHSTEP      LD        A,(AXQUIT)
+              CP        5
+              JP        Z,NCABORT
+              CP        3
+              RET       Z                              ; suspended task, not terminated
+              CALL      UCPPTR                         ; same tab: sticky disconnect latch
+              LD        A,(HL)
+              CP        2
+              JP        Z,NCABORT
+              CP        1
+              JP        NZ,SHLOOP                       ; local CCP / listener startup
+              ; Normal BDOS 0 can race a close: check the bound socket
+              ; before reloading CCP.COM into a dead UC1 stream.
+              CALL      UCBPTR
+              LD        A,(HL)
+              CP        4
+              JP        NC,SHLOOP
+              LD        D,A
+              LD        A,3                            ; W5100 Sn_SR
+              CALL      NI_READ
+              CP        01CH                         ; CLOSE_WAIT
+              JP        Z,NCABORT
+              OR        A                             ; CLOSED
+              JP        Z,NCABORT
+              JP        SHLOOP
+
+; CCP CLS emits the active terminal's clear/home sequence through
+; normal console routing (including UC1). Do not call B812/CCPCLS.
+; TERM VTMODEC: 0=VT100, 1=Soroc, 2=H19/VT52.
+NCLS_RUN      LD        A,(VTMODEC)
+              OR        A
+              JR        Z,NCL_VT
+              CP        2
+              JR        Z,NCL_H19
+              LD        HL,NCL_SR
+              JR        NCL_SEND
+NCL_VT        LD        HL,NCL_VTS
+              JR        NCL_SEND
+NCL_H19       LD        HL,NCL_HS
+NCL_SEND      LD        A,(HL)
+              OR        A
+              RET       Z
+              PUSH      HL
+              LD        E,A
+              CALL      C_WRITE
+              POP       HL
+              INC       HL
+              JR        NCL_SEND
+NCL_SR        DEFB      01BH,'*',0                     ; Soroc clear + home
+NCL_HS        DEFB      01BH,'E',0                     ; Heath/VT52 clear + home
+NCL_VTS       DEFB      01BH,'[','2','J',01BH,'[','H',0 ; ANSI clear + home
+
+; Remote UC1 output is tail-jumped here to avoid expanding the crowded
+; $4D00-$4FFF driver region. Preserve the UCOUT caller's stack depth.
+UC_TXTRY     LD        A,1
+              LD        (NXREQ),A
+              LD        (UCFLAG),A
+              CALL      NXTX
+              PUSH      AF
+              XOR       A
+              LD        (UCFLAG),A
+              POP       AF
+              CP        1
+              JR        Z,UC_TXEND                  ; successfully queued byte
+              LD        B,A                          ; zero=TX full, FF=hardware error
+              ; On either a full TX buffer or an error, check TCP status.
+              LD        A,(NXSOCK)
+              LD        D,A
+              LD        A,3                           ; W5100 Sn_SR
+              CALL      NI_READ
+              CP        017H                        ; SOCK_ESTABLISHED
+              JR        NZ,UC_TXCHK
+              LD        A,B
+              OR        A
+              JR        Z,UC_TXTRY                   ; full buffer: retry when connected
+              JR        UC_TXEND                     ; don't spin on a hardware error
+UC_TXCHK      CP        01CH                        ; SOCK_CLOSE_WAIT
+              JR        Z,UC_TXDRP
+              OR        A                            ; SOCK_CLOSED
+              JR        NZ,UC_TXEND                  ; other transient socket state
+UC_TXDRP     LD        A,(AXMODE)
+              OR        A
+              JR        Z,UC_TXEND                  ; MAIN caller: no AUX app to unwind
+              LD        A,5
+              LD        (AXQUIT),A                    ; AXGATE must unwind remote app
+              CALL      UCPPTR
+              LD        (HL),2                        ; supervisor sees sticky hangup
+UC_TXEND     JP        UCOEND
 
               ORG       06B00H
 S8PTR         LD        HL,S8TABLE
@@ -6168,8 +6259,8 @@ AXRHL         DEFW      0
 AXQUIT        DEFB      0
 AXMODE        DEFB      0
 
-; Two CCP commands live in otherwise unused MAIN $7B00-$7BFF.
-; CLS invokes the new 6502 $B812 entry, so it works in either mode.
+; The physical clear below is ONLY for video backing-store initialization.
+; User-facing CLS is now NCLS_RUN (configured-terminal escape output).
 ; Software cursor restore; installed in the free tail of $7A00 region.
 ; Hide the physical cursor before key delivery, TAB switching or
 ; drawing. The cached address works even after terminal state changes.
