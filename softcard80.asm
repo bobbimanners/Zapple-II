@@ -3323,8 +3323,15 @@ AXBUILT       PUSH      DE
               LD        A,(HL)
               POP       DE
               CP        1
-              JP        NZ,AXBAD                       ; shell only
-              LD        A,D
+              JR        Z,AXBOK
+              ; If the actual loaded program is CCP.COM, repair a stale
+              ; supervisor SHFLAGS value rather than rejecting F8. Never
+              ; grant this private API to arbitrary AUX applications.
+              PUSH      DE
+              CALL      NCR_ISCP
+              POP       DE
+              JP        NZ,AXBAD
+AXBOK         LD        A,D
               OR        A
               JP        Z,AXBAD                        ; invalid AUX address
               LD        (AXBPTR),DE                     ; F8/9 also reads 36-byte FCB
@@ -4953,9 +4960,11 @@ VTSTATES      DEFS      128
 ; Removing the tab with TAB <n> KILL stops the listener permanently.
 ; ------------------------------------------------------------------
               ORG       06900H
-NC_REARM      LD        A,(TABMODE)
+NC_REARM      XOR       A
+              LD        (NCR_TRYS),A                   ; bounded retries per disconnect
+              LD        A,(TABMODE)
               LD        B,A
-              CALL      NETKILL                         ; also revokes UCPERS/UC1
+              CALL      NETKILL                         ; close old socket, revoke UC1
               LD        A,(TABMODE)
               LD        E,A
               LD        D,0
@@ -4989,19 +4998,33 @@ NCR_GO        CALL      SHNOARG                         ; clean FCBs, command ta
               LDIR
               CALL      SHPTR
               LD        (HL),2                          ; treat listener as transient child
-              CALL      AUXRUN                          ; listener yields cooperatively
+              CALL      AUXRUN                          ; listener runs until accept/exit
               LD        A,(AXQUIT)
               CP        3
-              JP        Z,SHSTEP                        ; background listener suspended
-              LD        A,(AUXEXCD)
-              CP        6
-              JP        NZ,SHSTEP                       ; normal listener accept/exit
-              LD        DE,NCR_FAIL
-              CALL      C_WRITESTR                     ; loading B:NETCCP.COM failed
-              JP        SHSTEP
-NCR_FAIL      DEFB      13,10
-              DEFM      'NETCCP re-listen: could not load B:NETCCP.COM'
-              DEFB      13,10,'$' 
+              RET       Z                              ; tab was suspended; leave AUX intact
+              CALL      UCPPTR
+              LD        A,(HL)
+              CP        1                              ; FD E=3: established, armed
+              JP        Z,SHCHILD                      ; explicitly reload A:CCP as shell
+              ; Listener returned WITHOUT a persistent binding. Do not
+              ; claim that a new remote CCP exists. Retry a bounded number
+              ; of times, then restore an ordinary local CCP in this tab.
+              LD        A,(NCR_TRYS)
+              INC       A
+              LD        (NCR_TRYS),A
+              CP        3
+              JR        NC,NCR_FAIL
+              LD        A,(TABMODE)
+              LD        B,A
+              CALL      NETKILL                        ; reclaim failed listener's sockets
+              JP        NCR_GO
+NCR_FAIL      LD        DE,NCR_MSG
+              CALL      C_WRITESTR
+              JP        SHCHILD
+NCR_MSG       DEFB      13,10
+              DEFM      'NETCCP: re-listen failed 3 times, local CCP restored'
+              DEFB      13,10,'$'
+NCR_TRYS      DEFB      0
 NCR_FCB       DEFB      2                               ; B: regardless of CURDRV
               DEFM      'NETCCP  COM'                   ; eleven-byte CP/M 8.3
               DEFS      24
@@ -5100,6 +5123,30 @@ UC_TXDRP     LD        A,(AXMODE)
               CALL      UCPPTR
               LD        (HL),2                        ; supervisor sees sticky hangup
 UC_TXEND     JP        UCOEND
+
+              ORG       06AB0H
+; Called only from private F8 after SHFLAGS != 1. If the loader says
+; this tab is actually executing CCP.COM, repair stale shell status.
+; Returns Z iff CCP; preserves DE (A, B, HL clobbered).
+NCR_ISCP      PUSH      BC
+              LD        A,(TABMODE)
+              CALL      TBNPTR                         ; HL -> 8-byte loaded COM name
+              LD        DE,NCR_NAME
+              LD        B,8
+NCR_CMP       LD        A,(DE)
+              CP        (HL)
+              JR        NZ,NCR_NOM
+              INC       DE
+              INC       HL
+              DJNZ      NCR_CMP
+              CALL      SHPTR
+              LD        (HL),1                         ; loaded executable really is CCP
+              XOR       A                              ; Z
+              POP       BC
+              RET
+NCR_NOM       POP       BC                             ; NZ comparison result preserved
+              RET
+NCR_NAME      DEFM      'CCP     '
 
               ORG       06B00H
 S8PTR         LD        HL,S8TABLE

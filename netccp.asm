@@ -1,5 +1,5 @@
 ; Zapple-II NETCCP.COM - Phase 6C initial persistent remote CCP
-; Phase 6F: Telnet auto character-mode negotiation, single connection.
+; Phase 6G.5 diagnostic: fix BDOS $-strings and label socket failures.
 ; Run in a SEPARATE CP/M tab, e.g. TAB 1 then NETCCP, to retain local CCP.
 ; Kernel Phase 6C required: FD E=3 arms persistent UC1 binding.
 ; Port 2323 (0913h). Requires existing kernel-configured W5100.
@@ -11,6 +11,8 @@ START   LD SP,STKTOP
         LD (SOCK),A
         LD DE,HELLO
         CALL PSTR
+        LD A,'A'                 ; diagnostic stage: allocate
+        LD (FSTAGE),A
         LD C,0FAH                ; FA E=0: allocate socket
         LD E,0
         CALL BDOS
@@ -31,19 +33,27 @@ START   LD SP,STKTOP
         LD B,5                   ; Sn_PORT low
         LD A,013H
         CALL WSET
+        LD A,'O'                 ; diagnostic stage: OPEN command
+        LD (FSTAGE),A
         LD E,1                   ; OPEN
         CALL COMMAND
         CP 0FFH
         JP Z,FAILED
+        LD A,'I'                 ; diagnostic stage: INIT status
+        LD (FSTAGE),A
         CALL STATUS
         CP 013H                  ; SOCK_INIT
         JP NZ,FAILED
+        LD A,'L'                 ; diagnostic stage: LISTEN command
+        LD (FSTAGE),A
         LD E,2                   ; LISTEN
         CALL COMMAND
         CP 0FFH
         JP Z,FAILED
         LD DE,LISTMSG
         CALL PSTR
+        LD A,'W'                 ; diagnostic stage: wait for connection
+        LD (FSTAGE),A
 WAITCON CALL STATUS
         CP 017H                  ; SOCK_ESTABLISHED
         JP Z,ACCEPT
@@ -60,21 +70,23 @@ WAITCON CALL STATUS
         JP WAITCON
 ACCEPT  LD DE,CONNMSG
         CALL PSTR
-        CALL TNINIT              ; Telnet ECHO/SGA; refuse client LINEMODE
-        CP 12                    ; 12-byte handshake must be transmitted
-        JP NZ,FAILED
-        LD A,(SOCK)
+        CALL TNINIT              ; best-effort Telnet ECHO/SGA/LINEMODE
+        CP 12
+        JR Z,TNOK                ; successful handshake
+        LD DE,TNWARN             ; incomplete negotiation isn't socket failure
+        CALL PSTR                ; client may still choose mode character
+TNOK    LD A,(SOCK)
         LD D,A
         LD E,1                   ; FD E=1 bind to this tab's UC1
         LD C,0FDH
         CALL BDOS
         OR A
-        JP NZ,FAILED
+        JP NZ,FBIND
         LD E,3                   ; FD E=3 persist across child->CCP
         LD C,0FDH
         CALL BDOS
         OR A
-        JP NZ,FAILED
+        JP NZ,FARM
         LD C,7                   ; read current IOBYTE
         CALL BDOS
         AND 0FCH
@@ -87,8 +99,24 @@ ACCEPT  LD DE,CONNMSG
         LD C,0                   ; terminate child; supervisor reloads CCP
         CALL BDOS               ; Phase6C NETCLN preserves bound socket
         RET                     ; should never return
-FAILED  LD DE,ERROR
+FBIND   LD DE,BNDERR
         CALL PSTR
+        JP EXIT
+FARM    LD DE,ARMERR
+        CALL PSTR
+        JP EXIT
+FAILED  PUSH AF                   ; A is error/status byte on entry
+        LD DE,ERROR
+        CALL PSTR
+        LD A,(FSTAGE)
+        LD E,A
+        LD C,2
+        CALL BDOS                 ; emit stage letter
+        LD DE,RETMSG
+        CALL PSTR
+        POP AF
+        CALL HEXOUT              ; emit return/status as hex
+        CALL NL
 EXIT    LD C,7                   ; ensure physical console on error exit
         CALL BDOS
         AND 0FCH
@@ -147,13 +175,27 @@ HEXP    LD E,A
         LD C,2
         CALL BDOS
         RET
-HELLO   DEFM 'Zapple-II NETCCP 6F - Telnet console',13,10,'$'
+HELLO   DEFM 'Zapple-II NETCCP 6G.5 - Telnet console'
+        DEFB 13,10,'$'
 SOCKMSG DEFM 'Socket $'
-LISTMSG DEFM 'Listening on 2323 (Ctrl-C to cancel)...',13,10,'$'
-CONNMSG DEFM 'Connected: switching this tab to remote CCP',13,10,'$'
-WELCOME DEFM '',13,10,'Zapple-II CP/M remote console',13,10,'$'
-ERROR   DEFM 'Network/socket error',13,10,'$'
+LISTMSG DEFM 'Listening on 2323 (Ctrl-C to cancel)...'
+        DEFB 13,10,'$'
+CONNMSG DEFM 'Connected: switching this tab to remote CCP'
+        DEFB 13,10,'$'
+WELCOME DEFB 13,10
+        DEFM 'Zapple-II CP/M remote console'
+        DEFB 13,10,'$'
+ERROR   DEFM 'NETCCP socket failure at stage '
+        DEFB '$'
+RETMSG  DEFM ': return/status $'
+BNDERR  DEFM 'UC1 socket bind failed'
+        DEFB 13,10,'$'
+ARMERR  DEFM 'UC1 persistence arm failed'
+        DEFB 13,10,'$'
+TNWARN  DEFM 'Telnet negotiation incomplete (continuing)'
+        DEFB 13,10,'$'
 NEWLINE DEFB 13,10,'$'
+FSTAGE  DEFB 0
 SOCK    DEFB 0FFH
 WPAR    DEFB 0,0,0
 STACK   DEFS 512
