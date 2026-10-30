@@ -424,6 +424,11 @@ DOERA       LD      HL,(ARGPTR)
             CALL    PRINT
             LD      C,1
             CALL    0005H
+            PUSH    AF                       ; Preserve Y/N across newline
+            LD      A,13
+            CALL    OUT                      ; CR locally; CR+LF on UC1
+            POP     AF
+            AND     0DFH                     ; Accept 'y' and 'Y'
             CP      'Y'
             JP      NZ,MAINLOOP
 ERDELETE    LD      DE,FCB
@@ -1385,7 +1390,7 @@ EDESCCS    LD      A,B
             JR      C,EDESCFN
             CP      03AH
             JP      C,EDWAIT               ; ignore numeric CSI parameters
-            CP      03BH
+            CP      03BH                    ; ASCII semicolon (Udo's parser)
             JP      Z,EDWAIT
             CP      '?'
             JP      Z,EDWAIT
