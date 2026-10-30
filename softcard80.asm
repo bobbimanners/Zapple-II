@@ -2276,9 +2276,8 @@ IOCONIN       LD        A,(IOBYTE)
 ; Binding requires the current tab to own the allocated socket.
 ; Uses the same NXTX/NXRX ring code with MAIN-resident staging; no
 ; reentrant AUX BDOS or temporary AUX address is involved.
-; This stage tests a single raw TCP console via nc(1).  Telnet IAC,
-; nonblocking scheduler integration, and shell lifetime handoff remain
-; Phase 6C work; DO NOT attach an idle remote CCP yet.
+; E=4 enables the Phase 6H resident listener. Earlier bind operations
+; remain available for non-service networking applications.
 ; ------------------------------------------------------------------
 NCAPI         LD        A,E
               OR        A
@@ -2291,6 +2290,8 @@ NCAPI         LD        A,E
               JP        Z,NCARM                       ; persist existing UC1 binding across CCP reload
               CP        4
               JP        Z,NCSSTART                    ; 6H: start kernel-owned listener
+              CP        5
+              JP        Z,NSTREAD                     ; 6H.2: read-only NETSTAT inspection
               JP        NETBAD
 NCBIND        LD        A,D
               CP        4
@@ -3336,15 +3337,8 @@ AXBUILT       PUSH      DE
               LD        A,(HL)
               POP       DE
               CP        1
-              JR        Z,AXBOK
-              ; If the actual loaded program is CCP.COM, repair a stale
-              ; supervisor SHFLAGS value rather than rejecting F8. Never
-              ; grant this private API to arbitrary AUX applications.
-              PUSH      DE
-              CALL      NCR_ISCP
-              POP       DE
-              JP        NZ,AXBAD
-AXBOK         LD        A,D
+              JP        NZ,AXBAD                      ; private F8 requires registered CCP
+              LD        A,D
               OR        A
               JP        Z,AXBAD                        ; invalid AUX address
               LD        (AXBPTR),DE                     ; F8/9 also reads 36-byte FCB
@@ -3575,9 +3569,6 @@ SHCMP         LD        A,(DE)
               LD        (HL),0
               RET
 SHNAME        DEFM      'CCP     COM'
-SHFCB         DEFB      1                             ; always reload from drive A:
-              DEFM      'CCP     COM'
-              DEFS      24
 
 ; Called with MAIN stack, either after original AUXRUN or TABRESUM.
 ; On suspended status (AXQUIT=3) leave parked task untouched.
@@ -5108,30 +5099,6 @@ UC_TXDRP     LD        A,(AXMODE)
               LD        (HL),2                        ; supervisor sees sticky hangup
 UC_TXEND     JP        UCOEND
 
-              ORG       06AB0H
-; Called only from private F8 after SHFLAGS != 1. If the loader says
-; this tab is actually executing CCP.COM, repair stale shell status.
-; Returns Z iff CCP; preserves DE (A, B, HL clobbered).
-NCR_ISCP      PUSH      BC
-              LD        A,(TABMODE)
-              CALL      TBNPTR                         ; HL -> 8-byte loaded COM name
-              LD        DE,NCR_NAME
-              LD        B,8
-NCR_CMP       LD        A,(DE)
-              CP        (HL)
-              JR        NZ,NCR_NOM
-              INC       DE
-              INC       HL
-              DJNZ      NCR_CMP
-              CALL      SHPTR
-              LD        (HL),1                         ; loaded executable really is CCP
-              XOR       A                              ; Z
-              POP       BC
-              RET
-NCR_NOM       POP       BC                             ; NZ comparison result preserved
-              RET
-NCR_NAME      DEFM      'CCP     '
-
               ORG       06B00H
 S8PTR         LD        HL,S8TABLE
               LD        A,(TABMODE)
@@ -5498,6 +5465,38 @@ NCSVKILL      LD        A,(NCSOWNER)
 NCSOWNER      DEFB      0FFH
 NCSSOCK       DEFB      0FFH
 NCSTATE     DEFB      0
+
+; Phase 6H.2: read-only W5100 socket inspection for NETSTAT.COM.
+; Private BDOS FD E=5, D=socket (0..3), B=selector:
+;    B=00..11H -> Sn register byte (including status, ports, peer IP).
+;    B=FEH     -> owning tab (FFH when unallocated).
+;    B=FFH     -> NETCCP service state on this socket (0/1/2).
+; Returns A=L; does NOT require caller to own the socket because
+; it cannot change it.  All mutating socket APIs retain owner checks.
+NSTREAD       LD        A,D
+              CP        4
+              JP        NC,NETBAD
+              LD        A,B
+              CP        0FEH
+              JR        Z,NSTOWNER
+              CP        0FFH
+              JR        Z,NSTSERV
+              CP        012H                         ; last allowed register is 11h
+              JP        NC,NETBAD
+              LD        A,B
+              CALL      NI_READ                       ; D=socket, A=offset
+              JP        NETRET
+NSTOWNER      LD        A,D
+              CALL      NETPTR                        ; MAIN-resident owner table
+              LD        A,(HL)
+              JP        NETRET
+NSTSERV       LD        A,(NCSSOCK)
+              CP        D
+              JR        NZ,NSTNONE
+              LD        A,(NCSTATE)
+              JP        NETRET
+NSTNONE       XOR       A
+              JP        NETRET
 
               ORG       07000H
 
@@ -11167,7 +11166,7 @@ NCEXCR        LD        A,(AUXEXCD)
 
 ; AXQUIT=5 means the AUX application has FULLY unwound. Never
 ; redirect the live application to CRT on a socket hangup.
-; Phase 6G: close the old socket and relaunch the listener in this tab.
+; Phase 6H: rearm resident listener and reload ordinary CCP in this tab.
 NCABORT       JP        NC_REARM
 
               ORG       0A3D0H

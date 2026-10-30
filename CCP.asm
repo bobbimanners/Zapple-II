@@ -714,7 +714,7 @@ SVNUMLOOP   LD      A,(HL)
             JR      Z,SVNUMEND                  ; don't reject it as < '0'
             CP      '0'
             JP      C,SHOWBAD
-            CP      '9'+1
+            CP      03AH
             JR      NC,SVNUMEND
             INC     B
             LD      A,B
@@ -1238,7 +1238,7 @@ HELPMSG     DEFM    'DIR ERA REN TYPE USER    CLS BANKS CACHE [RESET]'
             DEFB    13
             DEFM    'Edit: ^S/^D left/right, ^G DEL, ^Q^S/^Q^D BOL/EOL'
             DEFB    13
-            DEFM    'History: HIST lists, ^E/^X or Up/Down recalls, ^Y clears'
+            DEFM    'History: HIST, ^E/^X or arrows, ^Y clears'
             DEFB    13,'$'
 CMDPTR      DEFW    LINE
 ARGPTR      DEFW    LINE
@@ -1274,6 +1274,7 @@ RLSUBPTR    LD      HL,INBUF+1
 ; BDOS 6 / E=FF reads raw keys, so the supervisor still sees OA+hotkeys.
 ; Everything below belongs to the executing AUX session (independent history).
 ; Apple II: LEFT=08h, RIGHT=15h, UP=0Bh, DOWN=0Ah.
+; VT100: ESC [ A/B/C/D or ESC O A/B/C/D; H19/VT52: ESC A/B/C/D.
 ; WordStar: ^S/^D left/right, ^E/^X history, ^G delete,
 ;           ^Q^S start of line, ^Q^D end of line; DEL backspaces.
 ; Apple II's left arrow and ^H both produce 08h, so both move left.
@@ -1287,6 +1288,7 @@ EDSTART     XOR     A
             LD      (EDPOS),A
             LD      (EDNAV),A
             LD      (EDPREFIX),A
+            LD      (EDESCST),A            ; no partial terminal arrow sequence
             LD      (LINE),A
 EDWAIT      LD      E,0FFH
             LD      C,6
@@ -1296,6 +1298,12 @@ EDWAIT      LD      E,0FFH
             CP      3
             JP      Z,EDCANCEL
             LD      B,A
+            LD      A,(EDESCST)
+            OR      A
+            JP      NZ,EDESCKY            ; continue ESC or CSI sequence
+            LD      A,B
+            CP      01BH
+            JP      Z,EDESCBG           ; ESC prefixes VT100/VT52 arrows
             LD      A,(EDPREFIX)
             OR      A
             JR      Z,EDNORMKEY
@@ -1349,6 +1357,51 @@ EDOTHER     CP      08H                    ; Apple II left arrow / ^H (same scan
 ;
 ; Position changes only. Output existing character on right movement so
 ; Soroc needs no terminal-specific ESC sequences or cursor-addressing.
+; Decode terminal arrow sequences only in the CCP command editor.
+; Soroc/Apple II single-byte arrows and WordStar ^E/^X remain intact.
+;  ESC A/B/C/D       = VT52/H19 cursor up/down/right/left
+;  ESC [ A/B/C/D     = ANSI/VT100 normal cursor keys
+;  ESC O A/B/C/D     = VT100 application cursor keys
+;  ESC [ 1 ; n A/B   = CSI with modifier parameters (ignored)
+; EDESCST is separate from EDPREFIX (^Q); unrecognized ESC codes
+; are discarded rather than accidentally inserted into the command.
+EDESCBG LD      A,1
+            LD      (EDESCST),A
+            JP      EDWAIT
+EDESCKY    LD      A,(EDESCST)
+            CP      1
+            JR      NZ,EDESCCS
+            LD      A,B
+            CP      '['
+            JR      Z,EDESCOP
+            CP      'O'
+            JR      Z,EDESCOP
+            JR      EDESCFN             ; VT52/H19 ESC A/B/C/D
+EDESCOP   LD      A,2
+            LD      (EDESCST),A
+            JP      EDWAIT
+EDESCCS    LD      A,B
+            CP      '0'
+            JR      C,EDESCFN
+            CP      03AH
+            JP      C,EDWAIT               ; ignore numeric CSI parameters
+            CP      03BH
+            JP      Z,EDWAIT
+            CP      '?'
+            JP      Z,EDWAIT
+EDESCFN  XOR     A
+            LD      (EDESCST),A
+            LD      A,B
+            CP      'A'
+            JP      Z,EDUP
+            CP      'B'
+            JP      Z,EDDOWN
+            CP      'C'
+            JP      Z,EDRIGHT
+            CP      'D'
+            JP      Z,EDLEFT
+            JP      EDWAIT
+;
 EDLEFT      LD      A,(EDPOS)
             OR      A
             JP      Z,EDWAIT
@@ -1675,6 +1728,7 @@ EDLEN       DEFB    0
 EDPOS       DEFB    0
 EDNAV       DEFB    0
 EDPREFIX    DEFB    0
+EDESCST     DEFB    0           ; editor ESC/CSI parser (not persistent)
 EDCHAR      DEFB    0
 EDEMPTY     DEFB    0
 EDPTRS      DEFW    EDH0,EDH1,EDH2,EDH3,EDH4

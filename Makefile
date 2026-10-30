@@ -17,6 +17,9 @@ CPM_TELNET  := cpm-apps/Utils/TELNET.COM
 NETCCP_SRC  ?= netccp.asm
 NETCCP_RAW  := netccp.bin
 CPM_NETCCP  := cpm-apps/Utils/NETCCP.COM
+NETSTAT_SRC ?= netstat.asm
+NETSTAT_RAW := netstat.bin
+CPM_NETSTAT := cpm-apps/Utils/NETSTAT.COM
 WGET_SRC    ?= wget.asm
 WGET_RAW    := wget.bin
 CPM_WGET    := cpm-apps/Utils/WGET.COM
@@ -48,7 +51,7 @@ MAME_DEBUG_FLAGS ?= -debug -w
 MAME_EXTRA       ?=
 
 .DEFAULT_GOAL := all
-.PHONY: all z80 6502 ccp telnet netccp wget ftp nslookup disk run debug mame clean help
+.PHONY: all z80 6502 ccp telnet netccp netstat wget ftp nslookup disk run debug mame clean help
 
 # `make` assembles both CPUs and CCP, then updates the disk; it does not start MAME.
 all: disk
@@ -58,6 +61,7 @@ z80: $(PRODOS80)
 ccp: $(CPM_CCP)
 telnet: $(CPM_TELNET)
 netccp: $(CPM_NETCCP)
+netstat: $(CPM_NETSTAT)
 wget: $(CPM_WGET)
 ftp: $(CPM_FTP)
 nslookup: $(CPM_NSLOOKUP)
@@ -116,6 +120,18 @@ $(CPM_NETCCP): $(NETCCP_SRC)
 	@tail -c +4 "$(NETCCP_RAW)" > "$@.tmp" && mv -f "$@.tmp" "$@"
 	@rm -f "$(NETCCP_RAW)"
 
+# NETSTAT follows TELNET/NETCCP exactly: assemble to netstat.bin,
+# validate Udo Munk's FF 00 01 origin record, then strip it for .COM.
+$(CPM_NETSTAT): $(NETSTAT_SRC)
+	@echo 'Assembling CP/M NETSTAT: $<'
+	@mkdir -p "$(dir $@)"
+	@rm -f "$(NETSTAT_RAW)"
+	$(Z80ASM) -o$(NETSTAT_RAW) "$<"
+	@test -f "$(NETSTAT_RAW)" || { echo 'Error: Z80asm did not create $(NETSTAT_RAW)' >&2; exit 1; }
+	@test "$$(head -c 3 "$(NETSTAT_RAW)" | od -An -tx1 | tr -d ' \n')" = ff0001 || { echo 'Error: unexpected NETSTAT binary header (expected FF 00 01)' >&2; exit 1; }
+	@tail -c +4 "$(NETSTAT_RAW)" > "$@.tmp" && test -s "$@.tmp" && mv -f "$@.tmp" "$@"
+	@rm -f "$(NETSTAT_RAW)"
+
 # WGET also lives with the CP/M utilities on drive B. As for CCP, Udo Munk's
 # assembler prepends FF 00 01 for ORG 0100H; strip it to make a raw .COM.
 $(CPM_WGET): $(WGET_SRC)
@@ -150,47 +166,43 @@ $(CPM_NSLOOKUP): $(NSLOOKUP_SRC)
 	@tail -c +4 "$(NSLOOKUP_RAW)" > "$@.tmp" && mv -f "$@.tmp" "$@"
 	@rm -f "$(NSLOOKUP_RAW)"
 
-# Update a temporary COPY of the ProDOS image, then publish it only after
-# both Cadius operations succeed. Retain the .po extension for Cadius.
-# Tracking the image itself as the target makes `make disk` incremental.
+# Track every file imported by addfolder, not just the tools built here.
+# Tracking the directories themselves also catches newly added/deleted files.
+# GNU Make re-evaluates this list each invocation.
+CPM_APP_DIRS := $(addprefix cpm-apps/,CPM-2.2 Utils TP3 WS3 Supercalc AztecC dBase-II HiTechC Fortran-80 Games BBC_BASIC WS4)
+CPM_FILES := $(shell find $(CPM_APP_DIRS) -type f ! -name '*.raw' ! -name '*.tmp' 2>/dev/null)
+PRODOS_FILES := $(wildcard prodos.242/PRODOS* prodos.242/BASIC*)
+DISK_INPUTS := $(PRODOS65) $(PRODOS80) $(CPM_CCP) $(CPM_TELNET) $(CPM_NETCCP) $(CPM_NETSTAT) \
+               $(CPM_WGET) $(CPM_FTP) $(CPM_NSLOOKUP) $(CFGFILE) \
+               $(PRODOS_FILES) $(CPM_APP_DIRS) $(CPM_FILES) Makefile
+
+# Build a complete NEW image next to the destination. Cadius requires the .po
+# suffix; only publish it if *every* import succeeds. A failed build leaves the
+# prior image intact. The absolute path works from addfolder's subdirectories.
 disk: $(DISK_IMAGE)
 
-$(DISK_IMAGE): $(PRODOS65) $(PRODOS80) $(CPM_CCP) $(CPM_TELNET) $(CPM_NETCCP) $(CPM_WGET) $(CPM_FTP) $(CPM_NSLOOKUP)
-	echo 'Creating $@ with Cadius...'
-	$(CADIUS) createvolume "$@" "$(DISK_VOLUME)" 4096KB
-	$(CADIUS) addfile "$@" "/$(DISK_VOLUME)" prodos.242/PRODOS*
-	$(CADIUS) addfile "$@" "/$(DISK_VOLUME)" "$(PRODOS65)"
-	$(CADIUS) addfile "$@" "/$(DISK_VOLUME)" prodos.242/BASIC*
-	$(CADIUS) addfile "$@" "/$(DISK_VOLUME)" "$(PRODOS80)"
-	$(CADIUS) addfile "$@" "/$(DISK_VOLUME)" "$(CFGFILE)"
-	$(CADIUS) createfolder "$@" "/$(DISK_VOLUME)/A"
-	$(CADIUS) createfolder "$@" "/$(DISK_VOLUME)/B"
-	$(CADIUS) createfolder "$@" "/$(DISK_VOLUME)/C"
-	$(CADIUS) createfolder "$@" "/$(DISK_VOLUME)/D"
-	$(CADIUS) createfolder "$@" "/$(DISK_VOLUME)/E"
-	$(CADIUS) createfolder "$@" "/$(DISK_VOLUME)/F"
-	$(CADIUS) createfolder "$@" "/$(DISK_VOLUME)/G"
-	$(CADIUS) createfolder "$@" "/$(DISK_VOLUME)/H"
-	$(CADIUS) createfolder "$@" "/$(DISK_VOLUME)/I"
-	$(CADIUS) createfolder "$@" "/$(DISK_VOLUME)/J"
-	$(CADIUS) createfolder "$@" "/$(DISK_VOLUME)/K"
-	$(CADIUS) createfolder "$@" "/$(DISK_VOLUME)/L"
-	$(CADIUS) createfolder "$@" "/$(DISK_VOLUME)/M"
-	$(CADIUS) createfolder "$@" "/$(DISK_VOLUME)/N"
-	$(CADIUS) createfolder "$@" "/$(DISK_VOLUME)/O"
-	$(CADIUS) createfolder "$@" "/$(DISK_VOLUME)/P"
-	cd cpm-apps/CPM-2.2 && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/A" .
-	cd cpm-apps/Utils && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/B" .
-	cd cpm-apps/TP3 && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/C" .
-	cd cpm-apps/WS3 && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/D" .
-	cd cpm-apps/Supercalc && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/E" .
-	cd cpm-apps/AztecC && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/F" .
-	cd cpm-apps/dBase-II && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/G" .
-	cd cpm-apps/HiTechC && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/H" .
-	cd cpm-apps/Fortran-80 && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/I" .
-	cd cpm-apps/Games && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/J" .
-	cd cpm-apps/BBC_BASIC && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/K" .
-	cd cpm-apps/WS4 && $(CADIUS) addfolder "../../$@" "/$(DISK_VOLUME)/L" .
+$(DISK_IMAGE): $(DISK_INPUTS)
+	@echo 'Creating $@ with Cadius (atomic update)...'
+	@mkdir -p "$(dir $@)"
+	@set -eu; \
+	  tmp="$(abspath $@).tmp.po"; \
+	  trap 'rm -f "$$tmp"' EXIT HUP INT TERM; \
+	  rm -f "$$tmp"; \
+	  $(CADIUS) createvolume "$$tmp" "$(DISK_VOLUME)" 4096KB; \
+	  $(CADIUS) addfile "$$tmp" "/$(DISK_VOLUME)" prodos.242/PRODOS*; \
+	  $(CADIUS) addfile "$$tmp" "/$(DISK_VOLUME)" "$(PRODOS65)"; \
+	  $(CADIUS) addfile "$$tmp" "/$(DISK_VOLUME)" prodos.242/BASIC*; \
+	  $(CADIUS) addfile "$$tmp" "/$(DISK_VOLUME)" "$(PRODOS80)"; \
+	  $(CADIUS) addfile "$$tmp" "/$(DISK_VOLUME)" "$(CFGFILE)"; \
+	  for drive in A B C D E F G H I J K L M N O P; do \
+	    $(CADIUS) createfolder "$$tmp" "/$(DISK_VOLUME)/$$drive"; \
+	  done; \
+	  for entry in A:CPM-2.2 B:Utils C:TP3 D:WS3 E:Supercalc F:AztecC \
+	               G:dBase-II H:HiTechC I:Fortran-80 J:Games K:BBC_BASIC L:WS4; do \
+	    drive=$${entry%%:*}; appdir=$${entry#*:}; \
+	    (cd "cpm-apps/$$appdir" && $(CADIUS) addfolder "$$tmp" "/$(DISK_VOLUME)/$$drive" .); \
+	  done; \
+	  mv -f "$$tmp" "$@"
 
 # The original script launched MAME with its debugger enabled.
 # `make run` launches without -debug; `make debug` (or `make mame`) matches it.
@@ -204,21 +216,22 @@ mame: debug
 
 # Never delete the source files, ProDOS image, or hard-disk images.
 clean:
-	rm -f "$(PRODOS65)" "$(PRODOS80)" "$(RAW65)" "$(RAW80)" "$(CPM_CCP)" "$(CCP_RAW)" "$(CPM_TELNET)" "$(TELNET_RAW)" "$(CPM_NETCCP)" "$(NETCCP_RAW)" "$(CPM_WGET)" "$(WGET_RAW)" "$(CPM_FTP)" "$(FTP_RAW)" "$(CPM_NSLOOKUP)" "$(NSLOOKUP_RAW)" _FileInformation.txt
+	rm -f "$(PRODOS65)" "$(PRODOS80)" "$(RAW65)" "$(RAW80)" "$(CPM_CCP)" "$(CCP_RAW)" "$(CPM_TELNET)" "$(TELNET_RAW)" "$(CPM_NETCCP)" "$(NETCCP_RAW)" "$(CPM_NETSTAT)" "$(NETSTAT_RAW)" "$(CPM_NETSTAT).tmp" "$(CPM_WGET)" "$(WGET_RAW)" "$(CPM_FTP)" "$(FTP_RAW)" "$(CPM_NSLOOKUP)" "$(NSLOOKUP_RAW)" _FileInformation.txt
 
 help:
 	@printf '%s\n' \
-	  'make          Assemble both CPUs + CCP + TELNET + NETCCP + WGET + FTP + NSLOOKUP; update zapple2.po if changed' \
+	  'make          Assemble both CPUs + CCP + TELNET + NETCCP + NETSTAT + WGET + FTP + NSLOOKUP; update zapple2.po if changed' \
 	  'make z80      Assemble softcard80.asm only' \
 	  'make 6502     Assemble softcard65.asm only' \
 	  'make ccp      Assemble CCP.asm to cpm-apps/CPM-2.2/CCP.COM' \
 	  'make telnet   Assemble TELNET.asm to cpm-apps/Utils/TELNET.COM' \
 	  'make netccp   Assemble NETCCP.asm to cpm-apps/Utils/NETCCP.COM' \
+	  'make netstat  Assemble netstat.asm to cpm-apps/Utils/NETSTAT.COM' \
 	  'make wget     Assemble wget.asm to cpm-apps/Utils/WGET.COM' \
 	  'make ftp      Assemble ftp.asm to cpm-apps/Utils/FTP.COM' \
 	  'make nslookup Assemble NSLOOKUP.asm to cpm-apps/Utils/NSLOOKUP.COM' \
-	  'make disk     Update the ProDOS image from changed binaries' \
+	  'make disk     Atomically update the ProDOS image when inputs change' \
 	  'make run      Update image, then launch MAME without debugger' \
 	  'make debug    Update image, then launch MAME with -debug -w' \
 	  'make mame     Alias for make debug (original script behavior)' \
-	  'make clean    Remove generated binaries (including CCP/TELNET/NETCCP/WGET/FTP/NSLOOKUP.COM); preserve disk images'
+	  'make clean    Remove generated binaries (including CCP/TELNET/NETCCP/NETSTAT/WGET/FTP/NSLOOKUP.COM); preserve disk images'
