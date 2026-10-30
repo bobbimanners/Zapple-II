@@ -26,6 +26,9 @@ CPM_IPCONFIG := cpm-apps/Utils/IPCONFIG.COM
 NETSTAT_SRC ?= netstat.asm
 NETSTAT_RAW := netstat.bin
 CPM_NETSTAT := cpm-apps/Utils/NETSTAT.COM
+BROWSE_SRC  ?= browse.asm
+BROWSE_RAW  := browse.bin
+CPM_BROWSE  := cpm-apps/Utils/BROWSE.COM
 WGET_SRC    ?= wget.asm
 WGET_RAW    := wget.bin
 CPM_WGET    := cpm-apps/Utils/WGET.COM
@@ -57,7 +60,7 @@ MAME_DEBUG_FLAGS ?= -debug -w
 MAME_EXTRA       ?=
 
 .DEFAULT_GOAL := all
-.PHONY: all z80 6502 ccp telnet netccp netstat ping ipconfig wget ftp nslookup disk run debug mame clean help
+.PHONY: all z80 6502 ccp telnet netccp netstat ping ipconfig wget browse ftp nslookup disk run debug mame clean help
 
 # `make` assembles both CPUs and CCP, then updates the disk; it does not start MAME.
 all: disk
@@ -71,6 +74,7 @@ netstat: $(CPM_NETSTAT)
 ping: $(CPM_PING)
 ipconfig: $(CPM_IPCONFIG)
 wget: $(CPM_WGET)
+browse: $(CPM_BROWSE)
 ftp: $(CPM_FTP)
 nslookup: $(CPM_NSLOOKUP)
 
@@ -173,6 +177,18 @@ $(CPM_WGET): $(WGET_SRC)
 	@tail -c +4 "$(WGET_RAW)" > "$@.tmp" && mv -f "$@.tmp" "$@"
 	@rm -f "$(WGET_RAW)"
 
+# BROWSE uses the same FF 00 01 stripping as WGET.
+$(CPM_BROWSE): $(BROWSE_SRC)
+	@echo 'Assembling CP/M BROWSE: $<' 
+	@mkdir -p "$(dir $@)"
+	@rm -f "$(BROWSE_RAW)"
+	$(Z80ASM) -o$(BROWSE_RAW) "$<"
+	@test -f "$(BROWSE_RAW)" || { echo 'Error: Z80asm did not create $(BROWSE_RAW)' >&2; exit 1; }
+	@test "$$(head -c 3 "$(BROWSE_RAW)" | od -An -tx1 | tr -d ' \n')" = ff0001 || { echo 'Error: unexpected BROWSE binary header (expected FF 00 01)' >&2; exit 1; }
+	@tail -c +4 "$(BROWSE_RAW)" > "$@.tmp" && mv -f "$@.tmp" "$@"
+	@rm -f "$(BROWSE_RAW)"
+
+
 # FTP and NSLOOKUP live beside TELNET/WGET on CP/M drive B.
 # Strip Udo Munk Z80ASM's FF 00 01 origin header from each .COM.
 $(CPM_FTP): $(FTP_SRC)
@@ -202,7 +218,7 @@ CPM_APP_DIRS := $(addprefix cpm-apps/,CPM-2.2 Utils TP3 WS3 Supercalc AztecC dBa
 CPM_FILES := $(shell find $(CPM_APP_DIRS) -type f ! -name '*.raw' ! -name '*.tmp' 2>/dev/null)
 PRODOS_FILES := $(wildcard prodos.242/PRODOS* prodos.242/BASIC*)
 DISK_INPUTS := $(PRODOS65) $(PRODOS80) $(CPM_CCP) $(CPM_TELNET) $(CPM_NETCCP) $(CPM_NETSTAT) $(CPM_PING) $(CPM_IPCONFIG) \
-               $(CPM_WGET) $(CPM_FTP) $(CPM_NSLOOKUP) $(CFGFILE) \
+               $(CPM_WGET) $(CPM_BROWSE) $(CPM_FTP) $(CPM_NSLOOKUP) $(CFGFILE) \
                $(PRODOS_FILES) $(CPM_APP_DIRS) $(CPM_FILES) Makefile
 
 # Build a complete NEW image next to the destination. Cadius requires the .po
@@ -245,11 +261,11 @@ mame: debug
 
 # Never delete the source files, ProDOS image, or hard-disk images.
 clean:
-	rm -f "$(PRODOS65)" "$(PRODOS80)" "$(RAW65)" "$(RAW80)" "$(CPM_CCP)" "$(CCP_RAW)" "$(CPM_TELNET)" "$(TELNET_RAW)" "$(CPM_NETCCP)" "$(NETCCP_RAW)" "$(CPM_NETSTAT)" "$(NETSTAT_RAW)" "$(CPM_NETSTAT).tmp" "$(CPM_PING)" "$(PING_RAW)" "$(CPM_IPCONFIG)" "$(IPCONFIG_RAW)" "$(CPM_WGET)" "$(WGET_RAW)" "$(CPM_FTP)" "$(FTP_RAW)" "$(CPM_NSLOOKUP)" "$(NSLOOKUP_RAW)" _FileInformation.txt
+	rm -f "$(PRODOS65)" "$(PRODOS80)" "$(RAW65)" "$(RAW80)" "$(CPM_CCP)" "$(CCP_RAW)" "$(CPM_TELNET)" "$(TELNET_RAW)" "$(CPM_NETCCP)" "$(NETCCP_RAW)" "$(CPM_NETSTAT)" "$(NETSTAT_RAW)" "$(CPM_NETSTAT).tmp" "$(CPM_PING)" "$(PING_RAW)" "$(CPM_IPCONFIG)" "$(IPCONFIG_RAW)" "$(CPM_WGET)" "$(WGET_RAW)" "$(CPM_BROWSE)" "$(BROWSE_RAW)" "$(CPM_FTP)" "$(FTP_RAW)" "$(CPM_NSLOOKUP)" "$(NSLOOKUP_RAW)" _FileInformation.txt
 
 help:
 	@printf '%s\n' \
-	  'make          Assemble both CPUs + CCP + TELNET + NETCCP + NETSTAT + WGET + FTP + NSLOOKUP + PING + IPCONFIG; update zapple2.po if changed' \
+	  'make          Assemble both CPUs + CCP + TELNET + NETCCP + NETSTAT + WGET + BROWSE + FTP + NSLOOKUP + PING + IPCONFIG; update zapple2.po if changed' \
 	  'make z80      Assemble softcard80.asm only' \
 	  'make 6502     Assemble softcard65.asm only' \
 	  'make ccp      Assemble CCP.asm to cpm-apps/CPM-2.2/CCP.COM' \
@@ -258,6 +274,7 @@ help:
 	  'make netstat  Assemble netstat.asm to cpm-apps/Utils/NETSTAT.COM' \
 	  'make ping     Assemble ping.asm to cpm-apps/Utils/PING.COM' \
 	  'make ipconfig Assemble ipconfig.asm to cpm-apps/Utils/IPCONFIG.COM' \
+	  'make browse   Assemble browse.asm to cpm-apps/Utils/BROWSE.COM' \
 	  'make wget     Assemble wget.asm to cpm-apps/Utils/WGET.COM' \
 	  'make ftp      Assemble ftp.asm to cpm-apps/Utils/FTP.COM' \
 	  'make nslookup Assemble NSLOOKUP.asm to cpm-apps/Utils/NSLOOKUP.COM' \
@@ -265,4 +282,4 @@ help:
 	  'make run      Update image, then launch MAME without debugger' \
 	  'make debug    Update image, then launch MAME with -debug -w' \
 	  'make mame     Alias for make debug (original script behavior)' \
-	  'make clean    Remove generated binaries (including CCP/TELNET/NETCCP/NETSTAT/WGET/FTP/NSLOOKUP/PING/IPCONFIG.COM); preserve disk images'
+	  'make clean    Remove generated binaries (including CCP/TELNET/NETCCP/NETSTAT/WGET/BROWSE/FTP/NSLOOKUP/PING/IPCONFIG.COM); preserve disk images'

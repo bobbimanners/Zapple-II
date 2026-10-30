@@ -33,6 +33,7 @@ VCLEAR  XOR A
         JP C,HOSTERR
         CALL IPAR
         JP C,USGERR
+        CALL DNSINIT
         CALL DNSHOST
         JP C,DNSERR
         CALL ALCCTL
@@ -323,6 +324,25 @@ OCTEND  LD A,C
         RET
 OCTBAD  SCF
         RET
+; Obtain the shared runtime DNS address configured by IPCONFIG.
+; FD: E=6, D=octet index 0..3, A=octet value on return.
+DNSINIT LD D,0
+        LD HL,DNSIP
+DNILP   PUSH HL
+        PUSH DE
+        LD E,6
+        LD C,0FDH
+        CALL BDOS
+        POP DE
+        POP HL
+        LD (HL),A
+        INC HL
+        INC D
+        LD A,D
+        CP 4
+        JR NZ,DNILP
+        RET
+
 DNSHOST LD A,(NEEDDNS)
         OR A
         RET Z
