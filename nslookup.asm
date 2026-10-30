@@ -16,6 +16,7 @@ START   LD SP,STKTOP
         LD (FOUND),A
         LD DE,BANNER
         CALL PRINT
+        CALL DNSINIT
         CALL ARGS
         JP C,BADARG
         CALL MAKEQ
@@ -47,6 +48,25 @@ ERROR   CALL PRINT
 EXIT    CALL RELEASE
         LD C,0
         JP BDOS
+
+; Phase 6K: default DNS server from kernel runtime setting (FD E=6).
+; Requires 6K shared resolver interface. Explicit command-line override remains.
+DNSINIT LD D,0
+        LD HL,DNSIP
+DNILP   PUSH HL
+        PUSH DE
+        LD E,6
+        LD C,0FDH
+        CALL BDOS
+        POP DE
+        POP HL
+        LD (HL),A
+        INC HL
+        INC D
+        LD A,D
+        CP 4
+        JR NZ,DNILP
+        RET
 
 PRINT   PUSH BC
         PUSH DE

@@ -17,6 +17,12 @@ CPM_TELNET  := cpm-apps/Utils/TELNET.COM
 NETCCP_SRC  ?= netccp.asm
 NETCCP_RAW  := netccp.bin
 CPM_NETCCP  := cpm-apps/Utils/NETCCP.COM
+PING_SRC    ?= ping.asm
+PING_RAW    := ping.bin
+CPM_PING    := cpm-apps/Utils/PING.COM
+IPCONFIG_SRC ?= ipconfig.asm
+IPCONFIG_RAW := ipconfig.bin
+CPM_IPCONFIG := cpm-apps/Utils/IPCONFIG.COM
 NETSTAT_SRC ?= netstat.asm
 NETSTAT_RAW := netstat.bin
 CPM_NETSTAT := cpm-apps/Utils/NETSTAT.COM
@@ -51,7 +57,7 @@ MAME_DEBUG_FLAGS ?= -debug -w
 MAME_EXTRA       ?=
 
 .DEFAULT_GOAL := all
-.PHONY: all z80 6502 ccp telnet netccp netstat wget ftp nslookup disk run debug mame clean help
+.PHONY: all z80 6502 ccp telnet netccp netstat ping ipconfig wget ftp nslookup disk run debug mame clean help
 
 # `make` assembles both CPUs and CCP, then updates the disk; it does not start MAME.
 all: disk
@@ -62,6 +68,8 @@ ccp: $(CPM_CCP)
 telnet: $(CPM_TELNET)
 netccp: $(CPM_NETCCP)
 netstat: $(CPM_NETSTAT)
+ping: $(CPM_PING)
+ipconfig: $(CPM_IPCONFIG)
 wget: $(CPM_WGET)
 ftp: $(CPM_FTP)
 nslookup: $(CPM_NSLOOKUP)
@@ -132,6 +140,27 @@ $(CPM_NETSTAT): $(NETSTAT_SRC)
 	@tail -c +4 "$(NETSTAT_RAW)" > "$@.tmp" && test -s "$@.tmp" && mv -f "$@.tmp" "$@"
 	@rm -f "$(NETSTAT_RAW)"
 
+# Phase 6K utilities use the SAME Udo Munk origin-header convention.
+$(CPM_PING): $(PING_SRC)
+	@echo 'Assembling CP/M PING: $<' 
+	@mkdir -p "$(dir $@)"
+	@rm -f "$(PING_RAW)"
+	$(Z80ASM) -o$(PING_RAW) "$<"
+	@test -f "$(PING_RAW)" || { echo 'Error: z80asm did not create $(PING_RAW)' >&2; exit 1; }
+	@test "$$(head -c 3 "$(PING_RAW)" | od -An -tx1 | tr -d ' \n')" = ff0001 || { echo 'Error: bad PING origin header' >&2; exit 1; }
+	@tail -c +4 "$(PING_RAW)" > "$@.tmp" && test -s "$@.tmp" && mv -f "$@.tmp" "$@"
+	@rm -f "$(PING_RAW)"
+
+$(CPM_IPCONFIG): $(IPCONFIG_SRC)
+	@echo 'Assembling CP/M IPCONFIG: $<' 
+	@mkdir -p "$(dir $@)"
+	@rm -f "$(IPCONFIG_RAW)"
+	$(Z80ASM) -o$(IPCONFIG_RAW) "$<"
+	@test -f "$(IPCONFIG_RAW)" || { echo 'Error: z80asm did not create $(IPCONFIG_RAW)' >&2; exit 1; }
+	@test "$$(head -c 3 "$(IPCONFIG_RAW)" | od -An -tx1 | tr -d ' \n')" = ff0001 || { echo 'Error: bad IPCONFIG origin header' >&2; exit 1; }
+	@tail -c +4 "$(IPCONFIG_RAW)" > "$@.tmp" && test -s "$@.tmp" && mv -f "$@.tmp" "$@"
+	@rm -f "$(IPCONFIG_RAW)"
+
 # WGET also lives with the CP/M utilities on drive B. As for CCP, Udo Munk's
 # assembler prepends FF 00 01 for ORG 0100H; strip it to make a raw .COM.
 $(CPM_WGET): $(WGET_SRC)
@@ -172,7 +201,7 @@ $(CPM_NSLOOKUP): $(NSLOOKUP_SRC)
 CPM_APP_DIRS := $(addprefix cpm-apps/,CPM-2.2 Utils TP3 WS3 Supercalc AztecC dBase-II HiTechC Fortran-80 Games BBC_BASIC WS4)
 CPM_FILES := $(shell find $(CPM_APP_DIRS) -type f ! -name '*.raw' ! -name '*.tmp' 2>/dev/null)
 PRODOS_FILES := $(wildcard prodos.242/PRODOS* prodos.242/BASIC*)
-DISK_INPUTS := $(PRODOS65) $(PRODOS80) $(CPM_CCP) $(CPM_TELNET) $(CPM_NETCCP) $(CPM_NETSTAT) \
+DISK_INPUTS := $(PRODOS65) $(PRODOS80) $(CPM_CCP) $(CPM_TELNET) $(CPM_NETCCP) $(CPM_NETSTAT) $(CPM_PING) $(CPM_IPCONFIG) \
                $(CPM_WGET) $(CPM_FTP) $(CPM_NSLOOKUP) $(CFGFILE) \
                $(PRODOS_FILES) $(CPM_APP_DIRS) $(CPM_FILES) Makefile
 
@@ -216,17 +245,19 @@ mame: debug
 
 # Never delete the source files, ProDOS image, or hard-disk images.
 clean:
-	rm -f "$(PRODOS65)" "$(PRODOS80)" "$(RAW65)" "$(RAW80)" "$(CPM_CCP)" "$(CCP_RAW)" "$(CPM_TELNET)" "$(TELNET_RAW)" "$(CPM_NETCCP)" "$(NETCCP_RAW)" "$(CPM_NETSTAT)" "$(NETSTAT_RAW)" "$(CPM_NETSTAT).tmp" "$(CPM_WGET)" "$(WGET_RAW)" "$(CPM_FTP)" "$(FTP_RAW)" "$(CPM_NSLOOKUP)" "$(NSLOOKUP_RAW)" _FileInformation.txt
+	rm -f "$(PRODOS65)" "$(PRODOS80)" "$(RAW65)" "$(RAW80)" "$(CPM_CCP)" "$(CCP_RAW)" "$(CPM_TELNET)" "$(TELNET_RAW)" "$(CPM_NETCCP)" "$(NETCCP_RAW)" "$(CPM_NETSTAT)" "$(NETSTAT_RAW)" "$(CPM_NETSTAT).tmp" "$(CPM_PING)" "$(PING_RAW)" "$(CPM_IPCONFIG)" "$(IPCONFIG_RAW)" "$(CPM_WGET)" "$(WGET_RAW)" "$(CPM_FTP)" "$(FTP_RAW)" "$(CPM_NSLOOKUP)" "$(NSLOOKUP_RAW)" _FileInformation.txt
 
 help:
 	@printf '%s\n' \
-	  'make          Assemble both CPUs + CCP + TELNET + NETCCP + NETSTAT + WGET + FTP + NSLOOKUP; update zapple2.po if changed' \
+	  'make          Assemble both CPUs + CCP + TELNET + NETCCP + NETSTAT + WGET + FTP + NSLOOKUP + PING + IPCONFIG; update zapple2.po if changed' \
 	  'make z80      Assemble softcard80.asm only' \
 	  'make 6502     Assemble softcard65.asm only' \
 	  'make ccp      Assemble CCP.asm to cpm-apps/CPM-2.2/CCP.COM' \
 	  'make telnet   Assemble TELNET.asm to cpm-apps/Utils/TELNET.COM' \
 	  'make netccp   Assemble NETCCP.asm to cpm-apps/Utils/NETCCP.COM' \
 	  'make netstat  Assemble netstat.asm to cpm-apps/Utils/NETSTAT.COM' \
+	  'make ping     Assemble ping.asm to cpm-apps/Utils/PING.COM' \
+	  'make ipconfig Assemble ipconfig.asm to cpm-apps/Utils/IPCONFIG.COM' \
 	  'make wget     Assemble wget.asm to cpm-apps/Utils/WGET.COM' \
 	  'make ftp      Assemble ftp.asm to cpm-apps/Utils/FTP.COM' \
 	  'make nslookup Assemble NSLOOKUP.asm to cpm-apps/Utils/NSLOOKUP.COM' \
@@ -234,4 +265,4 @@ help:
 	  'make run      Update image, then launch MAME without debugger' \
 	  'make debug    Update image, then launch MAME with -debug -w' \
 	  'make mame     Alias for make debug (original script behavior)' \
-	  'make clean    Remove generated binaries (including CCP/TELNET/NETCCP/NETSTAT/WGET/FTP/NSLOOKUP.COM); preserve disk images'
+	  'make clean    Remove generated binaries (including CCP/TELNET/NETCCP/NETSTAT/WGET/FTP/NSLOOKUP/PING/IPCONFIG.COM); preserve disk images'

@@ -617,10 +617,13 @@ B_DRV_RESET   EQU       25H                            ; Selectively reset disk 
 ; Open Apple is sampled alongside each keystroke or status peek.
 ; It cooperatively parks applications; no interrupt preemption.
 ; ================================================================
-; Foreground-biased scheduler.  Quanta count completed BIOS/BDOS calls,
-; not CPU time.  A busy foreground gets long uninterrupted bursts;
-; background work gets a short turn.  When foreground is idle/blocked,
-; background uses the original 32-call quantum.
+; Cooperative, BDOS/BIOS-call-counted scheduler (no timer/interrupts).
+; With no connected resident NETCCP sessions, preserve the original
+; visible-tab bias (128 calls) and ordinary background turns (8 calls).
+; When any resident NETCCP session is CONNECTED, give the visible task
+; an interactive 32-call turn; each connected remote task also gets 32.
+; Non-network background work retains the original bias. Listening tabs
+; still sleep on input via NCSOCHK and do not burn scheduler turns.
 SCHFGQ        EQU       128
 SCHBGQ        EQU       8
 ; Software cursor: foreground physical text only, never saved in a
@@ -650,6 +653,7 @@ CUON          LD        A,(CUACTIVE)
               RET
 
 SCHIDLEQ      EQU       32
+SCHNETQ       EQU       32                             ; shared interactive quantum
               ORG       00600H
 ; Stage 1 scheduler. RUNTASK is TABMODE; SCHFG owns the physical screen.
 ; These are cooperative slices: no call is interrupted mid-operation.
@@ -696,8 +700,8 @@ SMLOOP        CALL      NC_HOT                        ; poll physical OA, even w
 SMRUN         NOP                                      ; cursor stays on
               NOP
               NOP
-              LD        A,SCHFGQ
-              LD        (SCHQLEFT),A                   ; foreground receives longer quantum
+              CALL      SCHQFG                        ; short fair turn with live NETCCP users
+              LD        (SCHQLEFT),A
               CALL      TABRESUM                       ; foreground until next yield/exit
               JR        SMLOOP
 
@@ -766,26 +770,10 @@ SOIDX         LD        A,(SCHFG)
               LD        (SCHNEXT),A
               LD        B,C
               CALL      SCHSWAP
-              ; A busy foreground needs quick redraws; give background
-              ; only a few calls.  When foreground is at CCP or blocked
-              ; on input, allow full-sized background quanta instead.
-              LD        A,(SCHFG)
-              LD        E,A
-              LD        D,0
-              LD        HL,TSKFLAGS
-              ADD       HL,DE
-              LD        A,(HL)
-              OR        A
-              JR        Z,SOFULL
-              LD        HL,SCHWAIT
-              ADD       HL,DE
-              LD        A,(HL)
-              OR        A
-              JR        NZ,SOFULL
-              LD        A,SCHBGQ
-              JR        SOQUANT
-SOFULL        LD        A,SCHIDLEQ
-SOQUANT       LD        (SCHQLEFT),A
+              ; Connected remote terminals get the interactive quantum.
+              ; Other background programs retain the original policy.
+              CALL      SCHQBG
+              LD        (SCHQLEFT),A
               CALL      TABRESUM
               LD        A,(SCHFG)
               LD        B,A
@@ -2292,7 +2280,7 @@ NCAPI         LD        A,E
               JP        Z,NCSSTART                    ; 6J: register kernel-owned listener
               CP        5
               JP        Z,NSTREAD                     ; 6H.2: read-only NETSTAT inspection
-              JP        NETBAD
+              JP        IFCGAPI                       ; FD E=6/7: shared DNS config
 NCBIND        LD        A,D
               CP        4
               JP        NC,NETBAD
@@ -5013,6 +5001,69 @@ NCR_MSG       DEFB      13,10
               DEFM      'NETCCP: listener stopped'
               DEFB      13,10,'$'
 
+; Phase 6J.1 scheduling policy.  No timer and no extra task state:
+; NCSSTATE(socket)==2 means resident NETCCP is connected.  That makes
+; its CP/M tab an interactive peer, independent of the physical display.
+; These routines are called only at cooperative scheduling boundaries.
+              ORG       06990H
+; Foreground turn: shorten to 32 only while some NETCCP client is live.
+; Preserve BC and HL (SCHTICK/SCHMAIN callers may have live registers).
+SCHQFG        PUSH      BC
+              PUSH      HL
+              LD        HL,NCSSTATE
+              LD        B,4
+SQFLOOP       LD        A,(HL)
+              CP        2
+              JR        Z,SQFNET
+              INC       HL
+              DJNZ      SQFLOOP
+              LD        A,SCHFGQ
+              JR        SQFEND
+SQFNET        LD        A,SCHNETQ
+SQFEND        POP       HL
+              POP       BC
+              RET
+
+; Return A=1 if the currently running tab owns a connected resident
+; NETCCP socket. NCSLOOK checks both UCBIND and NETOWN; preserves BC.
+SCHQNET       LD        A,(TABMODE)
+              CALL      NCSLOOK
+              CP        4
+              JR        NC,SQNNO
+              LD        A,(HL)
+              CP        2
+              JR        NZ,SQNNO
+              LD        A,1
+              RET
+SQNNO         XOR       A
+              RET
+
+; Background turn; called after SCHSWAP makes the candidate current.
+; Inherit the old 8/32-call rule for ordinary local tasks. NETCCP tabs
+; connected to a client receive 32 calls regardless of physical focus.
+SCHQBG        CALL      SCHQNET
+              OR        A
+              JR        Z,SQBOLD
+              LD        A,SCHNETQ
+              RET
+SQBOLD        LD        A,(SCHFG)
+              LD        E,A
+              LD        D,0
+              LD        HL,TSKFLAGS
+              ADD       HL,DE
+              LD        A,(HL)
+              OR        A
+              JR        Z,SQBFULL
+              LD        HL,SCHWAIT
+              ADD       HL,DE
+              LD        A,(HL)
+              OR        A
+              JR        NZ,SQBFULL
+              LD        A,SCHBGQ
+              RET
+SQBFULL       LD        A,SCHIDLEQ
+              RET
+
               ORG       06A00H
 NCSHSTEP      LD        A,(AXQUIT)
               CP        5
@@ -6287,6 +6338,37 @@ ARDONE        LD        (AXRES),A
               JP        NZ,AXFIN
               JP        AXGO
 
+
+; Phase 6K: shared runtime DNS resolver address, separate from W5100.
+; FD E=6: D=0..3 returns DNS octet in A/L (read-only).
+; FD E=7: D=0..3, B=octet: sets DNS address (volatile).
+; IP/GW/MASK remain common W5100 registers, accessed by F9 bridge.
+; No persistent storage or forced socket reconfiguration here.
+IFCGAPI       LD        A,E
+              CP        6
+              JR        Z,IFCGREAD
+              CP        7
+              JP        NZ,NETBAD
+              LD        A,D
+              CP        4
+              JP        NC,NETBAD
+              LD        E,A
+              LD        D,0
+              LD        HL,IFDNSIP
+              ADD       HL,DE
+              LD        (HL),B
+              XOR       A
+              JP        NETRET
+IFCGREAD      LD        A,D
+              CP        4
+              JP        NC,NETBAD
+              LD        E,A
+              LD        D,0
+              LD        HL,IFDNSIP
+              ADD       HL,DE
+              LD        A,(HL)
+              JP        NETRET
+IFDNSIP       DEFB      1,1,1,1                       ; matches prior NSLOOKUP default
 
               ORG       07590H
 TCLIST        DEFM      'LIST '
