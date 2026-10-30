@@ -14,6 +14,9 @@ CPM_CCP     := cpm-apps/CPM-2.2/CCP.COM
 TELNET_SRC  ?= telnet.asm
 TELNET_RAW  := telnet.bin
 CPM_TELNET  := cpm-apps/Utils/TELNET.COM
+NETCCP_SRC  ?= netccp.asm
+NETCCP_RAW  := netccp.bin
+CPM_NETCCP  := cpm-apps/Utils/NETCCP.COM
 WGET_SRC    ?= wget.asm
 WGET_RAW    := wget.bin
 CPM_WGET    := cpm-apps/Utils/WGET.COM
@@ -45,7 +48,7 @@ MAME_DEBUG_FLAGS ?= -debug -w
 MAME_EXTRA       ?=
 
 .DEFAULT_GOAL := all
-.PHONY: all z80 6502 ccp telnet wget ftp nslookup disk run debug mame clean help
+.PHONY: all z80 6502 ccp telnet netccp wget ftp nslookup disk run debug mame clean help
 
 # `make` assembles both CPUs and CCP, then updates the disk; it does not start MAME.
 all: disk
@@ -54,6 +57,7 @@ z80: $(PRODOS80)
 6502: $(PRODOS65)
 ccp: $(CPM_CCP)
 telnet: $(CPM_TELNET)
+netccp: $(CPM_NETCCP)
 wget: $(CPM_WGET)
 ftp: $(CPM_FTP)
 nslookup: $(CPM_NSLOOKUP)
@@ -100,6 +104,18 @@ $(CPM_TELNET): $(TELNET_SRC)
 	@tail -c +4 "$(TELNET_RAW)" > "$@.tmp" && mv -f "$@.tmp" "$@"
 	@rm -f "$(TELNET_RAW)"
 
+# NETCCP lives on CP/M drive B alongside TELNET and the other utilities.
+# Like TELNET, strip Z80ASM's FF 00 01 origin record to make a .COM.
+$(CPM_NETCCP): $(NETCCP_SRC)
+	@echo 'Assembling CP/M NETCCP: $<'
+	@mkdir -p "$(dir $@)"
+	@rm -f "$(NETCCP_RAW)"
+	$(Z80ASM) -o$(NETCCP_RAW) "$<"
+	@test -f "$(NETCCP_RAW)" || { echo 'Error: Z80asm did not create $(NETCCP_RAW)' >&2; exit 1; }
+	@test "$$(head -c 3 "$(NETCCP_RAW)" | od -An -tx1 | tr -d ' \n')" = ff0001 || { echo 'Error: unexpected NETCCP binary header (expected FF 00 01)' >&2; exit 1; }
+	@tail -c +4 "$(NETCCP_RAW)" > "$@.tmp" && mv -f "$@.tmp" "$@"
+	@rm -f "$(NETCCP_RAW)"
+
 # WGET also lives with the CP/M utilities on drive B. As for CCP, Udo Munk's
 # assembler prepends FF 00 01 for ORG 0100H; strip it to make a raw .COM.
 $(CPM_WGET): $(WGET_SRC)
@@ -139,7 +155,7 @@ $(CPM_NSLOOKUP): $(NSLOOKUP_SRC)
 # Tracking the image itself as the target makes `make disk` incremental.
 disk: $(DISK_IMAGE)
 
-$(DISK_IMAGE): $(PRODOS65) $(PRODOS80) $(CPM_CCP) $(CPM_TELNET) $(CPM_WGET) $(CPM_FTP) $(CPM_NSLOOKUP)
+$(DISK_IMAGE): $(PRODOS65) $(PRODOS80) $(CPM_CCP) $(CPM_TELNET) $(CPM_NETCCP) $(CPM_WGET) $(CPM_FTP) $(CPM_NSLOOKUP)
 	echo 'Creating $@ with Cadius...'
 	$(CADIUS) createvolume "$@" "$(DISK_VOLUME)" 4096KB
 	$(CADIUS) addfile "$@" "/$(DISK_VOLUME)" prodos.242/PRODOS*
@@ -188,15 +204,16 @@ mame: debug
 
 # Never delete the source files, ProDOS image, or hard-disk images.
 clean:
-	rm -f "$(PRODOS65)" "$(PRODOS80)" "$(RAW65)" "$(RAW80)" "$(CPM_CCP)" "$(CCP_RAW)" "$(CPM_TELNET)" "$(TELNET_RAW)" "$(CPM_WGET)" "$(WGET_RAW)" "$(CPM_FTP)" "$(FTP_RAW)" "$(CPM_NSLOOKUP)" "$(NSLOOKUP_RAW)" _FileInformation.txt
+	rm -f "$(PRODOS65)" "$(PRODOS80)" "$(RAW65)" "$(RAW80)" "$(CPM_CCP)" "$(CCP_RAW)" "$(CPM_TELNET)" "$(TELNET_RAW)" "$(CPM_NETCCP)" "$(NETCCP_RAW)" "$(CPM_WGET)" "$(WGET_RAW)" "$(CPM_FTP)" "$(FTP_RAW)" "$(CPM_NSLOOKUP)" "$(NSLOOKUP_RAW)" _FileInformation.txt
 
 help:
 	@printf '%s\n' \
-	  'make          Assemble both CPUs + CCP + TELNET + WGET + FTP + NSLOOKUP; update zapple2.po if changed' \
+	  'make          Assemble both CPUs + CCP + TELNET + NETCCP + WGET + FTP + NSLOOKUP; update zapple2.po if changed' \
 	  'make z80      Assemble softcard80.asm only' \
 	  'make 6502     Assemble softcard65.asm only' \
 	  'make ccp      Assemble CCP.asm to cpm-apps/CPM-2.2/CCP.COM' \
 	  'make telnet   Assemble TELNET.asm to cpm-apps/Utils/TELNET.COM' \
+	  'make netccp   Assemble NETCCP.asm to cpm-apps/Utils/NETCCP.COM' \
 	  'make wget     Assemble wget.asm to cpm-apps/Utils/WGET.COM' \
 	  'make ftp      Assemble ftp.asm to cpm-apps/Utils/FTP.COM' \
 	  'make nslookup Assemble NSLOOKUP.asm to cpm-apps/Utils/NSLOOKUP.COM' \
@@ -204,4 +221,4 @@ help:
 	  'make run      Update image, then launch MAME without debugger' \
 	  'make debug    Update image, then launch MAME with -debug -w' \
 	  'make mame     Alias for make debug (original script behavior)' \
-	  'make clean    Remove generated binaries (including CCP/TELNET/WGET/FTP/NSLOOKUP.COM); preserve disk images'
+	  'make clean    Remove generated binaries (including CCP/TELNET/NETCCP/WGET/FTP/NSLOOKUP.COM); preserve disk images'

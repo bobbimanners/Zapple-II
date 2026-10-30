@@ -2305,6 +2305,8 @@ NCBIND        LD        A,D
               LD        (HL),D
               CALL      UCRPTR
               LD        (HL),0
+              CALL      TNTPTR                         ; reset TELNET parser for this binding
+              LD        (HL),0
               XOR       A
               JP        NETRET
 NCUNB         CALL      UCPPTR
@@ -2312,6 +2314,8 @@ NCUNB         CALL      UCPPTR
               CALL      UCBPTR
               LD        (HL),0FFH
               CALL      UCRPTR
+              LD        (HL),0
+              CALL      TNTPTR
               LD        (HL),0
               XOR       A
               JP        NETRET
@@ -2372,6 +2376,9 @@ NCXCLN        PUSH      BC
               LD        HL,UCREADY
               ADD       HL,DE
               LD        (HL),0
+              LD        HL,TNSTATE
+              ADD       HL,DE
+              LD        (HL),0
               POP       BC
               RET
 ; UCSTAT returns FF if a byte is pending, otherwise 0.
@@ -2379,7 +2386,7 @@ NCXCLN        PUSH      BC
 UCSTAT        PUSH      BC
               PUSH      DE
               PUSH      HL
-              CALL      UCRPTR
+UCAGAIN       CALL      UCRPTR
               LD        A,(HL)
               OR        A
               JR        NZ,UCREADY1
@@ -2398,9 +2405,12 @@ UCSTAT        PUSH      BC
               POP       AF
               CP        1
               JR        NZ,UCDISC
-              CALL      UCDPTR
               LD        A,(NXBUF)
-              LD        (HL),A
+              CALL      TNFEED                         ; C=1: ordinary key, C=0: TELNET protocol
+              JR        NC,UCAGAIN                     ; consume IAC and retry without nesting stack
+              LD        C,A                            ; save parsed key: UCDPTR overwrites A
+              CALL      UCDPTR
+              LD        (HL),C                          ; cache real character, not TABMODE
               CALL      UCRPTR
               LD        (HL),1
               JP        UCREADY1                      ; successful RX is ready NOW
@@ -9821,7 +9831,7 @@ VRBLK         DEFW      0                              ; Requested ProDOS 512-by
               ;ORG        9000H   ; Try this - WORKS
 
 ; Phase 4A.3: $FB socket commands in MAIN $9400-$97FF.
-; Prior resident code ends at $93A7; ProDOS buffers start at $9800.
+; Existing $9400-$94FF socket code precedes $9500 packet I/O.
 ; Do not place this in $A168-$A1E7: that is AUXSTAGE (128 bytes).
               ORG       09400H
 ; Phase 4A corrected: compact $FB to preserve the $A800 stack boundary.
@@ -9882,6 +9892,59 @@ NI_READ       LD        (XREG),A
               LD        A,(AREG)
               RET
 
+
+; Phase 6F Telnet option replies. Place AFTER NETIO and NI_READ in
+; the existing $9400-$94FF page (unused space before $9500).
+; Do NOT ORG into $93xx: the resident BDOS image occupies that area.
+; A=option, C=4 WILL/5 WONT/6 DO/7 DONT.
+; NETCCP offers WILL ECHO, WILL SGA, DO SGA at connect time.
+; Corresponding positive replies are acknowledgements, not new requests.
+; Decline every other incoming positive option request (LINEMODE incl.).
+; Never re-acknowledge accepted options: avoids RFC 854 negotiation loops.
+TNNEG         LD        (TNBYTES+2),A
+              CP        1                             ; ECHO
+              JR        Z,TNECHO
+              CP        3                             ; SUPPRESS-GO-AHEAD
+              JR        Z,TNSGA
+TNOTHER       LD        A,C
+              CP        4                             ; unsolicited WILL
+              JR        Z,TNDONT
+              CP        6                             ; unsolicited DO
+              JR        Z,TNWONT
+              RET                                     ; WONT/DONT: no answer
+TNECHO        LD        A,C
+              CP        6                             ; DO ECHO acks our WILL
+              RET       Z
+              JR        TNOTHER                        ; WILL ECHO not supported
+TNSGA         LD        A,C
+              CP        6                             ; DO SGA acks our WILL
+              RET       Z
+              CP        4                             ; WILL SGA acks our DO
+              RET       Z
+              JR        TNOTHER
+TNDONT        LD        A,0FEH                         ; IAC DONT option
+              JR        TNRESP
+TNWONT        LD        A,0FCH                         ; IAC WONT option
+TNRESP        LD        (TNBYTES+1),A
+              LD        HL,TNBYTES
+              LD        DE,NXBUF
+              LD        BC,3
+              LDIR                                    ; MAIN -> MAIN staging
+              LD        A,3
+              LD        (NXREQ),A
+              LD        A,1
+              LD        (UCFLAG),A                     ; already MAIN, no AUX copy
+              LD        B,32                           ; bounded TX retries on disconnect
+TNRETRY       PUSH      BC
+              CALL      NXTX                          ; same W5100 path as UCOUT
+              POP       BC
+              OR        A
+              JR        NZ,TNLEAVE
+              DJNZ      TNRETRY
+TNLEAVE       XOR       A
+              LD        (UCFLAG),A
+              RET
+TNBYTES       DEFB      0FFH,0FCH,0
 
 ; Phase 4B: BDOS $FC - packetless W5100 TX/RX, max 16 bytes per call.
 ; DE -> AUX [socket, operation (0=TX,1=RX), requested length, ptr lo,ptr hi].
@@ -10166,6 +10229,107 @@ NXLO          DEFB      0
 NXIDX         DEFB      0
 NXBUF         DEFS      16
 NXEND
+
+; Phase 6F: per-tab TELNET receiver and negotiation replies in MAIN $9740..$97FF.
+; Called ONLY by UCSTAT, after NXRX has finished. B/DE/HL may be
+; clobbered: UCSTAT already saves these; A and carry are the interface.
+; Carry set: A is one application input byte. Carry clear: consumed
+; a TELNET control/subnegotiation byte, so UCSTAT checks TCP again.
+; States: 0=data, 1=IAC, 2=SB, 3=SB-IAC, 4=WILL option,
+; 5=WONT option, 6=DO option, 7=DONT option, 8=after CR.
+; Keep all negotiation in MAIN after NXRX: do not call AUX BDOS here.
+              ORG       09740H
+TNTPTR        LD        A,(TABMODE)
+              LD        E,A
+              LD        D,0
+              LD        HL,TNSTATE
+              ADD       HL,DE
+              RET
+TNFEED        LD        B,A
+              CALL      TNTPTR
+              LD        A,(HL)
+              OR        A
+              JR        Z,TNDATA
+              CP        1
+              JR        Z,TNIAC
+              CP        2
+              JR        Z,TNSB
+              CP        3
+              JR        Z,TNSBI
+              CP        8
+              JR        Z,TNCR
+              LD        C,A                           ; 4..7 identifies TELNET verb
+              LD        (HL),0                         ; ready for next input byte
+              LD        A,B                           ; TELNET option number
+              CALL      TNNEG                          ; send reply if required
+              JR        TNDROP
+TNDATA        LD        A,B
+              CP        0FFH
+              JR        Z,TNISET
+              CP        13
+              JR        Z,TNCRST
+TNBYTE        SCF
+              RET
+TNISET        LD        (HL),1
+TNDROP        OR        A                             ; clear carry: protocol consumed
+              RET
+TNCRST        LD        (HL),8
+              JR        TNBYTE                         ; deliver CR exactly once
+TNCR          LD        (HL),0
+              LD        A,B
+              OR        A
+              RET       Z                             ; CR NUL -> one CR
+              CP        10
+              RET       Z                             ; CR LF -> one CR
+              JR        TNDATA                         ; unrelated byte is real data
+TNIAC         LD        (HL),0
+              LD        A,B
+              CP        0FFH
+              JR        Z,TNBYTE                       ; doubled IAC -> literal FF
+              CP        0FAH
+              JR        Z,TNSBS                        ; SB
+              CP        0FBH
+              JR        Z,TNOPT                        ; WILL
+              CP        0FCH
+              JR        Z,TNOPT                        ; WONT
+              CP        0FDH
+              JR        Z,TNOPT                        ; DO
+              CP        0FEH
+              JR        Z,TNOPT                        ; DONT
+              CP        0F4H
+              JR        Z,TNINT                        ; IP -> ^C
+              CP        0F3H
+              JR        Z,TNINT                        ; BRK -> ^C
+              CP        0F7H
+              JR        Z,TNEC                         ; EC -> backspace
+              CP        0F8H
+              JR        Z,TNEL                         ; EL -> ^U
+              JR        TNDROP
+TNINT         LD        A,3
+              JR        TNBYTE
+TNEC          LD        A,8
+              JR        TNBYTE
+TNEL          LD        A,15H
+              JR        TNBYTE
+TNSBS         LD        (HL),2
+              JR        TNDROP
+TNOPT         LD        A,B                           ; FB/FC/FD/FE
+              SUB       0F7H                          ; map to state 4/5/6/7
+              LD        (HL),A
+              JR        TNDROP
+TNSB          LD        A,B
+              CP        0FFH
+              JR        NZ,TNDROP
+              LD        (HL),3
+              JR        TNDROP
+TNSBI         LD        A,B
+              CP        0F0H                           ; IAC SE terminates SB
+              JR        Z,TNSEND
+              LD        (HL),2                         ; continue swallowing SB
+              JR        TNDROP
+TNSEND        LD        (HL),0
+              JR        TNDROP
+TNSTATE       DEFB      0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 
               ORG       9800H                          ; Try this - WORKS
 IOBUF1        DEFS      1024
