@@ -3327,7 +3327,7 @@ AXBUILT       PUSH      DE
               LD        A,(HL)
               POP       DE
               CP        1
-              JP        NZ,AXBAD                      ; private F8 requires registered CCP
+              JP        NZ,AXERRMODE                  ; ordinary .COM: legacy F8 clock probe = zero
               LD        A,D
               OR        A
               JP        Z,AXBAD                        ; invalid AUX address
@@ -5776,6 +5776,7 @@ AXF37         CP        40
 ; The CP/M 3 call returns no value; return zero for compatibility.
 AXERRMODE     XOR       A
               LD        L,A
+              LD        H,A                          ; zero entire 16-bit result (BBC BASIC)
               RET
 ; Unsupported calls must not pass AUX pointers to the MAIN BDOS.
 ; Private AUX BDOS $F9: socket-one W5100 register write via native 6502.
