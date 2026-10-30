@@ -6031,7 +6031,16 @@ AXLNEXT       CALL      NCALINE                        ; nonblocking on UC1, CRT
               ; unusable during command entry or any BDOS 10 edit.
               CALL      TSKKEY
               JP        C,AXLPARK
-AXLKEY        CP        13
+; Recompute line cursor after every key. UC1 input may have yielded
+; and resumed this task, so HL is not an authoritative line pointer.
+; C is the saved line length; preserve the key in A for comparisons.
+AXLKEY        PUSH      AF
+              LD        HL,AXLBUF+2
+              LD        E,C
+              LD        D,0
+              ADD       HL,DE
+              POP       AF
+              CP        13
               JR        Z,AXLDONE
               CP        3
               JR        Z,AXLCAN
