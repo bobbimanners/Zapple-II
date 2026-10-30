@@ -16,6 +16,7 @@ start:  ld      (oldsp),sp
         ld      sp,stktop
         call    initkeys
         call    trmopts         ; terminal-selection menu before clear
+        call    vthide          ; hide VT100 cursor while playing
         ld      hl,board
         ld      de,board+1
         ld      bc,199
@@ -611,8 +612,25 @@ gameover:
         jp      exit
 quit:   ld      de,quitmsg
         call    putstr
-exit:   ld      sp,(oldsp)
+exit:   call    vtshow          ; restore cursor on QUIT and GAME OVER
+        ld      sp,(oldsp)
         ret
+
+; VT100 cursor visibility is terminal state, independent of SOROC.
+; Use BDOS 9 directly: the sequences are already ANSI, not Soroc data.
+; Escape sequences: ESC [ ? 25 l (hide), ESC [ ? 25 h (show).
+vthide: ld      a,(term)
+        or      a
+        ret     z
+        ld      de,hidecur
+        ld      c,9
+        jp      0005h
+vtshow: ld      a,(term)
+        or      a
+        ret     z
+        ld      de,showcur
+        ld      c,9
+        jp      0005h
 
 ; Terminal choice is local to SLOPTRIS; no system TERM changes.
 ; Menu uses plain ASCII CR/LF so it works on either type of terminal.
@@ -880,101 +898,142 @@ waitlp: dec     bc
 ; Rotating L/J/T/S/Z in a 3x3 square; I in a 4x4 square.
 shapes:
 ; I: ---- / #### / ---- / ----
-        db      10h,11h,12h,13h
-        db      02h,12h,22h,32h
-        db      20h,21h,22h,23h
-        db      01h,11h,21h,31h
+        DEFB 10h,11h,12h,13h
+        DEFB 02h,12h,22h,32h
+        DEFB 20h,21h,22h,23h
+        DEFB 01h,11h,21h,31h
 ; O
-        db      01h,02h,11h,12h
-        db      01h,02h,11h,12h
-        db      01h,02h,11h,12h
-        db      01h,02h,11h,12h
+        DEFB 01h,02h,11h,12h
+        DEFB 01h,02h,11h,12h
+        DEFB 01h,02h,11h,12h
+        DEFB 01h,02h,11h,12h
 ; T
-        db      01h,10h,11h,12h
-        db      01h,11h,12h,21h
-        db      10h,11h,12h,21h
-        db      01h,10h,11h,21h
+        DEFB 01h,10h,11h,12h
+        DEFB 01h,11h,12h,21h
+        DEFB 10h,11h,12h,21h
+        DEFB 01h,10h,11h,21h
 ; S
-        db      01h,02h,10h,11h
-        db      00h,10h,11h,21h
-        db      11h,12h,20h,21h
-        db      01h,11h,12h,22h
+        DEFB 01h,02h,10h,11h
+        DEFB 00h,10h,11h,21h
+        DEFB 11h,12h,20h,21h
+        DEFB 01h,11h,12h,22h
 ; Z
-        db      00h,01h,11h,12h
-        db      02h,11h,12h,21h
-        db      10h,11h,21h,22h
-        db      01h,10h,11h,20h
+        DEFB 00h,01h,11h,12h
+        DEFB 02h,11h,12h,21h
+        DEFB 10h,11h,21h,22h
+        DEFB 01h,10h,11h,20h
 ; J
-        db      00h,10h,11h,12h
-        db      01h,02h,11h,21h
-        db      10h,11h,12h,22h
-        db      01h,11h,20h,21h
+        DEFB 00h,10h,11h,12h
+        DEFB 01h,02h,11h,21h
+        DEFB 10h,11h,12h,22h
+        DEFB 01h,11h,20h,21h
 ; L
-        db      02h,10h,11h,12h
-        db      01h,11h,21h,22h
-        db      10h,11h,12h,20h
-        db      00h,01h,11h,21h
+        DEFB 02h,10h,11h,12h
+        DEFB 01h,11h,21h,22h
+        DEFB 10h,11h,12h,20h
+        DEFB 00h,01h,11h,21h
+
+; VT100 DECTCEM: hide cursor during gameplay, restore on exit.
+; These strings use BDOS 9 ($ terminator), not the ANSI fragment copier.
+hidecur:DEFB 27
+        DEFM '[?25l'
+        DEFB '$'
+showcur:DEFB 27
+        DEFM '[?25h'
+        DEFB '$'
 
 ; ANSI byte fragments are NUL-terminated (not CP/M '$'-terminated).
-acsi:   db      27,'[',0
-aclear: db      27,'[2J',27,'[H',0
-ainvon: db      27,'[7m',0
-ainvoff:db      27,'[0m',0
-trmmsg:db      13,10,'SLOPTRIS - terminal selection',13,10
-        db      '1 - SOROC / Apple II',13,10
-        db      '2 - VT100 / Telnet',13,10
-        db      'Choice [1]: $'
+acsi:   DEFB 27,'[',0
+aclear: DEFB 27
+        DEFM '[2J'
+        DEFB 27
+        DEFM '[H'
+        DEFB 0
+ainvon: DEFB 27
+        DEFM '[7m'
+        DEFB 0
+ainvoff:DEFB 27
+        DEFM '[0m'
+        DEFB 0
+trmmsg:DEFB 13,10
+        DEFM 'SLOPTRIS - terminal selection'
+        DEFB 13,10
+        DEFM '1 - SOROC / Apple II'
+        DEFB 13,10
+        DEFM '2 - VT100 / Telnet'
+        DEFB 13,10
+        DEFM 'Choice [1]: $'
 
 clearstr:
-        db      27,'*','$'
-header: db      27,'=',32,32
-        db      'SLOPTRIS  LEFT/RIGHT=move  UP=rotate  DOWN=down  SPACE=drop  P=pause Q=quit','$'
+        DEFB 27,'*','$'
+header: DEFB 27,'=',32,32
+        DEFM 'SLOPTRIS  LEFT/RIGHT=move  UP=rotate  DOWN=down  SPACE=drop  P=pa'
+        DEFM 'use Q=quit'
+        DEFB '$'
 nextlbl:
-        db      27,'=',34,49,'NEXT:','$'
-invon:  db      27,')','$'
-invoff: db      27,'(','$'
-topbar: db      27,'=',33,33,'+----------+','$'
-botbar: db      27,'=',54,33,'+----------+','$'
-frmbuf: db      27,'=',34,33,'|          |','$'
-rowbuf: db      27,'=',34,34
-        ds      38             ; max row contents with inverse transitions
-onebuf: db      27,'=',34,34,' ','$'
-scline: db      27,'=',55,33,'LINES 000','$'
+        DEFB 27,'=',34,49
+        DEFM 'NEXT:'
+        DEFB '$'
+invon:  DEFB 27,')','$'
+invoff: DEFB 27,'(','$'
+topbar: DEFB 27,'=',33,33
+        DEFM '+----------+'
+        DEFB '$'
+botbar: DEFB 27,'=',54,33
+        DEFM '+----------+'
+        DEFB '$'
+frmbuf: DEFB 27,'=',34,33
+        DEFM '|          |'
+        DEFB '$'
+rowbuf: DEFB 27,'=',34,34
+        DEFS 38 ; max row contents with inverse transitions
+onebuf: DEFB 27,'=',34,34,' ','$'
+scline: DEFB 27,'=',55,33
+        DEFM 'LINES 000'
+        DEFB '$'
 pausmsg:
-        db      27,'=',55,50,'PAUSED  (P to resume)','$'
+        DEFB 27,'=',55,50
+        DEFM 'PAUSED  (P to resume)'
+        DEFB '$'
 unpause:
-        db      27,'=',55,50,'                     ','$'
-overmsg:db      27,'=',55,50,'GAME OVER','$'
-quitmsg:db      27,'=',55,50,'QUIT','$'
+        DEFB 27,'=',55,50
+        DEFM '                     '
+        DEFB '$'
+overmsg:DEFB 27,'=',55,50
+        DEFM 'GAME OVER'
+        DEFB '$'
+quitmsg:DEFB 27,'=',55,50
+        DEFM 'QUIT'
+        DEFB '$'
 
-term:   db      0               ; 0=Soroc, 1=VT100
-escstat:db      0               ; ANSI input sequence state
-anbuf:  ds      160             ; worst translated row fits comfortably
-oldsp:  dw      0
-px:     db      0
-py:     db      0
-rot:    db      0
-kind:   db      0
-tx:     db      0
-ty:     db      0
-tr:     db      0
-cx:     db      0
-cy:     db      0
-savtx:  db      0
-savty:  db      0
-savtr:  db      0
-nextkind:db      0
-prevdraw:db   0
-rmode:  db      0
-seed:   db      1
-tick:   db      0
-scoretmp:db      0
-lines:  db      0
-dead:   db      0
-changed:db      0
-scanrow:db      0
-drawrow:db      0
-board:  ds      200
-        ds      128             ; local stack
+term:   DEFB 0 ; 0=Soroc, 1=VT100
+escstat:DEFB 0 ; ANSI input sequence state
+anbuf:  DEFS 160 ; worst translated row fits comfortably
+oldsp:  DEFW 0
+px:     DEFB 0
+py:     DEFB 0
+rot:    DEFB 0
+kind:   DEFB 0
+tx:     DEFB 0
+ty:     DEFB 0
+tr:     DEFB 0
+cx:     DEFB 0
+cy:     DEFB 0
+savtx:  DEFB 0
+savty:  DEFB 0
+savtr:  DEFB 0
+nextkind:DEFB 0
+prevdraw:DEFB 0
+rmode:  DEFB 0
+seed:   DEFB 1
+tick:   DEFB 0
+scoretmp:DEFB 0
+lines:  DEFB 0
+dead:   DEFB 0
+changed:DEFB 0
+scanrow:DEFB 0
+drawrow:DEFB 0
+board:  DEFS 200
+        DEFS 128 ; local stack
 stktop:
         end
