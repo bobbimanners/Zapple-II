@@ -1,226 +1,37 @@
-; Zapple-II NETCCP.COM - Phase 6C initial persistent remote CCP
-; Phase 6G.5 diagnostic: fix BDOS $-strings and label socket failures.
-; Run in a SEPARATE CP/M tab, e.g. TAB 1 then NETCCP, to retain local CCP.
-; Kernel Phase 6C required: FD E=3 arms persistent UC1 binding.
-; Port 2323 (0913h). Requires existing kernel-configured W5100.
-; Udo Munk Z80ASM, 8-significant-character symbols.
+; Zapple-II NETCCP.COM Phase 6H: enable MAIN-resident Telnet service.
+; The listener is owned by the kernel. This executable is never restarted.
+; Launch in a dedicated tab; TAB <n> KILL disables the service.
+; Assemble with Udo Munk z80asm; strip three-byte origin header as usual.
 BDOS    EQU 0005H
         ORG 0100H
-START   LD SP,STKTOP
-        LD A,0FFH
-        LD (SOCK),A
-        LD DE,HELLO
-        CALL PSTR
-        LD A,'A'                 ; diagnostic stage: allocate
-        LD (FSTAGE),A
-        LD C,0FAH                ; FA E=0: allocate socket
-        LD E,0
+START   LD DE,HELLO
+        LD C,9
         CALL BDOS
-        CP 4
-        JP NC,FAILED
-        LD (SOCK),A
-        LD DE,SOCKMSG
-        CALL PSTR
-        LD A,(SOCK)
-        CALL HEXOUT
-        CALL NL
-        LD B,0                   ; Sn_MR = TCP
-        LD A,1
-        CALL WSET
-        LD B,4                   ; Sn_PORT high: 2323 decimal
-        LD A,09H
-        CALL WSET
-        LD B,5                   ; Sn_PORT low
-        LD A,013H
-        CALL WSET
-        LD A,'O'                 ; diagnostic stage: OPEN command
-        LD (FSTAGE),A
-        LD E,1                   ; OPEN
-        CALL COMMAND
-        CP 0FFH
-        JP Z,FAILED
-        LD A,'I'                 ; diagnostic stage: INIT status
-        LD (FSTAGE),A
-        CALL STATUS
-        CP 013H                  ; SOCK_INIT
-        JP NZ,FAILED
-        LD A,'L'                 ; diagnostic stage: LISTEN command
-        LD (FSTAGE),A
-        LD E,2                   ; LISTEN
-        CALL COMMAND
-        CP 0FFH
-        JP Z,FAILED
-        LD DE,LISTMSG
-        CALL PSTR
-        LD A,'W'                 ; diagnostic stage: wait for connection
-        LD (FSTAGE),A
-WAITCON CALL STATUS
-        CP 017H                  ; SOCK_ESTABLISHED
-        JP Z,ACCEPT
-        CP 014H                  ; SOCK_LISTEN
-        JP NZ,FAILED
-        LD C,11                  ; local CTRL-C cancels listener
-        CALL BDOS
-        OR A
-        JP Z,WAITCON
-        LD C,1
-        CALL BDOS
-        CP 3
-        JP Z,EXIT
-        JP WAITCON
-ACCEPT  LD DE,CONNMSG
-        CALL PSTR
-        CALL TNINIT              ; best-effort Telnet ECHO/SGA/LINEMODE
-        CP 12
-        JR Z,TNOK                ; successful handshake
-        LD DE,TNWARN             ; incomplete negotiation isn't socket failure
-        CALL PSTR                ; client may still choose mode character
-TNOK    LD A,(SOCK)
-        LD D,A
-        LD E,1                   ; FD E=1 bind to this tab's UC1
+        LD E,4                   ; private $FD: start resident TCP listener
         LD C,0FDH
         CALL BDOS
         OR A
-        JP NZ,FBIND
-        LD E,3                   ; FD E=3 persist across child->CCP
-        LD C,0FDH
+        JR NZ,FAILED
+        LD DE,READY
+        LD C,9
         CALL BDOS
-        OR A
-        JP NZ,FARM
-        LD C,7                   ; read current IOBYTE
+        LD C,7                   ; IOBYTE current tab
         CALL BDOS
         AND 0FCH
-        OR 3                      ; CON:=UC1:, preserve other fields
-        LD E,A
-        LD C,8                   ; set IOBYTE in current AUX session
-        CALL BDOS
-        LD DE,WELCOME            ; now output via network UC1
-        CALL PSTR
-        LD C,0                   ; terminate child; supervisor reloads CCP
-        CALL BDOS               ; Phase6C NETCLN preserves bound socket
-        RET                     ; should never return
-FBIND   LD DE,BNDERR
-        CALL PSTR
-        JP EXIT
-FARM    LD DE,ARMERR
-        CALL PSTR
-        JP EXIT
-FAILED  PUSH AF                   ; A is error/status byte on entry
-        LD DE,ERROR
-        CALL PSTR
-        LD A,(FSTAGE)
-        LD E,A
-        LD C,2
-        CALL BDOS                 ; emit stage letter
-        LD DE,RETMSG
-        CALL PSTR
-        POP AF
-        CALL HEXOUT              ; emit return/status as hex
-        CALL NL
-EXIT    LD C,7                   ; ensure physical console on error exit
-        CALL BDOS
-        AND 0FCH
-        OR 1
+        OR 3                     ; CON:=UC1:
         LD E,A
         LD C,8
         CALL BDOS
-        LD E,0                   ; FD E=0 unbind
-        LD C,0FDH
-        CALL BDOS
-        LD A,(SOCK)
-        CP 4
-        JP NC,DONE
-        LD D,A
-        LD E,1                   ; FA E=1 free socket
-        LD C,0FAH
-        CALL BDOS
-DONE    RET
-; B=socket register offset, A=value. $F9 AUX-to-MAIN write bridge.
-WSET    LD (WPAR+2),A
-        LD A,(SOCK)
-        ADD A,4
-        LD (WPAR),A
-        LD A,B
-        LD (WPAR+1),A
-        LD DE,WPAR
-        LD C,0F9H
+        LD C,0                   ; terminate child -> ordinary CCP
+        JP BDOS
+FAILED  LD DE,ERROR
+        LD C,9
         CALL BDOS
         RET
-COMMAND LD A,(SOCK)
-        LD D,A
-        LD C,0FBH
-        CALL BDOS
-        RET
-STATUS  LD E,0
-        CALL COMMAND
-        RET
-PSTR    LD C,9
-        CALL BDOS
-        RET
-NL      LD DE,NEWLINE
-        JP PSTR
-HEXOUT  PUSH AF
-        RRCA
-        RRCA
-        RRCA
-        RRCA
-        CALL HEXDIG
-        POP AF
-HEXDIG  AND 0FH
-        ADD A,'0'
-        CP '9'+1
-        JP C,HEXP
-        ADD A,7
-HEXP    LD E,A
-        LD C,2
-        CALL BDOS
-        RET
-HELLO   DEFM 'Zapple-II NETCCP 6G.5 - Telnet console'
+HELLO   DEFM 'Zapple-II NETCCP 6H - resident Telnet service'
         DEFB 13,10,'$'
-SOCKMSG DEFM 'Socket $'
-LISTMSG DEFM 'Listening on 2323 (Ctrl-C to cancel)...'
+READY   DEFM 'Listening on 2323 (kernel-managed)'
         DEFB 13,10,'$'
-CONNMSG DEFM 'Connected: switching this tab to remote CCP'
+ERROR   DEFM 'Cannot enable listener (socket busy or service active)'
         DEFB 13,10,'$'
-WELCOME DEFB 13,10
-        DEFM 'Zapple-II CP/M remote console'
-        DEFB 13,10,'$'
-ERROR   DEFM 'NETCCP socket failure at stage '
-        DEFB '$'
-RETMSG  DEFM ': return/status $'
-BNDERR  DEFM 'UC1 socket bind failed'
-        DEFB 13,10,'$'
-ARMERR  DEFM 'UC1 persistence arm failed'
-        DEFB 13,10,'$'
-TNWARN  DEFM 'Telnet negotiation incomplete (continuing)'
-        DEFB 13,10,'$'
-NEWLINE DEFB 13,10,'$'
-FSTAGE  DEFB 0
-SOCK    DEFB 0FFH
-WPAR    DEFB 0,0,0
-STACK   DEFS 512
-STKTOP
-
-; Telnet negotiation is sent before binding CON:=UC1:. The resident 6F
-; TNFEED filter handles replies (incl. rejecting unsupported LINEMODE).
-; DO NOT put this in the network console path: BDOS $FC operates on AUX.
-TNINIT  LD A,(SOCK)
-        LD (TNPAR),A
-        LD B,32                  ; bounded retries; never hang on disconnect
-TNSEND  PUSH BC
-        LD DE,TNPAR
-        LD C,0FCH                ; kernel TCP send, max 16 bytes
-        CALL BDOS
-        POP BC
-        OR A
-        RET NZ                   ; 12 = OK, FF = error
-        DJNZ TNSEND              ; W5100 TX temporarily full: retry
-        XOR A
-        RET                      ; 0 = timed out (ACCEPT treats as error)
-TNPAR   DEFB 0,0,12             ; socket, TX, count
-        DEFW TNSEQ
-TNSEQ   DEFB 0FFH,0FBH,1        ; IAC WILL ECHO: server echoes input
-        DEFB 0FFH,0FBH,3        ; IAC WILL SGA: interactive full-duplex
-        DEFB 0FFH,0FDH,3        ; IAC DO SGA: client suppresses GA
-        DEFB 0FFH,0FEH,22H      ; IAC DONT LINEMODE (34)
         END
