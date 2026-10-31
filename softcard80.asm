@@ -7517,10 +7517,15 @@ BDOSINIT      DI
               LD        DE,IFDNSIP
               LD        BC,4
               LDIR
-              ; Cold start: the backing ProDOS unit has not been resolved yet.
-              ; WBOOT deliberately preserves the cached unit.
+              ; Cache ProDOS device units separately for A:..P:.
+              ; Zero is invalid (ProDOS unit numbers use DSSS0000).
+              ; WBOOT retains the cache; only cold boot clears it.
               XOR       A
-              LD        (VUCVALID),A
+              LD        HL,VUNITAB
+              LD        (HL),A
+              LD        DE,VUNITAB+1
+              LD        BC,15
+              LDIR
               LD        (CURDRV),A                     ; cold boot only: drive A:, user 0
               LD        HL,0001H
               LD        (LOGVEC),HL                    ; cold boot: A: initially logged in
@@ -8664,11 +8669,11 @@ DRV_AVEC      CALL      V_GETFREE
 ;
 ; On errors, leave a fully allocated map, i.e. report zero free space.
 ; Last ProDOS READ_BLOCK error is recorded in VERR (for MAME debugger).
-; ProDOS unit discovered from current prefix or drive directory by V_FINDUNIT.
+; ProDOS unit resolved by mapped directory pathname, cached per CP/M drive.
 V_GETFREE     XOR       A
               LD        (VERR),A
 
-              ; Discover the physical unit containing the CP/M directories.
+              ; Discover/cached physical unit for the selected CP/M drive.
               ; This must precede READ_BLOCK of the volume header.
               CALL      V_FINDUNIT
               JP        NZ,V_ERROR
@@ -8841,7 +8846,16 @@ V_NEXTBIT     LD        (VFMASK),A
 
 V_BADHDR      LD        A,0FEH                         ; Invalid/misread volume header
 V_ERROR       LD        (VERR),A                       ; Capture MLI status for MAME debug
-              ; On failure advertise zero free blocks.
+              ; Device might have gone away or been remounted: re-probe next time.
+              LD        A,(V_CDRIVE)
+              LD        E,A
+              LD        D,0
+              LD        HL,VUNITAB
+              ADD       HL,DE
+              LD        (HL),0
+              ; On failure advertise zero free blocks, not prior drive's DSM.
+              LD        HL,0
+              LD        (DPBDSM),HL
               CALL      V_CLEARVEC
               RET
 
@@ -8860,147 +8874,65 @@ V_READ        LD        HL,VRMLI
               OR        A
               RET
 
-; Find and cache the one physical ProDOS unit hosting Zapple-II.
-; CP/M A:..P: are subdirectories of the SAME ProDOS volume, so changing
-; CP/M drive must not trigger an expensive ON_LINE enumeration.
-; A nonempty GET_PREFIX identifies the volume; if it is empty, search
-; for the first online volume containing the selected drive directory.
-; Only this FIRST discovery uses GET_PREFIX and ON_LINE (unit=0).
-; VUCVALID is cleared by BDOSINIT on cold start, not by WBOOT.
-; Free-space bitmap reads in V_GETFREE are still done on every request.
-; All MLI scratch space is in 6502 main $0800-$097F; the direct console
-; uses text page 1, and READ_BLOCK overwrites this scratch area later.
-; Returns A=0 on success, else an MLI error or $FD (no matching volume).
-V_FINDUNIT    LD        A,(VUCVALID)
-              OR        A
-              JR        Z,VUCDISC
-              XOR       A                              ; VRUNIT still holds our ProDOS unit
-              RET
-VUCDISC       XOR       A
-              LD        (VRUNIT),A                     ; Invalidate stale unit on failure
-              LD        HL,VPMLI                       ; GET_PREFIX -> $0800
-              CALL      PRODOS
-              OR        A
-              RET       NZ
-              LD        A,(VOLBUF)                     ; Pascal prefix length
-              OR        A
-              JP        Z,V_NOPREFIX
-              LD        B,A
-              LD        HL,VOLBUF+1
+; Return the physical ProDOS device unit for the current CP/M drive.
+; Lazy, independent cache for A:..P:. No ON_LINE scan of floppy drives.
+; The first STAT/BDOS 27/31 on a drive does one GET_FILE_INFO of its
+; mapped directory, and captures ProDOS DEVNUM ($BF30) immediately after
+; that successful pathname access. Thereafter READ_BLOCK uses that unit.
+; No file reads or volume enumeration are done to identify a cached unit.
+; Returns A=0 on success, otherwise ProDOS error / $FD (invalid unit).
+;
+; The *same* FCB2PATH routine as file I/O builds the directory path,
+; so [DRIVES] remapping and the default prefix behave identically.
+; A synthetic blank-name FCB, with S1=$A0, forces USER 0. FCB2PATH
+; appends '/', which is removed before the ProDOS GET_FILE_INFO call.
+V_FINDUNIT    LD        A,(CURDRV)
+              AND       00FH
+              LD        (V_CDRIVE),A
+              LD        E,A
+              LD        D,0
+              LD        HL,VUNITAB
+              ADD       HL,DE
               LD        A,(HL)
-              CP        '/'
-              JP        NZ,V_NOMATCH
-              INC       HL
-              DEC       B
-              LD        C,0
-V_PFXNAME     LD        A,B
               OR        A
-              JP        Z,V_NOMATCH
-              LD        A,(HL)
-              CP        '/'
-              JR        Z,V_PFXDONE
-              INC       C
-              LD        A,C
-              CP        16                             ; ProDOS volume name is <= 15 chars
-              JP        NC,V_NOMATCH
-              INC       HL
-              DEC       B
-              JR        V_PFXNAME
-V_PFXDONE     LD        A,C
-              OR        A
-              JP        Z,V_NOMATCH
-              LD        (V_NAMELEN),A
-              LD        A,1
-              LD        (V_HASPFX),A
-              JR        V_ENUM
-V_NOPREFIX    XOR       A
-              LD        (V_HASPFX),A
-
-V_ENUM        LD        HL,VOMLI                       ; ON_LINE all units -> $0880
-              CALL      PRODOS
-              OR        A
-              RET       NZ
-              LD        IX,VOLBUF+080H
-              LD        B,16                           ; Up to sixteen 16-byte records
-V_SCAN        LD        A,(IX+0)
-              OR        A                              ; End of returned list
-              JP        Z,V_NOMATCH
-              AND       0FH
-              JP        Z,V_NEXT                       ; Device error; no name
-              LD        C,A                            ; Name length from ON_LINE
-              LD        A,(V_HASPFX)
-              OR        A
-              JR        Z,V_TRYDIR
-              LD        A,(V_NAMELEN)
-              CP        C
-              JP        NZ,V_NEXT
-              PUSH      BC
-              PUSH      IX
-              POP       DE
-              INC       DE                             ; First character of ON_LINE name
-              LD        HL,VOLBUF+2                    ; After leading '/' in prefix
-              LD        B,C
-V_CMPNAME     LD        A,(DE)
-              AND       0DFH                           ; Case-insensitive ProDOS name
-              LD        C,A
-              LD        A,(HL)
-              AND       0DFH
-              CP        C
-              JR        NZ,V_DIFFER
-              INC       DE
-              INC       HL
-              DJNZ      V_CMPNAME
-              POP       BC
-              JP        V_FOUND
-V_DIFFER      POP       BC
-              JP        V_NEXT
-
-; Null prefix: see whether /VOLUME/<driveletter> is a ProDOS directory.
-; The volume search order from ON_LINE mirrors relative pathname search.
-V_TRYDIR      PUSH      BC
-              LD        A,C
-              ADD       A,3                            ; '/' + volume + '/' + drive
-              LD        (VOLBUF),A
-              LD        HL,VOLBUF+1
-              LD        (HL),'/'
-              INC       HL
-              PUSH      IX
-              POP       DE
-              INC       DE
-              LD        B,C
-V_MKPATH      LD        A,(DE)
-              LD        (HL),A
-              INC       HL
-              INC       DE
-              DJNZ      V_MKPATH
-              LD        (HL),'/'
-              INC       HL
-              LD        A,(CURDRV)
-              AND       0FH
-              ADD       A,'A'
-              LD        (HL),A
-              LD        HL,VFMLI                       ; GET_FILE_INFO on absolute path
-              CALL      PRODOS
-              OR        A
-              JR        NZ,V_TRYNEXT
-              LD        A,(VFTYPE)
-              CP        0FH                            ; $0F is a ProDOS subdirectory
-              JR        NZ,V_TRYNEXT
-              POP       BC
-              JR        V_FOUND
-V_TRYNEXT     POP       BC
-V_NEXT        LD        DE,16
-              ADD       IX,DE
-              DEC       B
-              JP        NZ,V_SCAN
-V_NOMATCH     LD        A,0FDH                         ; Prefix volume / CP/M dir not found
-              RET
-V_FOUND       LD        A,(IX+0)
-              AND       0F0H                           ; ProDOS unit DSSS0000
+              JR        Z,VU_PROBE
               LD        (VRUNIT),A
-              LD        A,1
-              LD        (VUCVALID),A                   ; Keep it for ALL logical drives
               XOR       A
+              RET
+VU_PROBE      LD        A,(V_CDRIVE)
+              INC       A                              ; FCB drive 1..16
+              LD        (VU_FCB),A
+              LD        IX,PATHBUF
+              LD        DE,VU_FCB
+              CALL      FCB2PATH
+              LD        HL,PATHLEN
+              LD        A,(HL)
+              OR        A
+              JR        Z,VU_BAD
+              DEC       A                              ; remove trailing '/'
+              JR        Z,VU_BAD
+              LD        (HL),A
+              LD        HL,GFIMLI                       ; pathname -> device via ProDOS
+              CALL      PRODOS
+              OR        A
+              RET       NZ                             ; don't cache failed lookups
+              LD        A,(GFIMLIT)
+              CP        0FH                            ; mapping must name a directory
+              JR        NZ,VU_BAD
+              LD        A,(0AF30H)                     ; 6502 $BF30 DEVNUM
+              AND       0F0H                           ; DSSS0000 unit
+              JR        Z,VU_BAD
+              LD        (VRUNIT),A
+              LD        B,A
+              LD        A,(V_CDRIVE)
+              LD        E,A
+              LD        D,0
+              LD        HL,VUNITAB
+              ADD       HL,DE
+              LD        (HL),B                          ; cache only after successful lookup
+              XOR       A
+              RET
+VU_BAD        LD        A,0FDH
               RET
 
 ; Software R/O for current drive: BDOS 28, drive 0 -> bit 0, etc.
@@ -10383,40 +10315,16 @@ VFMASK        DEFB      0                              ; Bit mask at VFEND
 VBUDGET       DEFW      0                              ; Maximum bits available (excl 0..8)
 VERR          DEFB      0                              ; Last ProDOS error, $FE if header invalid
 
-; GET_PREFIX (ProDOS $C7). Returns Pascal absolute path in $0800.
-VPMLI         DEFB      20H,00H,0BFH
-              DEFB      0C7H
-              DEFW      VPPL+OFFSET
-              DEFB      60H
-VPPL          DEFB      1
-              DEFW      0800H
-
-; ON_LINE (ProDOS $C5), unit=0 enumerates mounted devices.
-; 256-byte list at $0880, well away from the 64-byte prefix at $0800.
-VOMLI         DEFB      20H,00H,0BFH
-              DEFB      0C5H
-              DEFW      VOPL+OFFSET
-              DEFB      60H
-VOPL          DEFB      2
-              DEFB      0                              ; 0 = enumerate all units
-              DEFW      0880H
-
-; GET_FILE_INFO (ProDOS $C4), only for the no-prefix fallback.
-; The temporary absolute pathname lives at $0800.
-VFMLI         DEFB      20H,00H,0BFH
-              DEFB      0C4H
-              DEFW      VFPL+OFFSET
-              DEFB      60H
-VFPL          DEFB      0AH
-              DEFW      0800H
-              DEFB      0                              ; Access returned
-VFTYPE        DEFB      0                              ; File type returned ($0F = DIR)
-              DEFS      13                             ; Remaining GET_FILE_INFO fields
-
-V_HASPFX      DEFB      0
-V_NAMELEN     DEFB      0
-; The unit in VRUNIT belongs to the one ProDOS volume backing BP/M.
-VUCVALID      DEFB      0
+; Persistent logical drive -> ProDOS device cache, A:..P:.
+; All zero at cold start; $10..$F0 are possible physical units.
+VUNITAB       DEFS      16
+V_CDRIVE      DEFB      0
+; Scratch FCB for directory lookup. S1=$A0 forces USER 0.
+; Name/extension blank => FCB2PATH returns base directory plus '/'.
+VU_FCB        DEFB      1
+              DEFM      '           '
+              DEFB      0,0A0H
+              DEFS      22
 
 ; ProDOS READ_BLOCK call, read-only, used to inspect volume bitmap.
 VRMLI         DEFB      20H,00H,0BFH                   ; JSR $BF00
@@ -10424,7 +10332,7 @@ VRMLI         DEFB      20H,00H,0BFH                   ; JSR $BF00
               DEFW      VRPL+OFFSET
               DEFB      60H                            ; RTS
 VRPL          DEFB      3
-VRUNIT        DEFB      0                              ; Discovered once; reused for all CP/M drives
+VRUNIT        DEFB      0                              ; Current drive unit from VUNITAB
               DEFW      0800H                          ; physical 6502 address (NOT VOLBUF+OFFSET)
 VRBLK         DEFW      0                              ; Requested ProDOS 512-byte block
 
