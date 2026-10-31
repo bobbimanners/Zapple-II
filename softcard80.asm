@@ -123,6 +123,17 @@ FILEBUF       DEFS      128                            ; Command args go here to
 
 PROGSTRT      JP        BDOSINIT                       ; direct entry must cold-initialize system before CCP startup
 
+; Boot configuration copied by SOFTCARD65 after loading the Z80 binary.
+; These live in MAIN page $01xx, not AUX transient page $01xx.
+; Fixed 6502 addresses: $1103 (O), $112F (P), $115B (DNS).
+; O/P entries are ProDOS-style Pascal paths: len (0=unmapped), then chars.
+; Keep in sync with the 6502 loader's $0E00 staging layout.
+MNTO          DEFB      0
+              DEFS      43
+MNTP          DEFB      0
+              DEFS      43
+CFGDNS        DEFB      1,1,1,1
+
 ; Phase 2: small MAIN-only bank-control helper and shell command.
 ; MAIN $0200..$02FF is unused by AUX transients and by SAVE's
 ; temporary $1000..$3FFF staging. No program ever runs here in AUX.
@@ -7505,6 +7516,11 @@ BDOSINIT      DI
               ; Otherwise reset value 00H routes the boot banner to S2.
               LD        A,095H
               LD        (IOBYTE),A
+              ; Adopt boot-time DNS (not the hardware W5100 address registers).
+              LD        HL,CFGDNS
+              LD        DE,IFDNSIP
+              LD        BC,4
+              LDIR
               ; Cold start: the backing ProDOS unit has not been resolved yet.
               ; WBOOT deliberately preserves the cached unit.
               XOR       A
@@ -9359,11 +9375,36 @@ FCB2PATH      PUSH      IX
               LD        A,(CURDRV)
               AND       00FH
               INC       A
-F2P_DRV       ADD       A,'A'-1
-              LD        (IX+0),A
+F2P_DRV       CP        15                             ; O: may map to an absolute path
+              JR        Z,F2P_O
+              CP        16                             ; P: likewise
+              JR        Z,F2P_P
+F2P_DEF       ADD       A,'A'-1
+F2P_NORM      LD        (IX+0),A
               INC       IX
-              LD        C,1                            ; number of pathname prefix bytes
-              CALL      F2P_USER                       ; A=bound user for open FCB; else current
+              LD        C,1                            ; ordinary relative drive letter
+              JR        F2P_U
+F2P_O         LD        HL,MNTO
+              LD        A,(HL)
+              OR        A
+              JR        NZ,F2P_MOUNT
+              LD        A,'O'
+              JR        F2P_NORM
+F2P_P         LD        HL,MNTP
+              LD        A,(HL)
+              OR        A
+              JR        NZ,F2P_MOUNT
+              LD        A,'P'
+              JR        F2P_NORM
+F2P_MOUNT     LD        C,A                            ; path length, <=42 by parser
+              LD        B,A
+              INC       HL
+F2P_COPY      LD        A,(HL)
+              LD        (IX+0),A
+              INC       HL
+              INC       IX
+              DJNZ      F2P_COPY
+F2P_U         CALL      F2P_USER                       ; A=bound user for open FCB; else current
               OR        A
               JR        Z,F2P_SLASH
               CP        10

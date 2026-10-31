@@ -60,6 +60,7 @@ STADDR        EQU       $B800                          ; Code will be relocated 
 
               JSR       RWAUTODETECT                   ; One-time test; loader code is disposable
               JSR       NCFGLOAD                       ; read system config in ProDOS boot environment
+              JSR       NCFGCOPY                       ; preserve disposable post-load helper below $0FFD
               JMP       STADDR                         ; Jump to reloc'd code
 
 * Probe up to 128 distinct RamWorks banks using physical AUX $07FE.
@@ -127,30 +128,64 @@ RWORIGINAL    DS        128
 * Invalid, absent or incomplete configuration leaves hardware untouched.
 * IMPORTANT: RESET=1 destroys ALL existing VEDRIVE/TCP sessions.
 * Loader and parser run before relocated 6502 driver and Z80 startup.
-NCFGLOAD      LDA       #0
+* Stage $0E00-$0E5C survives the Z80 kernel load at $0FFD and above.
+* After loading, ENTRY copies O/P mounts and DNS into Z80 MAIN $0103.
+* SOFTCARD is separate from Uthernet's SLOT=5 configuration key.
+NCFGINIT      LDY       #91
+              LDA       #0
+:CFZERO       STA       $0E00,Y
+              DEY
+              BPL       :CFZERO
+              LDA       #1
+              STA       $0E58
+              STA       $0E59
+              STA       $0E5A
+              STA       $0E5B
+              LDA       #4
+              STA       $0E5C
+              RTS
+NCFGLOAD      JSR       NCFGINIT
+              LDA       #0
               STA       NCFOK
               STA       NCFRST
               STA       NCFENA
               STA       NCFSEEN
               STA       NCFSLOT
+* Boot-only diagnostic state: operation O/R/K, last ProDOS status.
+* $0E5F-$0E60 are below the transient helper and outside the mount table.
+              LDA       #'O'
+              STA       $0E60
+              LDA       #0
+              STA       $0E5F
               JSR       $BF00
               DB        $C8                         ; OPEN
               DW        NCFOP
+              STA       $0E5F                     ; STA preserves MLI carry
               BCS       NCFDONE
               LDA       NCFREF
               STA       NCFRN
               STA       NCFCLREF
+              LDA       #'R'
+              STA       $0E60
               JSR       $BF00
               DB        $CA                         ; READ
               DW        NCFRD
+              STA       $0E5F                     ; before CLOSE overwrites A
               PHP
               JSR       $BF00
               DB        $CC                         ; CLOSE
               DW        NCFCL
               PLP
               BCS       NCFDONE
+              LDA       #'K'
+              STA       $0E60
               JSR       NCFPARSE
-              LDA       NCFENA
+              LDA       NCFOK
+              BEQ       :CFPARSED
+              STA       $0E5F
+              LDA       #'P'                        ; parser rejected a setting
+              STA       $0E60
+:CFPARSED     LDA       NCFENA
               BEQ       NCFDONE
               LDA       NCFRST
               BEQ       NCFDONE                 ; RESET=0 means no chip writes
@@ -164,7 +199,7 @@ NCFGLOAD      LDA       #0
               BNE       NCFDONE                 ; nonzero = invalid setting
               JSR       NCFAPPLY
 NCFDONE       RTS
-NCFPATH       STR       "/ZAPPLE2/ZAPPLE2.CNF"
+NCFPATH       STR       "ZAPPLE2.CNF"               ; resolved under the ProDOS current prefix
 NCFOP         DB        3
               DW        NCFPATH
               DW        IOBUF
@@ -253,7 +288,7 @@ NCFENTRY      LDA       NCFLINE
               LDX       #0
 :NCFSECTION   LDA       NCFLINE,X
               CMP       NCFSEC,X
-              BNE       :NCFRET
+              BNE       :NCFDRVSEC
               CMP       #0
               BEQ       :NCFSELECT
               INX
@@ -261,8 +296,39 @@ NCFENTRY      LDA       NCFLINE
 :NCFSELECT    LDA       #1
               STA       NCFBITS
 :NCFRET       RTS
+:NCFDRVSEC    LDX       #0
+:CFDRVS       LDA       NCFLINE,X
+              CMP       NCFDSEC,X
+              BNE       :NCFSYSSEC
+              CMP       #0
+              BEQ       :CFDRVOK
+              INX
+              BNE       :CFDRVS
+:CFDRVOK      LDA       #2
+              STA       NCFBITS
+              RTS
+:NCFSYSSEC    LDX       #0
+:CFSYSS       LDA       NCFLINE,X
+              CMP       NCFSSEC,X
+              BNE       :NCFRET
+              CMP       #0
+              BEQ       :CFSYSOK
+              INX
+              BNE       :CFSYSS
+:CFSYSOK      LDA       #3
+              STA       NCFBITS
+              RTS
 :NCFKEY       LDA       NCFBITS
-              BEQ       :NCFRET
+              CMP       #2
+              BNE       :NCFNOTDR
+              JSR       NCFDRVPAR
+              RTS
+:NCFNOTDR     CMP       #3
+              BNE       :NCFNOTSY
+              JSR       NCFSYSPAR
+              RTS
+:NCFNOTSY     CMP       #1
+              BNE       :NCFRET
               LDX       #0
 :NCFTRY       TXA
               ASL
@@ -297,9 +363,11 @@ NCFENTRY      LDA       NCFLINE
               BEQ       :NCFNMCFG
               CMP       #5
               BEQ       :NCFGWCFG
-              JMP       :NCFMACCFG
+              CMP       #6
+              BEQ       :NCFMACCFG
+              JMP       :NCFDNSCFG
 :NCFNEXT      INX
-              CPX       #7
+              CPX       #8
               BNE       :NCFTRY
               RTS
 :NCFENABLED   JSR       NCFBOOL
@@ -342,25 +410,37 @@ NCFENTRY      LDA       NCFLINE
               STA       NCFDEST+1
               LDA       #16
               JMP       NCFMACV
+:NCFDNSCFG    LDA       #<$0E58
+              STA       NCFDEST
+              LDA       #>$0E58
+              STA       NCFDEST+1
+              LDA       #0                      ; optional DNS, not RESET-required
+              JMP       NCFIPV
 :NCFBAD       LDA       #1
               STA       NCFOK
               RTS
-NCFSEC        ASC       "[NETWORK]"
+NCFSEC        ASC       '[NETWORK]'
               DB        0
-NCFKPTR       DW        NCFKEN,NCFKRE,NCFKSL,NCFKIP,NCFKNM,NCFKGW,NCFKMC
-NCFKEN        ASC       "ENABLED"
+NCFDSEC       ASC       '[DRIVES]'
               DB        0
-NCFKRE        ASC       "RESET"
+NCFSSEC       ASC       '[SYSTEM]'
               DB        0
-NCFKSL        ASC       "SLOT"
+NCFKPTR       DW        NCFKEN,NCFKRE,NCFKSL,NCFKIP,NCFKNM,NCFKGW,NCFKMC,NCFKDNS
+NCFKEN        ASC       'ENABLED'
               DB        0
-NCFKIP        ASC       "IP"
+NCFKRE        ASC       'RESET'
               DB        0
-NCFKNM        ASC       "NM"
+NCFKSL        ASC       'SLOT'
               DB        0
-NCFKGW        ASC       "GW"
+NCFKIP        ASC       'IP'
               DB        0
-NCFKMC        ASC       "MAC"
+NCFKNM        ASC       'NM'
+              DB        0
+NCFKGW        ASC       'GW'
+              DB        0
+NCFKMC        ASC       'MAC'
+              DB        0
+NCFKDNS       ASC       'DNS'
               DB        0
 NCFKP         EQU       $F8
 NCFVALOFF     DB        0
@@ -384,6 +464,94 @@ NCFBOOL       LDA       NCFLINE,Y
 :NCFBADBOOL   LDA       #1
               STA       NCFOK
               LDA       #0
+              RTS
+
+* [SYSTEM] SOFTCARD=n; the Uthernet-II card remains in physical slot 5.
+* Do not select slot 5 for the Z80 card while the W5100 bridge uses slot 5.
+NCFSYSPAR     LDX       #0
+:SYSCMP       LDA       NCFSKEY,X
+              BEQ       :SYSVAL                   ; keyword finished; line must have '='
+              CMP       NCFLINE,X
+              BNE       :SYSRET
+              INX
+              BNE       :SYSCMP
+:SYSVAL       LDA       NCFLINE+8
+              CMP       #'='
+              BNE       :SYSRET
+              LDA       NCFLINE+10
+              BNE       :SYSRET
+              LDA       NCFLINE+9
+              CMP       #'1'
+              BCC       :SYSBAD
+              CMP       #'8'
+              BCS       :SYSBAD
+              CMP       #'5'
+              BEQ       :SYSBAD
+              SEC
+              SBC       #'0'
+              STA       $0E5C
+:SYSRET       RTS
+:SYSBAD       LDA       #1
+              STA       NCFOK
+              RTS
+NCFSKEY       ASC       'SOFTCARD'
+              DB        0
+
+* Optional mounts: [DRIVES] O=/VOL/DIR or P=/VOL/DIR.
+* Maximum base path 42 bytes, leaving room for /user/Z.<13> in 64-byte buffer.
+* No trailing slash. Unmapped drives retain O/ and P/ defaults.
+NCFDRVPAR     LDA       NCFLINE+1
+              CMP       #'='
+              BNE       :DRVRET
+              LDA       NCFLINE
+              CMP       #'O'
+              BEQ       :DRVOU
+              CMP       #'P'
+              BNE       :DRVRET
+              LDA       #<$0E2C
+              STA       NCFDEST
+              LDA       #>$0E2C
+              STA       NCFDEST+1
+              JMP       :DRVSTART
+:DRVOU        LDA       #<$0E00
+              STA       NCFDEST
+              LDA       #>$0E00
+              STA       NCFDEST+1
+:DRVSTART     LDA       NCFLINE+2
+              CMP       #'/'
+              BNE       :DRVBAD
+              LDY       #2
+:DRVLEN       LDA       NCFLINE,Y
+              BEQ       :DRVLEND
+              CPY       #44                     ; 42 path bytes at indexes 2..43
+              BCS       :DRVBAD
+              CMP       #' '
+              BEQ       :DRVBAD
+              INY
+              BNE       :DRVLEN
+:DRVLEND      CPY       #3                      ; reject empty or root-only path
+              BCC       :DRVBAD
+              LDA       NCFLINE-1,Y             ; last path char
+              CMP       #'/'
+              BEQ       :DRVBAD
+              TYA
+              SEC
+              SBC       #2
+              STA       NCFNUM                 ; number of pathname characters
+              LDY       #0
+              STA       (NCFDEST),Y            ; Pascal length
+              INY
+:DRVCOPY      LDA       NCFLINE+1,Y            ; index Y=1 reads char at +2
+              STA       (NCFDEST),Y
+              INY
+              TYA
+              SEC
+              SBC       #1
+              CMP       NCFNUM
+              BCC       :DRVCOPY
+:DRVRET       RTS
+:DRVBAD       LDA       #1
+              STA       NCFOK
               RTS
 
 * NCFIPV accepts four strict dotted-decimal octets (0..255).
@@ -557,6 +725,118 @@ NCFAPPLY      LDA       #$80                   ; W5100 software RESET
               LDA       #$55                   ; TX 2KB per socket
               JMP       NCFWRITE
 
+* Configuration postprocessor is a disposable helper. It cannot live in
+* B800-BEFF: the resident driver ends just below ProDOS $BF00.
+* Copy it to unused low memory ($0E80) before the Z80 load overwrites
+* the boot-only code at $2000. Config staging ends at $0E5C.
+NCFGCOPY      LDY       #0
+:COPY         LDA       NCFGPOST,Y
+              STA       $0E80,Y
+              INY
+              CPY       #NCFGEND-NCFGPOST
+              BNE       :COPY
+              RTS
+
+NCFGPOST      LDX       #91
+:COPYCFG      LDA       $0E00,X
+              STA       $1103,X
+              DEX
+              BPL       :COPYCFG
+* Diagnostic: CFG:K00 O:xx P:yy (hex). K=read/parsed, O=open,
+* R=read, P=parse error. The two path lengths are parsed values.
+* Kept inside the existing disposable $0E80 helper, not B800 driver.
+              LDA       #'C'
+              JSR       VPUT
+              LDA       #'F'
+              JSR       VPUT
+              LDA       #'G'
+              JSR       VPUT
+              LDA       #':'
+              JSR       VPUT
+              LDA       $0E60
+              JSR       VPUT
+              LDA       $0E5F
+              JSR       PRBYTE
+              LDA       #' '
+              JSR       VPUT
+              LDA       #'O'
+              JSR       VPUT
+              LDA       #':'
+              JSR       VPUT
+              LDA       $0E00
+              JSR       PRBYTE
+              LDA       #' '
+              JSR       VPUT
+              LDA       #'P'
+              JSR       VPUT
+              LDA       #':'
+              JSR       VPUT
+              LDA       $0E2C
+              JSR       PRBYTE
+* Diagnostic build: stop BEFORE starting Z80, otherwise the CCP
+* clears the 80-column screen and the above status disappears.
+* Discard any pending ProDOS launcher keystroke before waiting.
+              BIT       $C010
+              JSR       VGET                  ; press any key to continue boot
+              LDA       $0E5C
+              ORA       #$C0
+              STA       MAINLOOP+2
+              LDA       $0E5C
+              CMP       #4
+              BEQ       :CFGRTS
+              ORA       #$E0
+              STA       $0E5D
+              LDA       #0
+              STA       $0E5E                 ; number of patched Z80 handoff sites
+              STA       $06
+              LDA       #$10
+              STA       $07
+:SCLOOP       LDY       #0
+              LDA       ($06),Y
+              CMP       #$32
+              BNE       :SCNEXT
+              INY
+              LDA       ($06),Y
+              BNE       :SCNEXT
+              INY
+              LDA       ($06),Y
+              CMP       #$E4
+              BNE       :SCNEXT
+              LDA       $0E5D
+              STA       ($06),Y
+              INC       $0E5E
+:SCNEXT       INC       $06
+              BNE       :SCLIMIT
+              INC       $07
+:SCLIMIT      LDA       $07
+              CMP       #$B7                  ; below Z80 top and relocated 6502 driver
+              BNE       :SCLOOP
+              LDA       $06
+              CMP       #$FE
+              BCC       :SCLOOP
+              LDA       $0E5E
+              CMP       #37                   ; exact 6L.5 LD ($E400),A sites
+              BEQ       :CFGRTS
+              BNE       NCFGFAIL             ; never boot a half-patched system
+:CFGRTS       RTS
+NCFGFAIL      LDA       #$C4
+              STA       MAINLOOP+2
+* Runtime address of CFBADMSG in the relocated copy at $0E80.
+* Avoid Merlin32's unsupported parenthesized #<(...)/#>(...) syntax.
+* CFBADMSG-NCFGPOST is an 8-bit offset inside the helper.
+              CLC
+              LDA       #$80
+              ADC       #CFBADMSG-NCFGPOST
+              STA       $06
+              LDA       #$0E
+              ADC       #0
+              STA       $07
+              JSR       PRMSG
+              JSR       CROUT
+              JMP       DONE
+CFBADMSG      STR       "Z80 SoftCard slot patch count mismatch"
+NCFGEND
+
 RELOC_ST
               ORG       STADDR                         ; Assemble for this origin
 
@@ -605,12 +885,20 @@ ENTRY         CLD                                      ; ProDOS/loader entry alw
               JSR       PRRDERR                        ; Print "read error"
               JMP       DONE                           ; Quit
 :S2           JSR       CL                             ; Close file
+              JSR       $0E80                          ; transient config postprocessor (NOT resident in B800)
               JSR       CROUT                          ; load succeeded
 
 MAINLOOP
               STA       SFTCRD                         ; Pause Z80, resume 6502
               JSR       HANDLR                         ; Handle calls made by Z80 code
               JMP       MAINLOOP                       ; Keep on keeping on
+
+* The boot config parser itself was overwritten by the Z80 image.
+* Its validated results survive in scratch $0E00-$0E5C (below $0FFD).
+* Z80 physical $0103 = 6502 $1103; 92 bytes: O/P Pascal paths, DNS.
+* A non-default SoftCard slot also requires changing the Z80 handoff
+* operand ($E400) throughout the just-loaded image. The 3-byte absolute
+* store opcode is 32 00 E4; avoid modifying kernel after Z80 starts.
 * Exit to the ProDOS program selector. CMD=0 in HANDLR reaches here;
 * loader errors use the same exit. QUIT normally never returns.
 DONE

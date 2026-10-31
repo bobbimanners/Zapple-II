@@ -1,8 +1,18 @@
+; SoftCard slot is independent of Uthernet-II SLOT.
 [NETWORK]
 ENABLED=1
 SLOT=5
-RESET=0
+RESET=1
 IP=192.168.10.10
 NM=255.255.255.0
 GW=192.168.10.1
+DNS=192.168.10.1
 MAC=02:5A:50:50:4C:45
+
+[SYSTEM]
+SOFTCARD=4
+
+[DRIVES]
+; O/P are disabled until you substitute a real ProDOS volume path.
+O=/ZAPPLE2
+;P=/NETVOL/SHARED
