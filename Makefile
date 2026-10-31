@@ -35,6 +35,9 @@ CPM_WGET    := cpm-apps/Utils/WGET.COM
 FTP_SRC     ?= ftp.asm
 FTP_RAW     := ftp.bin
 CPM_FTP     := cpm-apps/Utils/FTP.COM
+DHCP_SRC    ?= dhcp.asm
+DHCP_RAW    := dhcp.bin
+CPM_DHCP    := cpm-apps/Utils/DHCP.COM
 NSLOOKUP_SRC ?= nslookup.asm
 NSLOOKUP_RAW := nslookup.bin
 CPM_NSLOOKUP := cpm-apps/Utils/NSLOOKUP.COM
@@ -63,7 +66,7 @@ MAME_DEBUG_FLAGS ?= -debug -w
 MAME_EXTRA       ?=
 
 .DEFAULT_GOAL := all
-.PHONY: all z80 6502 ccp telnet netccp netstat ping ipconfig wget browse ftp nslookup sloptris disk run debug mame clean help
+.PHONY: all z80 6502 ccp telnet netccp netstat ping ipconfig wget browse ftp nslookup dhcp sloptris disk run debug mame clean help
 
 # `make` assembles both CPUs and CCP, then updates the disk; it does not start MAME.
 all: disk
@@ -80,6 +83,7 @@ wget: $(CPM_WGET)
 browse: $(CPM_BROWSE)
 ftp: $(CPM_FTP)
 nslookup: $(CPM_NSLOOKUP)
+dhcp: $(CPM_DHCP)
 sloptris: $(CPM_SLOPTRIS)
 
 # Merlin32 names its output after the source basename without an extension.
@@ -169,6 +173,17 @@ $(CPM_IPCONFIG): $(IPCONFIG_SRC)
 	@tail -c +4 "$(IPCONFIG_RAW)" > "$@.tmp" && test -s "$@.tmp" && mv -f "$@.tmp" "$@"
 	@rm -f "$(IPCONFIG_RAW)"
 
+# DHCP client. Udo Munk Z80asm emits FF 00 01 origin record for ORG 0100H.
+$(CPM_DHCP): $(DHCP_SRC)
+	@echo 'Assembling CP/M DHCP: $<' 
+	@mkdir -p "$(dir $@)"
+	@rm -f "$(DHCP_RAW)"
+	$(Z80ASM) -o$(DHCP_RAW) "$<"
+	@test -f "$(DHCP_RAW)" || { echo 'Error: z80asm did not create $(DHCP_RAW)' >&2; exit 1; }
+	@test "$$(head -c 3 "$(DHCP_RAW)" | od -An -tx1 | tr -d ' \n')" = ff0001 || { echo 'Error: bad DHCP origin header' >&2; exit 1; }
+	@tail -c +4 "$(DHCP_RAW)" > "$@.tmp" && test -s "$@.tmp" && mv -f "$@.tmp" "$@"
+	@rm -f "$(DHCP_RAW)"
+
 # WGET also lives with the CP/M utilities on drive B. As for CCP, Udo Munk's
 # assembler prepends FF 00 01 for ORG 0100H; strip it to make a raw .COM.
 $(CPM_WGET): $(WGET_SRC)
@@ -234,7 +249,7 @@ CPM_APP_DIRS := $(addprefix cpm-apps/,CPM-2.2 Utils TP3 WS3 Supercalc AztecC dBa
 CPM_FILES := $(shell find $(CPM_APP_DIRS) -type f ! -name '*.raw' ! -name '*.tmp' 2>/dev/null)
 PRODOS_FILES := $(wildcard prodos.242/PRODOS* prodos.242/BASIC*)
 DISK_INPUTS := $(PRODOS65) $(PRODOS80) $(CPM_CCP) $(CPM_TELNET) $(CPM_NETCCP) $(CPM_NETSTAT) $(CPM_PING) $(CPM_IPCONFIG) \
-               $(CPM_WGET) $(CPM_BROWSE) $(CPM_FTP) $(CPM_NSLOOKUP) $(CPM_SLOPTRIS) $(CFGFILE) \
+               $(CPM_WGET) $(CPM_BROWSE) $(CPM_FTP) $(CPM_NSLOOKUP) $(CPM_DHCP) $(CPM_SLOPTRIS) $(CFGFILE) \
                $(PRODOS_FILES) $(CPM_APP_DIRS) $(CPM_FILES) Makefile
 
 # Build a complete NEW image next to the destination. Cadius requires the .po
@@ -277,7 +292,7 @@ mame: debug
 
 # Never delete the source files, ProDOS image, or hard-disk images.
 clean:
-	rm -f "$(PRODOS65)" "$(PRODOS80)" "$(RAW65)" "$(RAW80)" "$(CPM_CCP)" "$(CCP_RAW)" "$(CPM_TELNET)" "$(TELNET_RAW)" "$(CPM_NETCCP)" "$(NETCCP_RAW)" "$(CPM_NETSTAT)" "$(NETSTAT_RAW)" "$(CPM_NETSTAT).tmp" "$(CPM_PING)" "$(PING_RAW)" "$(CPM_IPCONFIG)" "$(IPCONFIG_RAW)" "$(CPM_WGET)" "$(WGET_RAW)" "$(CPM_BROWSE)" "$(BROWSE_RAW)" "$(CPM_FTP)" "$(FTP_RAW)" "$(CPM_NSLOOKUP)" "$(NSLOOKUP_RAW)" "$(CPM_SLOPTRIS)" "$(SLOPTRIS_RAW)" "$(CPM_SLOPTRIS).tmp" _FileInformation.txt
+	rm -f "$(PRODOS65)" "$(PRODOS80)" "$(RAW65)" "$(RAW80)" "$(CPM_CCP)" "$(CCP_RAW)" "$(CPM_TELNET)" "$(TELNET_RAW)" "$(CPM_NETCCP)" "$(NETCCP_RAW)" "$(CPM_NETSTAT)" "$(NETSTAT_RAW)" "$(CPM_NETSTAT).tmp" "$(CPM_PING)" "$(PING_RAW)" "$(CPM_IPCONFIG)" "$(IPCONFIG_RAW)" "$(CPM_WGET)" "$(WGET_RAW)" "$(CPM_BROWSE)" "$(BROWSE_RAW)" "$(CPM_FTP)" "$(FTP_RAW)" "$(CPM_NSLOOKUP)" "$(NSLOOKUP_RAW)" "$(CPM_DHCP)" "$(DHCP_RAW)" "$(CPM_SLOPTRIS)" "$(SLOPTRIS_RAW)" "$(CPM_SLOPTRIS).tmp" _FileInformation.txt
 
 help:
 	@printf '%s\n' \
@@ -294,6 +309,7 @@ help:
 	  'make wget     Assemble wget.asm to cpm-apps/Utils/WGET.COM' \
 	  'make ftp      Assemble ftp.asm to cpm-apps/Utils/FTP.COM' \
 	  'make nslookup Assemble NSLOOKUP.asm to cpm-apps/Utils/NSLOOKUP.COM' \
+	  'make dhcp     Assemble DHCP.asm to cpm-apps/Utils/DHCP.COM' \
 	  'make sloptris Assemble SLOPTRIS.ASM to cpm-apps/Games/SLOPTRIS.COM' \
 	  'make disk     Atomically update the ProDOS image when inputs change' \
 	  'make run      Update image, then launch MAME without debugger' \
