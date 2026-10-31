@@ -204,7 +204,7 @@ The **CCP (Console Command Processor)** is loaded as `A:CCP.COM`. Commands are c
 | `TAB n RESUME` | Make a suspended tab runnable again. | `TAB 2 RESUME` |
 | `TAB n EXCLUSIVE` | Suspend other tabs and run/switch to tab `n`. | `TAB 2 EXCLUSIVE` |
 | `TAB n KILL` | Destroy an **inactive** tab's execution context and release its resources. | `TAB 2 KILL` |
-| `XSUB filespec` | Submit CP/M command lines from a text file. | `XSUB JOB.SUB` |
+| `XSUB` | Allow CP/M SUBMIT jobs to control transient programs. | `XSUB` |
 | `BYE` | Exit Zapple-II and return to ProDOS after confirmation. | `BYE` |
 | `program [args]` | Find and run a CP/M `.COM` file; `.COM` is optional. | `WS LETTER.TXT` |
 
