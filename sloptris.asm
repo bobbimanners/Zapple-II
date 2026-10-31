@@ -2,7 +2,7 @@
 ; Supports SOROC and VT100 output, selected on startup.
 ; Udo Munk z80asm 1.1: z80asm -osloptris.bin SLOPTRIS.ASM
 ; Strip the three-byte FF 00 01 origin header to make SLOPTRIS.COM
-; 10 x 20 board, four-cell live sprite, four-cell next preview.
+; 10 x 20 board displayed as 20 x 20 character cells (2 chars per block).
 ; Controls: Apple II LEFT/RIGHT = move, UP = rotate, DOWN = soft drop;
 ;           SPACE = hard drop, P = pause/resume, Q = quit.
 ; Solid inverse-video spaces.  The original Soroc drawing engine is
@@ -322,7 +322,7 @@ setvideo:
 voff:   ld      de,invoff
         jp      putstr
 
-; Draw/erase four live cells with four 5-byte cursor packets.
+; Draw/erase four live cells with four cursor packets, two spaces each.
 sprite: call    setvideo
         ld      a,(tx)         ; preserve candidate of move being tested
         ld      (savtx),a
@@ -339,6 +339,7 @@ sploop: ld      a,(hl)
         add     a,34            ; board row 0 -> screen row 2 -> ASCII+32
         ld      (onebuf+2),a
         ld      a,(cx)
+        add     a,a             ; two screen columns per cell
         add     a,34            ; board col 0 -> screen col 2 -> ASCII+32
         ld      (onebuf+3),a
         push    bc
@@ -358,7 +359,7 @@ sploop: ld      a,(hl)
         ld      de,invoff      ; don't leave status text inverse
         jp      putstr
 
-; Paint four preview cells at screen x=18..21, y=4..7.
+; Paint four preview cells as two-column blocks starting at x=28, y=4..7.
 ; Uses nextkind and rotation zero, without touching active piece state.
 preview:
         call    setvideo
@@ -375,7 +376,8 @@ preview:
 prloop: ld      a,(hl)
         ld      c,a
         and     0fh
-        add     a,50            ; screen col 18 -> ASCII 50
+        add     a,a             ; two screen columns per cell
+        add     a,60            ; preview starts at screen column 28
         ld      (onebuf+3),a
         ld      a,c
         rrca
@@ -479,7 +481,7 @@ szloop: ld      (hl),a
 
  ; Redraw only after cleared lines: one cursor move per row.
 ; Build a mixed normal/inverse row buffer, toggling only when needed.
-; Worst case 4 + (10*3) + 2 + 1 = 37 bytes.
+; Worst case 4 + (10*4) + 2 + 1 = 47 bytes.
 redraw: xor     a
         ld      (drawrow),a
 rdrow:  ld      a,(drawrow)
@@ -520,6 +522,8 @@ rdcont:
         ld      a,' '
         ld      (de),a
         inc     de
+        ld      (de),a          ; second character of the same cell
+        inc     de
         inc     hl
         djnz    rdbit
         ld      a,(rmode)
@@ -545,7 +549,7 @@ rdend:  ld      a,'$'
         jr      nz,rdrow
         ret
 
-; Initialise screen with static border.  No updates to border in play.
+; Initialise screen with 20-column-wide border. No updates to border in play.
 frame:  ld      de,clearstr
         call    putstr
         ld      de,header
@@ -971,23 +975,23 @@ header: DEFB 27,'=',32,32
         DEFM 'use Q=quit'
         DEFB '$'
 nextlbl:
-        DEFB 27,'=',34,49
+        DEFB 27,'=',34,59
         DEFM 'NEXT:'
         DEFB '$'
 invon:  DEFB 27,')','$'
 invoff: DEFB 27,'(','$'
 topbar: DEFB 27,'=',33,33
-        DEFM '+----------+'
+        DEFM '+--------------------+'
         DEFB '$'
 botbar: DEFB 27,'=',54,33
-        DEFM '+----------+'
+        DEFM '+--------------------+'
         DEFB '$'
 frmbuf: DEFB 27,'=',34,33
-        DEFM '|          |'
+        DEFM '|                    |'
         DEFB '$'
 rowbuf: DEFB 27,'=',34,34
-        DEFS 38 ; max row contents with inverse transitions
-onebuf: DEFB 27,'=',34,34,' ','$'
+        DEFS 48 ; max row contents with inverse transitions
+onebuf: DEFB 27,'=',34,34,' ',' ','$'
 scline: DEFB 27,'=',55,33
         DEFM 'LINES 000'
         DEFB '$'
