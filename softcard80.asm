@@ -123,15 +123,11 @@ FILEBUF       DEFS      128                            ; Command args go here to
 
 PROGSTRT      JP        BDOSINIT                       ; direct entry must cold-initialize system before CCP startup
 
-; Boot configuration copied by SOFTCARD65 after loading the Z80 binary.
-; These live in MAIN page $01xx, not AUX transient page $01xx.
-; Fixed 6502 addresses: $1103 (O), $112F (P), $115B (DNS).
-; O/P entries are ProDOS-style Pascal paths: len (0=unmapped), then chars.
-; Keep in sync with the 6502 loader's $0E00 staging layout.
-MNTO          DEFB      0
-              DEFS      43
-MNTP          DEFB      0
-              DEFS      43
+ ; Five tagged mount entries in Z80 MAIN page $01xx (not AUX TPA).
+; Every record: one drive letter B..P, one length (0..42), 42 path bytes.
+; All letters B:..P: may be remapped; at most FIVE at the same time.
+; Keep A: fixed as the CCP recovery drive. DNS stays in the same page.
+MNTBASE       DEFS      220
 CFGDNS        DEFB      1,1,1,1
 
 ; Phase 2: small MAIN-only bank-control helper and shell command.
@@ -9375,30 +9371,39 @@ FCB2PATH      PUSH      IX
               LD        A,(CURDRV)
               AND       00FH
               INC       A
-F2P_DRV       CP        15                             ; O: may map to an absolute path
-              JR        Z,F2P_O
-              CP        16                             ; P: likewise
-              JR        Z,F2P_P
+F2P_DRV       CP        2                              ; never remap A:
+              JR        C,F2P_DEF
+              CP        17                             ; B:..P: only
+              JR        NC,F2P_DEF
+              ADD       A,'A'-1                       ; requested drive letter
+              LD        C,A
+              LD        HL,MNTBASE
+              LD        B,5                            ; five tagged mapping records
+F2P_SCAN      LD        A,(HL)
+              CP        C
+              JR        Z,F2P_TAG
+              PUSH      DE                             ; preserve FCB pointer
+              LD        DE,44
+              ADD       HL,DE
+              POP       DE
+              DJNZ      F2P_SCAN
+              LD        A,C                            ; drive has no mapping
+              JR        F2P_NORM
+F2P_TAG       INC       HL                             ; tag -> Pascal pathname length
+              LD        A,(HL)
+              OR        A
+              JR        Z,F2P_NOTAG
+              JR        F2P_MOUNT
+F2P_NOTAG     LD        A,C
+              JR        F2P_NORM
 F2P_DEF       ADD       A,'A'-1
 F2P_NORM      LD        (IX+0),A
               INC       IX
               LD        C,1                            ; ordinary relative drive letter
               JR        F2P_U
-F2P_O         LD        HL,MNTO
-              LD        A,(HL)
-              OR        A
-              JR        NZ,F2P_MOUNT
-              LD        A,'O'
-              JR        F2P_NORM
-F2P_P         LD        HL,MNTP
-              LD        A,(HL)
-              OR        A
-              JR        NZ,F2P_MOUNT
-              LD        A,'P'
-              JR        F2P_NORM
-F2P_MOUNT     LD        C,A                            ; path length, <=42 by parser
+F2P_MOUNT     LD        C,A                            ; mapped path length (<=42)
               LD        B,A
-              INC       HL
+              INC       HL                             ; now points to pathname bytes
 F2P_COPY      LD        A,(HL)
               LD        (IX+0),A
               INC       HL

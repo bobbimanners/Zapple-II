@@ -128,10 +128,17 @@ RWORIGINAL    DS        128
 * Invalid, absent or incomplete configuration leaves hardware untouched.
 * IMPORTANT: RESET=1 destroys ALL existing VEDRIVE/TCP sessions.
 * Loader and parser run before relocated 6502 driver and Z80 startup.
-* Stage $0E00-$0E5C survives the Z80 kernel load at $0FFD and above.
-* After loading, ENTRY copies O/P mounts and DNS into Z80 MAIN $0103.
+* Tagged mounts stage at $0C00-$0CDB, outside ProDOS's $0800 open buffer.
+* Network/DNS stage at $0E00-$0E5C survives the load at $0FFD.
+* After loading, ENTRY copies mounts to MAIN $0103, DNS to $01DF.
 * SOFTCARD is separate from Uthernet's SLOT=5 configuration key.
-NCFGINIT      LDY       #91
+NCFGINIT      LDA       #0
+              LDX       #0
+:CFMZERO      STA       $0C00,X                ; clear all 5 x 44 mount bytes
+              INX
+              CPX       #220                    ; don't use BPL for counts >127!
+              BNE       :CFMZERO
+              LDY       #91
               LDA       #0
 :CFZERO       STA       $0E00,Y
               DEY
@@ -206,8 +213,8 @@ NCFOP         DB        3
 NCFREF        DB        0
 NCFRD         DB        4
 NCFRN         DB        0
-              DW        $0C00
-              DW        $0200
+              DW        $4000                  ; config input is disposable before Z80 load
+              DW        $0400                  ; 1024-byte configuration limit
 NCFCOUNT      DW        0
 NCFCL         DB        1
 NCFCLREF      DB        0
@@ -228,8 +235,8 @@ NCFNM         DS        4
 NCFMAC        DS        6
 NCFIP         DS        4
 
-* Read lines from [0C00,0C00+actual count) into 80-byte scratch.
-* Only keys inside [NETWORK] are accepted. Ignore other sections.
+* Read up to 1024 bytes from temporary $4000-$43FF into 80-byte scratch.
+* 5 mapped-drive records staged at $0C00-$0CDB, outside ProDOS IOBUF.
 NCFPARSE      LDA       #0
               STA       NCFIDX
               STA       NCFIDX+1
@@ -246,9 +253,17 @@ NCFPARSE      LDA       #0
 :NCFGET       LDY       NCFIDX
               LDA       NCFIDX+1
               BEQ       :NCFPAGE0
-              LDA       $0D00,Y
+              CMP       #1
+              BEQ       :NCFPAGE1
+              CMP       #2
+              BEQ       :NCFPAGE2
+              LDA       $4300,Y
               JMP       :NCFHAVE
-:NCFPAGE0     LDA       $0C00,Y
+:NCFPAGE2     LDA       $4200,Y
+              JMP       :NCFHAVE
+:NCFPAGE1     LDA       $4100,Y
+              JMP       :NCFHAVE
+:NCFPAGE0     LDA       $4000,Y
 :NCFHAVE      INC       NCFIDX
               BNE       :NCFINC
               INC       NCFIDX+1
@@ -497,62 +512,82 @@ NCFSYSPAR     LDX       #0
 NCFSKEY       ASC       'SOFTCARD'
               DB        0
 
-* Optional mounts: [DRIVES] O=/VOL/DIR or P=/VOL/DIR.
-* Maximum base path 42 bytes, leaving room for /user/Z.<13> in 64-byte buffer.
-* No trailing slash. Unmapped drives retain O/ and P/ defaults.
+* Tagged mounts: any B:..P: drive, up to 5 simultaneous mappings.
+* 44 bytes/entry in $0C00-$0CDB: drive-letter, len, 42 path chars.
+* A is fixed for CCP recovery. Paths are absolute, with no trailing slash.
 NCFDRVPAR     LDA       NCFLINE+1
               CMP       #'='
-              BNE       :DRVRET
-              LDA       NCFLINE
-              CMP       #'O'
-              BEQ       :DRVOU
-              CMP       #'P'
-              BNE       :DRVRET
-              LDA       #<$0E2C
+              BEQ       :DRVEQ
+              RTS
+:DRVEQ        LDA       NCFLINE
+              CMP       #'A'
+              BNE       :DRVB
+              JMP       :DRVBAD                 ; forbid remapping A:
+:DRVB         CMP       #'B'
+              BCS       :DRVP
+              RTS
+:DRVP         CMP       #'P'+1
+              BCC       :DRVVALID
+              RTS
+:DRVVALID     STA       NCFTAG
+              LDX       #0
+:DRVSEARCH    LDA       NCFMLO,X
               STA       NCFDEST
-              LDA       #>$0E2C
+              LDA       NCFMHI,X
               STA       NCFDEST+1
-              JMP       :DRVSTART
-:DRVOU        LDA       #<$0E00
-              STA       NCFDEST
-              LDA       #>$0E00
-              STA       NCFDEST+1
-:DRVSTART     LDA       NCFLINE+2
+              LDY       #0
+              LDA       (NCFDEST),Y
+              CMP       NCFTAG
+              BEQ       :DRVFOUND              ; overwrite an existing mapping
+              CMP       #0
+              BEQ       :DRVFOUND              ; first unassigned slot
+              INX
+              CPX       #5
+              BCC       :DRVSEARCH
+              JMP       :DRVBAD                 ; no more room, don't corrupt memory
+:DRVFOUND     LDA       NCFLINE+2
               CMP       #'/'
               BNE       :DRVBAD
               LDY       #2
 :DRVLEN       LDA       NCFLINE,Y
               BEQ       :DRVLEND
-              CPY       #44                     ; 42 path bytes at indexes 2..43
+              CPY       #44                     ; 42 path chars max
               BCS       :DRVBAD
               CMP       #' '
               BEQ       :DRVBAD
               INY
               BNE       :DRVLEN
-:DRVLEND      CPY       #3                      ; reject empty or root-only path
+:DRVLEND      CPY       #3                      ; nonempty /something
               BCC       :DRVBAD
-              LDA       NCFLINE-1,Y             ; last path char
-              CMP       #'/'
+              LDA       NCFLINE-1,Y
+              CMP       #'/'                     ; no trailing slash
               BEQ       :DRVBAD
               TYA
               SEC
               SBC       #2
-              STA       NCFNUM                 ; number of pathname characters
+              STA       NCFNUM
               LDY       #0
-              STA       (NCFDEST),Y            ; Pascal length
+              LDA       NCFTAG
+              STA       (NCFDEST),Y
               INY
-:DRVCOPY      LDA       NCFLINE+1,Y            ; index Y=1 reads char at +2
+              LDA       NCFNUM
+              STA       (NCFDEST),Y
+              INY
+:DRVCOPY      LDA       NCFLINE,Y               ; Y=2 copies character at +2
               STA       (NCFDEST),Y
               INY
               TYA
               SEC
-              SBC       #1
+              SBC       #2
               CMP       NCFNUM
               BCC       :DRVCOPY
 :DRVRET       RTS
 :DRVBAD       LDA       #1
               STA       NCFOK
               RTS
+NCFTAG        DB        0
+NCFMLO        DB        $00,$2C,$58,$84,$B0
+NCFMHI        DB        $0C,$0C,$0C,$0C,$0C
 
 * NCFIPV accepts four strict dotted-decimal octets (0..255).
 * Store into temporary per-field arrays. No hardware write until validated.
@@ -737,47 +772,17 @@ NCFGCOPY      LDY       #0
               BNE       :COPY
               RTS
 
-NCFGPOST      LDX       #91
-:COPYCFG      LDA       $0E00,X
-              STA       $1103,X
+NCFGPOST      LDX       #0
+:COPYCFG      LDA       $0C00,X                ; tagged B..P mounts
+              STA       $1103,X                ; Z80 MAIN $0103..$01DE
+              INX
+              CPX       #220                    ; copy all 220, not just one
+              BNE       :COPYCFG
+              LDX       #3
+:COPYDNS      LDA       $0E58,X
+              STA       $11DF,X                ; Z80 CFGDNS at $01DF
               DEX
-              BPL       :COPYCFG
-* Diagnostic: CFG:K00 O:xx P:yy (hex). K=read/parsed, O=open,
-* R=read, P=parse error. The two path lengths are parsed values.
-* Kept inside the existing disposable $0E80 helper, not B800 driver.
-              LDA       #'C'
-              JSR       VPUT
-              LDA       #'F'
-              JSR       VPUT
-              LDA       #'G'
-              JSR       VPUT
-              LDA       #':'
-              JSR       VPUT
-              LDA       $0E60
-              JSR       VPUT
-              LDA       $0E5F
-              JSR       PRBYTE
-              LDA       #' '
-              JSR       VPUT
-              LDA       #'O'
-              JSR       VPUT
-              LDA       #':'
-              JSR       VPUT
-              LDA       $0E00
-              JSR       PRBYTE
-              LDA       #' '
-              JSR       VPUT
-              LDA       #'P'
-              JSR       VPUT
-              LDA       #':'
-              JSR       VPUT
-              LDA       $0E2C
-              JSR       PRBYTE
-* Diagnostic build: stop BEFORE starting Z80, otherwise the CCP
-* clears the 80-column screen and the above status disappears.
-* Discard any pending ProDOS launcher keystroke before waiting.
-              BIT       $C010
-              JSR       VGET                  ; press any key to continue boot
+              BPL       :COPYDNS
               LDA       $0E5C
               ORA       #$C0
               STA       MAINLOOP+2
@@ -894,8 +899,9 @@ MAINLOOP
               JMP       MAINLOOP                       ; Keep on keeping on
 
 * The boot config parser itself was overwritten by the Z80 image.
-* Its validated results survive in scratch $0E00-$0E5C (below $0FFD).
-* Z80 physical $0103 = 6502 $1103; 92 bytes: O/P Pascal paths, DNS.
+* Tagged mounts survive at $0C00-$0CDB, network values at $0E00-$0E5C.
+* Z80 MAIN $0103 = physical 6502 $1103: five 44-byte tagged mounts.
+* DNS uses Z80 MAIN $01DF = physical 6502 $11DF.
 * A non-default SoftCard slot also requires changing the Z80 handoff
 * operand ($E400) throughout the just-loaded image. The 3-byte absolute
 * store opcode is 32 00 E4; avoid modifying kernel after Z80 starts.
