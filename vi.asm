@@ -594,7 +594,12 @@ STATUS: LD      B,23
         LD      DE,STNAME
         CALL    PRT
         CALL    PRFNAME
-        LD      A,(MODFLG)
+        LD      A,(TOOBIG)
+        OR      A
+        JR      Z,STSAFE
+        LD      DE,STTRUNC
+        CALL    PRT
+STSAFE: LD      A,(MODFLG)
         OR      A
         JR      Z,STMODE
         LD      DE,STMOD
@@ -1540,7 +1545,14 @@ ABEND: POP     BC
 ; A failed write/rename leaves the temp file for manual recovery.
 ; A successful replacement leaves a <name>.BAK backup.
 ; Carry clear success; carry set on failure.
-SAVEF:  LD      A,(HASFILE)
+SAVEF:  LD      A,(TOOBIG)
+        OR      A
+        JR      Z,SFOKLD
+        LD      DE,MSGTRUNC
+        CALL    MESSAGE
+        SCF
+        RET
+SFOKLD: LD      A,(HASFILE)
         OR      A
         JR      NZ,SFNAME
         LD      DE,MSGNOFL
@@ -2200,6 +2212,7 @@ VTREST: DEFB    27,'[r','$'
 VTCLR:  DEFB    27,'[2J',27,'[H','$'
 SOCLR:  DEFB    27,'*','$'
 STNAME: DEFB    'VI  ','$'
+STTRUNC:DEFB  ' [TRUNCATED - READ ONLY]','$'
 STMOD:  DEFB    ' [+]','$'
 STINS:  DEFB    '  -- INSERT --','$'
 STNOR:  DEFB    '  [NORMAL]','$'
@@ -2209,7 +2222,7 @@ MSGUNSV:DEFB   'Unsaved changes',59,' use :q! to abandon','$'
 MSGHELP:DEFB   '/ ? n N :s/a/b/g :%s/a/b/g :1,9s/a/b/g','$'
 MSGCMD: DEFB    'Unknown command (:h for help)','$'
 MSGNOFL:DEFB   'No filename (use VI FILE.TXT)','$'
-MSGTRUNC:DEFB  'File exceeded buffer! Saving blocked','$'
+MSGTRUNC:DEFB  'WARNING: file truncated! Save disabled :q! to exit','$'
 MSGTEMP:DEFB   'Existing .VIT temp: recover/remove first','$'
 MSGERROR:DEFB  'Save error! Check .VIT and .BAK files','$'
 MSGSAVED:DEFB  'Written (.BAK if file existed)','$'
