@@ -340,7 +340,7 @@ sploop: ld      a,(hl)
         ld      (onebuf+2),a
         ld      a,(cx)
         add     a,a             ; two screen columns per cell
-        add     a,34            ; board col 0 -> screen col 2 -> ASCII+32
+        add     a,62            ; board col 0 -> screen col 30 -> ASCII+32
         ld      (onebuf+3),a
         push    bc
         push    hl
@@ -359,7 +359,7 @@ sploop: ld      a,(hl)
         ld      de,invoff      ; don't leave status text inverse
         jp      putstr
 
-; Paint four preview cells as two-column blocks starting at x=28, y=4..7.
+; Paint four preview cells as two-column blocks starting at x=58, y=4..7.
 ; Uses nextkind and rotation zero, without touching active piece state.
 preview:
         call    setvideo
@@ -377,7 +377,7 @@ prloop: ld      a,(hl)
         ld      c,a
         and     0fh
         add     a,a             ; two screen columns per cell
-        add     a,60            ; preview starts at screen column 28
+        add     a,90            ; preview starts at screen column 58
         ld      (onebuf+3),a
         ld      a,c
         rrca
@@ -549,7 +549,7 @@ rdend:  ld      a,'$'
         jr      nz,rdrow
         ret
 
-; Initialise screen with 20-column-wide border. No updates to border in play.
+; Initialise centred screen with 20-column-wide interior (22 total). No updates to border in play.
 frame:  ld      de,clearstr
         call    putstr
         ld      de,header
@@ -975,23 +975,23 @@ header: DEFB 27,'=',32,32
         DEFM 'use Q=quit'
         DEFB '$'
 nextlbl:
-        DEFB 27,'=',34,59
+        DEFB 27,'=',34,89
         DEFM 'NEXT:'
         DEFB '$'
 invon:  DEFB 27,')','$'
 invoff: DEFB 27,'(','$'
-topbar: DEFB 27,'=',33,33
+topbar: DEFB 27,'=',33,61
         DEFM '+--------------------+'
         DEFB '$'
-botbar: DEFB 27,'=',54,33
+botbar: DEFB 27,'=',54,61
         DEFM '+--------------------+'
         DEFB '$'
-frmbuf: DEFB 27,'=',34,33
+frmbuf: DEFB 27,'=',34,61
         DEFM '|                    |'
         DEFB '$'
-rowbuf: DEFB 27,'=',34,34
+rowbuf: DEFB 27,'=',34,62
         DEFS 48 ; max row contents with inverse transitions
-onebuf: DEFB 27,'=',34,34,' ',' ','$'
+onebuf: DEFB 27,'=',34,62,' ',' ','$'
 scline: DEFB 27,'=',55,33
         DEFM 'LINES 000'
         DEFB '$'
