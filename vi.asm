@@ -1,4 +1,4 @@
-; VI.COM 0.2 - small modal editor for Zapple-II / CP/M 2.2
+; VI.COM 0.2b - small modal editor for Zapple-II / CP/M 2.2
 ; Soroc default; -V option (after filename) selects VT100.
 ; Udo Munk z80asm 1.1, ORG 0100H (strip FF 00 01 header).
 ; No kernel changes; text-only, 80x24, up to 14000 bytes in buffer.
@@ -1408,29 +1408,180 @@ COLETTER:
         CP      'w'
         JR      Z,COW
         CP      'q'
-        JR      Z,COQ
+        JP      Z,COQ
         CP      'h'
-        JR      Z,COHELP
+        JP      Z,COHELP
         CP      's'
         JP      Z,SUBCMD
-        JR      COLBAD
+        JP      COLBAD
 COW:    INC     HL
         LD      A,(HL)
         OR      A
         JR      Z,COWONLY
-        OR      20H
         CP      'q'
-        JR      NZ,COLBAD
-        INC     HL
+        JR      Z,COWQ
+        CP      'Q'
+        JR      Z,COWQ
+        CP      ' '
+        JP      NZ,COLBAD
+        CALL    SETNAME
+        JP      C,COLBAD
+        CALL    SAVEF
+        JP      MAIN
+COWQ:   INC     HL
         LD      A,(HL)
         OR      A
-        JR      NZ,COLBAD
+        JR      Z,COWSAVE
+        CP      ' '
+        JP      NZ,COLBAD
+        CALL    SETNAME
+        JP      C,COLBAD
+COWSAVE:
         CALL    SAVEF
         JP      C,MAIN
         JP      FINISH
 COWONLY:
         CALL    SAVEF
         JP      MAIN
+; HL points at whitespace after w or wq.
+; Validate a CP/M 8.3 name, optional A: through P: drive.
+; Commit FCB only after parsing the whole name successfully.
+SETNAME:
+SNWS:   INC     HL
+        LD      A,(HL)
+        CP      ' '
+        JP      Z,SNWS
+        OR      A
+        JP      Z,SNFAIL
+        LD      DE,NEWFCB
+        LD      B,36
+        XOR     A
+SNZERO: LD      (DE),A
+        INC     DE
+        DJNZ    SNZERO
+        LD      DE,NEWFCB+1
+        LD      B,11
+SNFILL: LD      A,' '
+        LD      (DE),A
+        INC     DE
+        DJNZ    SNFILL
+        LD      A,(HL)
+        LD      B,A
+        INC     HL
+        LD      A,(HL)
+        CP      ':'
+        JP      NZ,SNDRIVE
+        LD      A,B
+        AND     0DFH
+        CP      'A'
+        JP      C,SNFAIL
+        CP      'P'+1
+        JP      NC,SNFAIL
+        SUB     'A'-1
+        LD      (NEWFCB),A
+        INC     HL
+        JR      SNBASE
+SNDRIVE:
+        DEC     HL
+SNBASE: LD      DE,NEWFCB+1
+        LD      B,8
+SNBLP:  LD      A,(HL)
+        CP      '.'
+        JP      Z,SNDOT
+        OR      A
+        JP      Z,SNDONE
+        CP      ' '
+        JP      Z,SNTRAIL
+        CALL    SNVALID
+        JP      C,SNFAIL
+        LD      (DE),A
+        INC     DE
+        INC     HL
+        DJNZ    SNBLP
+        LD      A,(HL)
+        CP      '.'
+        JP      Z,SNDOT
+        OR      A
+        JP      Z,SNDONE
+        CP      ' '
+        JP      Z,SNTRAIL
+        JR      SNFAIL
+SNDOT:  LD      A,B
+        CP      8
+        JP      Z,SNFAIL
+        INC     HL
+        LD      DE,NEWFCB+9
+        LD      B,3
+SNELP:  LD      A,(HL)
+        OR      A
+        JP      Z,SNDONE
+        CP      ' '
+        JP      Z,SNTRAIL
+        CALL    SNVALID
+        JP      C,SNFAIL
+        LD      (DE),A
+        INC     DE
+        INC     HL
+        DJNZ    SNELP
+        LD      A,(HL)
+        OR      A
+        JP      Z,SNDONE
+        CP      ' '
+        JP      Z,SNTRAIL
+        JR      SNFAIL
+SNTRAIL:
+        INC     HL
+        LD      A,(HL)
+        CP      ' '
+        JP      Z,SNTRAIL
+        OR      A
+        JP      NZ,SNFAIL
+SNDONE:
+        LD      HL,NEWFCB
+        LD      DE,FCB
+        LD      BC,36
+        LDIR
+        LD      A,1
+        LD      (HASFILE),A
+        OR      A
+        RET
+SNFAIL: LD      DE,MSGBADNM
+        CALL    MESSAGE
+        SCF
+        RET
+; Valid CP/M filename character. A returns uppercase.
+SNVALID:
+        CP      21H
+        JR      C,SNVFAIL
+        CP      7FH
+        JR      NC,SNVFAIL
+        CP      '.'
+        JR      Z,SNVFAIL
+        CP      ':'
+        JR      Z,SNVFAIL
+        CP      '/'
+        JR      Z,SNVFAIL
+        CP      05CH
+        JR      Z,SNVFAIL
+        CP      '*'
+        JR      Z,SNVFAIL
+        CP      '?'
+        JR      Z,SNVFAIL
+        CP      '<'
+        JR      Z,SNVFAIL
+        CP      '>'
+        JR      Z,SNVFAIL
+        CP      '|'
+        JR      Z,SNVFAIL
+        CP      'a'
+        JR      C,SNVGOOD
+        CP      'z'+1
+        JR      NC,SNVGOOD
+        SUB     20H
+SNVGOOD:OR      A
+        RET
+SNVFAIL:SCF
+        RET
 COQ:    INC     HL
         LD      A,(HL)
         OR      A
@@ -2286,7 +2437,8 @@ MSGLONG:DEFB   'Line too long for yank register','$'
 MSGUNSV:DEFB   'Unsaved changes',59,' use :q! to abandon','$'
 MSGHELP:DEFB   '/ ? n N :s/a/b/g :%s/a/b/g :1,9s/a/b/g','$'
 MSGCMD: DEFB    'Unknown command (:h for help)','$'
-MSGNOFL:DEFB   'No filename (use VI FILE.TXT)','$'
+MSGNOFL:DEFB   'No name: use :w FILE.TXT','$'
+MSGBADNM:DEFB  'Invalid 8.3 filename','$'
 MSGTRUNC:DEFB  'File exceeded buffer! Saving blocked','$'
 MSGTEMP:DEFB   'Existing .VIT temp: recover/remove first','$'
 MSGERROR:DEFB  'Save error! Check .VIT and .BAK files','$'
@@ -2353,6 +2505,7 @@ YBEGIN: DEFW    0
 DELEND: DEFW    0
 DELCNT: DEFW    0
 FILEIDX:DEFW    0
+NEWFCB: DEFS    36
 FCB:    DEFS    36
 TMPFCB: DEFS    36
 BAKFCB: DEFS    36
