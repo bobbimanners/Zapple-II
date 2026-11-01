@@ -34,10 +34,16 @@ WGET_RAW    := wget.bin
 CPM_WGET    := cpm-apps/Utils/WGET.COM
 FTP_SRC     ?= ftp.asm
 FTP_RAW     := ftp.bin
+CPM_FTP     := cpm-apps/Utils/FTP.COM
 NETCAT_SRC  ?= netcat.asm
 NETCAT_RAW  := netcat.bin
 CPM_NETCAT  := cpm-apps/Utils/NETCAT.COM
-CPM_FTP     := cpm-apps/Utils/FTP.COM
+NETPRINT_SRC ?= netprint.asm
+NETPRINT_RAW ?= netprint.bin
+CPM_NETPRINT := cpm-apps/Utils/NETPRINT.COM
+NETIPP_SRC   ?= netipp.asm
+NETIPP_RAW   := netipp.bin
+CPM_NETIPP   := cpm-apps/Utils/NETIPP.COM
 NSLOOKUP_SRC ?= nslookup.asm
 NSLOOKUP_RAW := nslookup.bin
 CPM_NSLOOKUP := cpm-apps/Utils/NSLOOKUP.COM
@@ -86,6 +92,8 @@ wget: $(CPM_WGET)
 browse: $(CPM_BROWSE)
 ftp: $(CPM_FTP)
 netcat: $(CPM_NETCAT)
+netprint: $(CPM_NETPRINT)
+netipp: $(CPM_NETIPP)
 nslookup: $(CPM_NSLOOKUP)
 sloptris: $(CPM_SLOPTRIS)
 vi: $(CPM_VI)
@@ -221,6 +229,22 @@ $(CPM_NETCAT): $(NETCAT_SRC)
 	test -f "$(NETCAT_RAW)" || exit 1
 	@python3 -c 'from pathlib import Path; p=Path("$(NETCAT_RAW)"); b=p.    read_bytes(); assert b[:3] == bytes.fromhex("ff0001"), "missing origin recor    d"; Path("$(CPM_NETCAT)").write_bytes(b[3:])'
 	@rm -f "$(NETCAT_RAW)"
+
+$(CPM_NETPRINT): $(NETPRINT_SRC)
+	@echo 'Assembling NETPRINT.COM: $<'
+	@mkdir -p "$(dir $@)"
+	@rm -f "$(NETPRINT_RAW)"
+	$(Z80ASM) -o$(NETPRINT_RAW) "$<"
+	@python3 -c 'from pathlib import Path; p=Path("$(NETPRINT_RAW)"); b=    p.read_bytes(); assert b[:3] == bytes.fromhex("ff0001"), "missing origin rec    ord"; Path("$(CPM_NETPRINT)").write_bytes(b[3:])'
+	@rm -f "$(NETPRINT_RAW)"
+
+$(CPM_NETIPP): $(NETIPP_SRC)
+	@echo 'Assembling NETIPP.COM: $<'
+	@mkdir -p "$(dir $@)"
+	@rm -f "$(NETIPP_RAW)"
+	$(Z80ASM) -o$(NETIPP_RAW) "$<"
+	@python3 -c 'from pathlib import Path; p=Path("$(NETIPP_RAW)"); b=p.    read_bytes(); assert b[:3] == bytes.fromhex("ff0001"), "missing origin recor    d"; Path("$(CPM_NETIPP)").write_bytes(b[3:])'
+	@rm -f "$(NETIPP_RAW)"
 
 $(CPM_NSLOOKUP): $(NSLOOKUP_SRC)
 	@echo 'Assembling CP/M NSLOOKUP: $<'
