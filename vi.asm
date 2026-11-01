@@ -1,4 +1,4 @@
-; VI.COM 0.4a - small modal editor for Zapple-II / CP/M 2.2
+; VI.COM 0.2 - small modal editor for Zapple-II / CP/M 2.2
 ; Soroc default; -V option (after filename) selects VT100.
 ; Udo Munk z80asm 1.1, ORG 0100H (strip FF 00 01 header).
 ; No kernel changes; text-only, 80x24, up to 14000 bytes in buffer.
@@ -303,6 +303,63 @@ REFLINE:
         JP      NZ,FULLSCR
         CALL    RENDERL
         JP      DRAWCUR
+; Insert-mode incremental repaint: redraw only from the edit point.
+; A=0: insertion (start at CURIDX-1), A=1: deletion (start at
+; CURIDX and erase the now-unused final cell).
+; Never clear/repaint the entire row while typing.
+REFEDIT:
+        LD      (EDDEL),A
+        CALL    ENSURE
+        OR      A
+        JP      NZ,FULLSCR
+        LD      A,(COLNUM)
+        LD      (EDCOL),A
+        LD      HL,(CURIDX)
+        LD      A,(EDDEL)
+        OR      A
+        JR      NZ,EDSTART
+        DEC     HL
+        LD      A,(EDCOL)
+        OR      A
+        JR      Z,EDSTART
+        DEC     A
+        LD      (EDCOL),A
+EDSTART:
+        LD      (EDPTR),HL
+        CALL    GETSCRR
+        LD      B,A
+        LD      A,(EDCOL)
+        LD      C,A
+        CALL    ATPOS
+        LD      HL,(EDPTR)
+        LD      A,(EDCOL)
+        LD      B,A
+EDLOOP: CALL    CMPEND
+        JR      NC,EDEND
+        CALL    GETBYTE
+        CP      10
+        JR      Z,EDEND
+        LD      C,A
+        LD      A,B
+        CP      79
+        JR      NC,EDSTEP
+        LD      A,C
+        CALL    DISPCHR
+EDSTEP: LD      A,B
+        CP      79
+        JR      NC,EDNEXT
+        INC     B
+EDNEXT: INC     HL
+        JR      EDLOOP
+EDEND:  LD      A,(EDDEL)
+        OR      A
+        JR      Z,EDCUR
+        LD      A,B
+        CP      79
+        JR      NC,EDCUR
+        LD      A,' '
+        CALL    CPUT
+EDCUR:  JP      DRAWCUR
 FULLSCR:
         CALL    CLRSCR
         ; Find the first byte of TOPLIN.
@@ -594,12 +651,7 @@ STATUS: LD      B,23
         LD      DE,STNAME
         CALL    PRT
         CALL    PRFNAME
-        LD      A,(TOOBIG)
-        OR      A
-        JR      Z,STSAFE
-        LD      DE,STTRUNC
-        CALL    PRT
-STSAFE: LD      A,(MODFLG)
+        LD      A,(MODFLG)
         OR      A
         JR      Z,STMODE
         LD      DE,STMOD
@@ -1021,7 +1073,8 @@ INSMOD:
         LD      (INCHAR),A
         CALL    INSBYTE
         JR      C,INSFULL
-        CALL    REFLINE
+        XOR     A
+        CALL    REFEDIT
         JP      MAIN
 INSNEW: LD      A,10
         CALL    INSBYTE
@@ -1041,7 +1094,8 @@ INSBACK:
         LD      A,(DIDNL)
         CP      10
         JR      Z,IBFULL
-        CALL    REFLINE
+        LD      A,1
+        CALL    REFEDIT
         JP      MAIN
 IBFULL: CALL    REFRESH
         JP      MAIN
@@ -1545,14 +1599,7 @@ ABEND: POP     BC
 ; A failed write/rename leaves the temp file for manual recovery.
 ; A successful replacement leaves a <name>.BAK backup.
 ; Carry clear success; carry set on failure.
-SAVEF:  LD      A,(TOOBIG)
-        OR      A
-        JR      Z,SFOKLD
-        LD      DE,MSGTRUNC
-        CALL    MESSAGE
-        SCF
-        RET
-SFOKLD: LD      A,(HASFILE)
+SAVEF:  LD      A,(HASFILE)
         OR      A
         JR      NZ,SFNAME
         LD      DE,MSGNOFL
@@ -1773,39 +1820,17 @@ SRCRUN: LD      (WORKDIR),A
         LD      A,(PATLEN)
         OR      A
         JP      Z,MAIN
-        ; Scan exactly TEXLEN candidate offsets, beginning one
-        ; byte beyond the cursor in the requested direction.
-        LD      HL,(TEXLEN)
-        LD      (SRLEFT),HL
-        LD      HL,(CURIDX)
-        LD      A,(WORKDIR)
-        CP      1
-        JR      NZ,SRINITB
-        INC     HL
-        JR      SRINIT2
-SRINITB:
-        LD      A,H
-        OR      L
-        JR      NZ,SRDECB
-        LD      HL,(TEXLEN)
-SRDECB: DEC     HL
-SRINIT2:
+        LD      HL,0
         LD      (SRPOS),HL
-SRLOOP: LD      HL,(SRLEFT)
-        LD      A,H
-        OR      L
-        JP      Z,SRFAIL
-        DEC     HL
-        LD      (SRLEFT),HL
-        LD      HL,(SRPOS)
+        LD      (SRBEST),HL
+        XOR     A
+        LD      (ISGOOD),A
+SRLOOP: LD      HL,(SRPOS)
         LD      DE,(TEXLEN)
         OR      A
         SBC     HL,DE
-        JR      C,SRINRG
-        ; Forward search can arrive at TEXLEN; wrap to zero.
-        LD      HL,0
-        LD      (SRPOS),HL
-SRINRG:LD      HL,(SRPOS)
+        JP      NC,SRDONE
+        LD      HL,(SRPOS)
         LD      A,(PATLEN)
         LD      E,A
         LD      D,0
@@ -1813,38 +1838,79 @@ SRINRG:LD      HL,(SRPOS)
         LD      DE,(TEXLEN)
         OR      A
         SBC     HL,DE
-        JR      C,SRTEST
-        JR      Z,SRTEST
-        JP      SRSTEP
+        JP      C,SRTEST
+        JP      Z,SRTEST
+        JP      SRDONE
 SRTEST: LD      HL,(SRPOS)
-        LD      DE,TXTBUF
-        ADD     HL,DE
         LD      DE,PATBUF
         LD      A,(PATLEN)
         LD      B,A
-SRCMP:  LD      A,(DE)
-        CP      (HL)
-        JR      NZ,SRSTEP
+SRCMP:  LD      A,B
+        OR      A
+        JP      Z,SRMATCH
+        PUSH    DE
+        CALL    CMPEND
+        POP     DE
+        JP      NC,SRSTEP
+        CALL    GETBYTE
+        LD      C,A
+        LD      A,(DE)
+        CP      C
+        JP      NZ,SRSTEP
         INC     DE
         INC     HL
         DJNZ    SRCMP
+SRMATCH:
         LD      HL,(SRPOS)
-        LD      (CURIDX),HL
-        JP      NREDRAW
-SRSTEP: LD      HL,(SRPOS)
+        LD      DE,(CURIDX)
         LD      A,(WORKDIR)
         CP      1
-        JR      NZ,SRBACK
+        JP      Z,SRFWD2
+        ; reverse: prefer last match strictly before cursor.
+        OR      A
+        SBC     HL,DE
+        JP      NC,SRBAF
+        LD      HL,(SRPOS)
+        LD      (SRBEST),HL
+        LD      A,2
+        LD      (ISGOOD),A
+        JP      SRSTEP
+SRBAF:  LD      A,(ISGOOD)
+        CP      2
+        JP      Z,SRSTEP
+        LD      HL,(SRPOS)
+        LD      (SRBEST),HL
+        LD      A,1
+        LD      (ISGOOD),A
+        JP      SRSTEP
+SRFWD2:
+        OR      A
+        SBC     HL,DE
+        JP      C,SRFIRST
+        JP      Z,SRFIRST
+        LD      HL,(SRPOS)
+        LD      (SRBEST),HL
+        LD      A,2
+        LD      (ISGOOD),A
+        JP      SRDONE
+SRFIRST:
+        LD      A,(ISGOOD)
+        OR      A
+        JP      NZ,SRSTEP
+        LD      HL,(SRPOS)
+        LD      (SRBEST),HL
+        LD      A,1
+        LD      (ISGOOD),A
+SRSTEP: LD      HL,(SRPOS)
         INC     HL
         LD      (SRPOS),HL
         JP      SRLOOP
-SRBACK: LD      A,H
-        OR      L
-        JR      NZ,SRBACK2
-        LD      HL,(TEXLEN)
-SRBACK2:DEC     HL
-        LD      (SRPOS),HL
-        JP      SRLOOP
+SRDONE: LD      A,(ISGOOD)
+        OR      A
+        JP      Z,SRFAIL
+        LD      HL,(SRBEST)
+        LD      (CURIDX),HL
+        JP      NREDRAW
 SRFAIL: LD      DE,MSGNOTF
         CALL    MESSAGE
         JP      MAIN
@@ -1895,7 +1961,7 @@ SBOP:   LD      HL,(SBPTR)
         CP      '/'
         JP      NZ,COLBAD
         INC     HL
-        LD      DE,SUBPAT
+        LD      DE,PATBUF
         LD      B,0
 SBPAT:  LD      A,(HL)
         OR      A
@@ -1913,7 +1979,7 @@ SBPAT:  LD      A,(HL)
 SBPATD:LD      A,B
         OR      A
         JP      Z,COLBAD
-        LD      (SUBLEN),A
+        LD      (PATLEN),A
         INC     HL
         LD      DE,REPBUF
         LD      B,0
@@ -1984,7 +2050,7 @@ SBSLOOP:LD      HL,(SRCIDX)
         JP      Z,SBTRY
         JP      SBCOPY
 SBTRY:  LD      HL,(SRCIDX)
-        LD      A,(SUBLEN)
+        LD      A,(PATLEN)
         LD      E,A
         LD      D,0
         ADD     HL,DE
@@ -2003,8 +2069,8 @@ SBTEST: LD      A,(SUBG)
 SBTEST2:LD      HL,(SRCIDX)
         LD      DE,UNDBUF
         ADD     HL,DE
-        LD      DE,SUBPAT
-        LD      A,(SUBLEN)
+        LD      DE,PATBUF
+        LD      A,(PATLEN)
         LD      B,A
 SBMATCH:LD      A,B
         OR      A
@@ -2020,7 +2086,7 @@ SBMATCH:LD      A,B
         INC     DE
         DJNZ    SBMATCH
 SBHIT:  LD      HL,(SRCIDX)
-        LD      A,(SUBLEN)
+        LD      A,(PATLEN)
         LD      E,A
         LD      D,0
         ADD     HL,DE
@@ -2034,7 +2100,7 @@ SBHOK:  LD      A,1
         LD      (DIDROW),A
         LD      (SUBFLG),A
         LD      HL,(SRCIDX)
-        LD      A,(SUBLEN)
+        LD      A,(PATLEN)
         LD      E,A
         LD      D,0
         ADD     HL,DE
@@ -2212,7 +2278,6 @@ VTREST: DEFB    27,'[r','$'
 VTCLR:  DEFB    27,'[2J',27,'[H','$'
 SOCLR:  DEFB    27,'*','$'
 STNAME: DEFB    'VI  ','$'
-STTRUNC:DEFB  ' [TRUNCATED - READ ONLY]','$'
 STMOD:  DEFB    ' [+]','$'
 STINS:  DEFB    '  -- INSERT --','$'
 STNOR:  DEFB    '  [NORMAL]','$'
@@ -2222,7 +2287,7 @@ MSGUNSV:DEFB   'Unsaved changes',59,' use :q! to abandon','$'
 MSGHELP:DEFB   '/ ? n N :s/a/b/g :%s/a/b/g :1,9s/a/b/g','$'
 MSGCMD: DEFB    'Unknown command (:h for help)','$'
 MSGNOFL:DEFB   'No filename (use VI FILE.TXT)','$'
-MSGTRUNC:DEFB  'WARNING: file truncated! Save disabled :q! to exit','$'
+MSGTRUNC:DEFB  'File exceeded buffer! Saving blocked','$'
 MSGTEMP:DEFB   'Existing .VIT temp: recover/remove first','$'
 MSGERROR:DEFB  'Save error! Check .VIT and .BAK files','$'
 MSGSAVED:DEFB  'Written (.BAK if file existed)','$'
@@ -2245,12 +2310,14 @@ HADOLD: DEFB    0
 DRAWROW:DEFB    0
 EXHAUS: DEFB    0
 COLNUM: DEFB    0
+EDDEL:  DEFB    0
+EDCOL:  DEFB    0
+EDPTR:  DEFW    0
 CMDLEN: DEFB    0
 PRCHAR: DEFB    0
 YANKLEN:DEFB    0
 SRDIR:  DEFB    0
 PATLEN: DEFB    0
-SUBLEN: DEFB    0
 REPLEN: DEFB    0
 SUBG:   DEFB    0
 SUBFLG: DEFB    0
@@ -2261,7 +2328,6 @@ CURROW: DEFW    0
 RSTART: DEFW    0
 REND:   DEFW    0
 SRPOS:  DEFW    0
-SRLEFT: DEFW    0
 SRBEST: DEFW    0
 SRCIDX: DEFW    0
 DSTIDX: DEFW    0
@@ -2269,7 +2335,6 @@ SUBROW: DEFW    0
 NUMACC: DEFW    0
 OLDPOS: DEFW    0
 PATBUF: DEFS    80
-SUBPAT: DEFS    80
 REPBUF: DEFS    80
 CMDPTR: DEFW    0
 CMDTXT: DEFS    80

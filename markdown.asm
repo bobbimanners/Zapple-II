@@ -1,8 +1,8 @@
-; MARKDOWN.COM v0.1 - Zapple-II CP/M 2.2 Markdown to PostScript
+; MARKDOWN.COM v0.2a - Zapple-II CP/M 2.2 Markdown to PostScript
 ; Udo Munk z80asm syntax. MARKDOWN INPUT.TXT OUTPUT.PS
 ; Minimal Markdown: # ## ### headings, paragraphs, **bold**, *italic*,
-; _italic_, - / * bullets and blank lines.
-; Courier/Helvetica standard PS fonts; ASCII only, 72-column hard wrap.
+; _italic_, - / * bullets, fenced code blocks, page numbers and blank lines.
+; Courier/Helvetica standard PS fonts; ASCII only, 70-column word wrap.
 ; Output is CP/M records padded with spaces (not ^Z).
 BDOS    EQU 0005H
         ORG 0100H
@@ -52,6 +52,8 @@ START   LD SP,STKTOP
         LD (PREVCR),A
         LD (COL),A
         LD (LINES),A
+        LD (ATBOL),A
+        LD (PAGES),A
         LD HL,HEADER
         CALL PSTR
         CALL NEWPAGE
@@ -59,8 +61,7 @@ MAIN    CALL GETLINE
         JP C,FINISH
         CALL LINE
         JP MAIN
-FINISH  LD HL,PGEND
-        CALL PSTR
+FINISH  CALL PAGEEND
         LD HL,EOFPS
         CALL PSTR
         CALL FLUSHO
@@ -322,8 +323,9 @@ GLCR    CALL GETBYTE
         JP GLEND
 GLEOF   LD A,(LINLEN)
         OR A
+        JP NZ,GLEND
         SCF
-        RET Z
+        RET
 GLEND   LD HL,(LINPTR)
         LD (HL),0
         OR A
@@ -390,45 +392,70 @@ PSTR    LD A,(HL)
         POP HL
         INC HL
         JP PSTR
-; Emit fixed macro commands. One physical text line = one PS row.
+ ; Page footer and page setup; use a PS counter, no decimal converter in Z80.
+PAGEEND LD HL,PGEND
+        JP PSTR
 NEWPAGE LD HL,PGSTART
         CALL PSTR
+        LD A,(PAGES)
+        INC A
+        LD (PAGES),A
         XOR A
         LD (LINES),A
         LD (COL),A
+        LD (STYLE),A
+        LD (ATBOL),A
         RET
-NEXTPG LD HL,PGEND
-        CALL PSTR
+NEXTPG CALL PAGEEND
         JP NEWPAGE
 EOL     LD HL,EOLTXT
         CALL PSTR
         LD A,(LINES)
         INC A
         LD (LINES),A
-        CP 51
+        CP 49
         JP NC,NEXTPG
         RET
-; Input line dispatch
-LINE    LD A,(LINLEN)
-        OR A
-        JP NZ,NOTBL
+; Dispatch line: fenced code, headings, bullets, paragraph, blank.
+LINE    LD HL,LINEBUF
+        LD A,(HL)
+        CP '`'
+        JP NZ,LNCODE
+        INC HL
+        LD A,(HL)
+        CP '`'
+        JP NZ,LNCODE
+        INC HL
+        LD A,(HL)
+        CP '`'
+        JP NZ,LNCODE
+        LD A,(CODE)
+        XOR 1
+        LD (CODE),A
         CALL EOL
         RET
-NOTBL   LD HL,LINEBUF
+LNCODE  LD A,(CODE)
+        OR A
+        JP NZ,CODELN
+        LD A,(LINLEN)
+        OR A
+        JP NZ,LNSTART
+        CALL EOL
+        RET
+LNSTART LD HL,LINEBUF
         LD A,(HL)
         CP '#'
         JP Z,HEADING
         CP '-'
-        JP Z,BULLET
+        JP Z,TRYBUL
         CP '*'
-        JP Z,TESTBUL
+        JP Z,TRYBUL
         JP NORMAL
-TESTBUL INC HL
+TRYBUL INC HL
         LD A,(HL)
         CP ' '
-        JP Z,BULLET
-        JP NORMAL
-BULLET  LD HL,BULPS
+        JP NZ,NORMAL
+        LD HL,BULPS
         CALL PSTR
         LD HL,LINEBUF+2
         JP TEXTLN
@@ -459,17 +486,41 @@ HLEVEL2 CP 2
 HLEVEL3 LD HL,H3PS
 HGO     CALL PSTR
         POP HL
-        CALL TEXTLN
+        CALL RAWLN            ; heading text: no inline markers; preserve heading font
         LD HL,RESETPS
-        CALL PSTR
-        RET
+        JP PSTR
 NORMAL  LD HL,LINEBUF
         JP TEXTLN
-; TEXTLN: HL string; inline styles apply. Hard wrap on column 72.
+CODELN  LD HL,CODEFONT
+        CALL PSTR
+        LD HL,LINEBUF
+        CALL RAWLN
+        LD HL,RESETPS
+        JP PSTR
+; RAWLN: render literal input line using current font.
+RAWLN   PUSH HL
+        LD HL,TSTART
+        CALL PSTR
+        POP HL
+RAWLOOP LD A,(HL)
+        OR A
+        JP Z,RAWEND
+        PUSH HL
+        CALL PSCHAR
+        POP HL
+        INC HL
+        JP RAWLOOP
+RAWEND  LD HL,TEND
+        CALL PSTR
+        JP EOL
+; TEXTLN: inline styles and space-aware column wrapping.
+; STYFONT handles show and font switch without advancing to another line.
 TEXTLN  XOR A
         LD (STYLE),A
         LD (COL),A
         PUSH HL
+        LD HL,RESETPS
+        CALL PSTR
         LD HL,TSTART
         CALL PSTR
         POP HL
@@ -481,8 +532,11 @@ TXLOOP  LD A,(HL)
         CP '_'
         JP Z,TXITAL
         CP 05CH
-        JP NZ,TXCHAR
-        INC HL
+        JP Z,TXESC
+        CP ' '
+        JP Z,TXSPACE
+        JP TXCHAR
+TXESC   INC HL
         LD A,(HL)
         OR A
         JP Z,TXEND
@@ -514,58 +568,94 @@ TXITAL  INC HL
         CALL STYFONT
         POP HL
         JP TXLOOP
+; On a space, look ahead to next word, avoiding mid-word wraps.
+TXSPACE PUSH HL
+        INC HL
+        LD B,0
+TXLOOK  LD A,(HL)
+        OR A
+        JP Z,TXLEND
+        CP ' '
+        JP Z,TXLEND
+        CP '*'
+        JP Z,TXLSKIP
+        CP '_'
+        JP Z,TXLSKIP
+        INC B
+TXLSKIP INC HL
+        JP TXLOOK
+TXLEND  LD A,(COL)
+        ADD A,B
+        CP 70
+        POP HL
+        JP NC,TXSWRAP
+        LD A,(COL)
+        OR A
+        JP Z,TXNEXT
+        LD A,' '
+        JP TXCHAR
+TXSWRAP PUSH HL
+        CALL WRAPLN
+        POP HL
+        JP TXNEXT
 TXCHAR  PUSH HL
         CALL PSCHAR
         POP HL
         LD A,(COL)
         INC A
         LD (COL),A
-        CP 72
+        CP 70
         JP C,TXNEXT
         PUSH HL
-        LD HL,TWRAP
-        CALL PSTR
-        CALL EOL
-        LD HL,TSTART
-        CALL PSTR
-        XOR A
-        LD (COL),A
+        CALL WRAPLN
         POP HL
 TXNEXT  INC HL
         JP TXLOOP
 TXEND   LD HL,TEND
         CALL PSTR
         CALL EOL
-        LD A,(STYLE)
-        OR A
-        RET Z
         XOR A
         LD (STYLE),A
         LD HL,REGFONT
         JP PSTR
-; styles close current PS string then select font and reopen.
-STYFONT PUSH AF
+WRAPLN LD HL,TEND
+        CALL PSTR
+        CALL EOL
+        LD HL,TSTART
+        CALL PSTR
+        XOR A
+        LD (COL),A
+        ; NEWPAGE resets styles; reselect current inline style.
+        LD A,(STYLE)
+        OR A
+        RET Z
         LD HL,TEND
         CALL PSTR
         LD A,(STYLE)
-        OR A
+        CALL SETFONT
+        LD HL,TSTART
+        JP PSTR
+; Key fix: inline style changes must preserve horizontal advance.
+STYFONT LD HL,TEND
+        CALL PSTR
+        LD A,(STYLE)
+        CALL SETFONT
+        LD HL,TSTART
+        JP PSTR
+SETFONT OR A
         JP Z,SREG
         CP 1
         JP Z,SITAL
         CP 2
         JP Z,SBOLD
         LD HL,BIFONT
-        JP SFGO
+        JP PSTR
 SITAL   LD HL,ITFONT
-        JP SFGO
+        JP PSTR
 SBOLD   LD HL,BOFONT
-        JP SFGO
+        JP PSTR
 SREG    LD HL,REGFONT
-SFGO    CALL PSTR
-        LD HL,TSTART
-        CALL PSTR
-        POP AF
-        RET
+        JP PSTR
 PSCHAR  CP '('
         JP Z,ESCPS
         CP ')'
@@ -585,7 +675,7 @@ ESCPS   PUSH AF
 ; PostScript setup: moveto + show, newline through /nl, and automatic pages.
 HEADER  DEFM '%!PS-Adobe-3.0'
         DEFB 10
-        DEFM '%%Creator: Zapple-II MARKDOWN 0.1'
+        DEFM '%%Creator: Zapple-II MARKDOWN 0.2a'
         DEFB 10
         DEFM '%%Pages: (atend)'
         DEFB 10
@@ -598,12 +688,16 @@ HEADER  DEFM '%!PS-Adobe-3.0'
         DEFM '/BI {/Courier-BoldOblique findfont 11 scalefont setfont} def'
         DEFB 10
         DEFM '/nl {/y y 14 sub def 65 y moveto} def'
+        DEFB 10
+        DEFM '/pg 0 def'
         DEFB 10,0
-PGSTART DEFM '/y 760 def R 65 y moveto'
+PGSTART DEFM '/pg pg 1 add def /y 760 def R 65 y moveto'
         DEFB 10,0
 EOFPS   DEFM '%%EOF'
         DEFB 10,0
-PGEND   DEFM 'showpage'
+PGEND   DEFM 'gsave /Helvetica findfont 8 scalefont setfont'
+        DEFM ' 490 32 moveto (Page ) show'
+        DEFM ' pg 10 string cvs show grestore showpage'
         DEFB 10,0
 TSTART  DEFM '('
         DEFB 0
@@ -623,13 +717,15 @@ ITFONT  DEFM 'I'
         DEFB 10,0
 BIFONT  DEFM 'BI'
         DEFB 10,0
+CODEFONT DEFM '/Courier findfont 9 scalefont setfont'
+        DEFB 10,0
 H1PS    DEFM '/Helvetica-Bold findfont 20 scalefont setfont'
         DEFB 10,0
 H2PS    DEFM '/Helvetica-Bold findfont 16 scalefont setfont'
         DEFB 10,0
 H3PS    DEFM '/Helvetica-Bold findfont 13 scalefont setfont'
         DEFB 10,0
-BULPS   DEFM '(*) show '
+BULPS   DEFM 'R (\267 ) show '
         DEFB 0
 USAGE   DEFM 'Usage: MARKDOWN INPUT.TXT OUTPUT.PS'
         DEFB 13,10,'$'
@@ -656,6 +752,8 @@ STYLE   DEFB 0
 PREVCR  DEFB 0
 COL     DEFB 0
 LINES   DEFB 0
+PAGES   DEFB 0
+ATBOL   DEFB 0
 PEND    DEFB 0
 PENDCHR DEFB 0
 FCB     DEFS 36
