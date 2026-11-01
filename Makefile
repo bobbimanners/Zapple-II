@@ -34,6 +34,9 @@ WGET_RAW    := wget.bin
 CPM_WGET    := cpm-apps/Utils/WGET.COM
 FTP_SRC     ?= ftp.asm
 FTP_RAW     := ftp.bin
+NETCAT_SRC  ?= netcat.asm
+NETCAT_RAW  := netcat.bin
+CPM_NETCAT  := cpm-apps/Utils/NETCAT.COM
 CPM_FTP     := cpm-apps/Utils/FTP.COM
 NSLOOKUP_SRC ?= nslookup.asm
 NSLOOKUP_RAW := nslookup.bin
@@ -82,6 +85,7 @@ ipconfig: $(CPM_IPCONFIG)
 wget: $(CPM_WGET)
 browse: $(CPM_BROWSE)
 ftp: $(CPM_FTP)
+netcat: $(CPM_NETCAT)
 nslookup: $(CPM_NSLOOKUP)
 sloptris: $(CPM_SLOPTRIS)
 vi: $(CPM_VI)
@@ -208,6 +212,15 @@ $(CPM_FTP): $(FTP_SRC)
 	@test "$$(head -c 3 "$(FTP_RAW)" | od -An -tx1 | tr -d ' \n')" = ff0001 || { echo 'Error: unexpected FTP binary header (expected FF 00 01)' >&2; exit 1; }
 	@tail -c +4 "$(FTP_RAW)" > "$@.tmp" && mv -f "$@.tmp" "$@"
 	@rm -f "$(FTP_RAW)"
+
+$(CPM_NETCAT): $(NETCAT_SRC)
+	@echo 'Assembling NETCAT.COM: $<'
+	@mkdir -p "$(dir $@)"
+	@rm -f "$(NETCAT_RAW)"
+	$(Z80ASM) -o$(NETCAT_RAW) "$<"
+	test -f "$(NETCAT_RAW)" || exit 1
+	@python3 -c 'from pathlib import Path; p=Path("$(NETCAT_RAW)"); b=p.    read_bytes(); assert b[:3] == bytes.fromhex("ff0001"), "missing origin recor    d"; Path("$(CPM_NETCAT)").write_bytes(b[3:])'
+	@rm -f "$(NETCAT_RAW)"
 
 $(CPM_NSLOOKUP): $(NSLOOKUP_SRC)
 	@echo 'Assembling CP/M NSLOOKUP: $<'
