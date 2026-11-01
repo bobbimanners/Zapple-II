@@ -1,6 +1,6 @@
 ; NETIPP.COM v0.2 - corrected printer-uri length for Zapple-II / CP/M 2.2
 ; Usage: NETIPP host queue filename (TCP port 631, DNS supported).
-; CUPS IPP/1.1 Print-Job over HTTP, text/plain, no TLS.
+; CUPS IPP/1.1 Print-Job over HTTP, .TXT/.PS/.PDF auto-format, no TLS.
 ; Stop at first CP/M control-Z (1AH); no binary file support.
 ; CP/M file records are 128 bytes.
 ; Kernel owns network and sockets, W5100 is NOT reset.
@@ -812,9 +812,30 @@ IPPF01  LD A,(HL)
         LD HL,(QPTR)
         CALL PUTSTR
         RET C
-        LD HL,ATTRFM
+        ; Choose MIME type from parsed CP/M FCB extension.
+        ; FCB bytes 9..11 are space-padded uppercase extension.
+        LD HL,ATTRFM            ; default text/plain
         LD B,30
-        CALL IPPCOPY
+        LD A,(FCB+9)
+        CP 'P'
+        JP NZ,IPPFMT
+        LD A,(FCB+10)
+        CP 'S'
+        JP NZ,IPFCHK
+        LD A,(FCB+11)
+        CP ' '
+        JP NZ,IPPFMT
+        LD HL,ATTRPS
+        LD B,42
+        JP IPPFMT
+IPFCHK  CP 'D'
+        JP NZ,IPPFMT
+        LD A,(FCB+11)
+        CP 'F'
+        JP NZ,IPPFMT
+        LD HL,ATTRPDF
+        LD B,35
+IPPFMT  CALL IPPCOPY
         RET C
         LD A,3
         CALL OUTCHR
@@ -1328,6 +1349,15 @@ ATTRFM  DEFB 049H,0,15
         DEFM 'document-format'
         DEFB 0,10
         DEFM 'text/plain'
+; PDF and PostScript are MIME types in the IPP body, not HTTP headers.
+ATTRPS  DEFB 049H,0,15
+        DEFM 'document-format'
+        DEFB 0,22
+        DEFM 'application/postscript'
+ATTRPDF DEFB 049H,0,15
+        DEFM 'document-format'
+        DEFB 0,15
+        DEFM 'application/pdf'
 POST01  DEFM 'POST /printers/'
         DEFB 0
 POST02  DEFM ' HTTP/1.1'

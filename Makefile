@@ -44,6 +44,9 @@ CPM_NETPRINT := cpm-apps/Utils/NETPRINT.COM
 NETIPP_SRC   ?= netipp.asm
 NETIPP_RAW   := netipp.bin
 CPM_NETIPP   := cpm-apps/Utils/NETIPP.COM
+MARKDOWN_SRC ?= markdown.asm
+MARKDOWN_RAW := markdown.bin
+CPM_MARKDOWN := cpm-apps/Utils/MARKDOWN.COM
 NSLOOKUP_SRC ?= nslookup.asm
 NSLOOKUP_RAW := nslookup.bin
 CPM_NSLOOKUP := cpm-apps/Utils/NSLOOKUP.COM
@@ -94,6 +97,7 @@ ftp: $(CPM_FTP)
 netcat: $(CPM_NETCAT)
 netprint: $(CPM_NETPRINT)
 netipp: $(CPM_NETIPP)
+markdown: $(CPM_MARKDOWN)
 nslookup: $(CPM_NSLOOKUP)
 sloptris: $(CPM_SLOPTRIS)
 vi: $(CPM_VI)
@@ -245,6 +249,14 @@ $(CPM_NETIPP): $(NETIPP_SRC)
 	$(Z80ASM) -o$(NETIPP_RAW) "$<"
 	@python3 -c 'from pathlib import Path; p=Path("$(NETIPP_RAW)"); b=p.    read_bytes(); assert b[:3] == bytes.fromhex("ff0001"), "missing origin recor    d"; Path("$(CPM_NETIPP)").write_bytes(b[3:])'
 	@rm -f "$(NETIPP_RAW)"
+
+$(CPM_MARKDOWN): $(MARKDOWN_SRC)
+	@echo 'Assembling MARKDOWN.COM: $<'
+	@mkdir -p "$(dir $@)"
+	@rm -f "$(MARKDOWN_RAW)"
+	$(Z80ASM) -o$(MARKDOWN_RAW) "$<"
+	@python3 -c 'from pathlib import Path; p=Path("$(MARKDOWN_RAW)"); b=p.    read_bytes(); assert b[:3] == bytes.fromhex("ff0001"), "missing origin recor    d"; Path("$(CPM_MARKDOWN)").write_bytes(b[3:])'
+	@rm -f "$(MARKDOWN_RAW)"
 
 $(CPM_NSLOOKUP): $(NSLOOKUP_SRC)
 	@echo 'Assembling CP/M NSLOOKUP: $<'
